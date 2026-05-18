@@ -1,0 +1,50 @@
+# Multi-Indicator Confluence Strategy Configuration (SOL/USDC)
+# Combines RSI, MACD, and Bollinger Bands for confluence trading
+
+[bot]
+name = "multi-indicator-sol-bot"
+description = "Multi-indicator confluence strategy for SOL/USDC"
+
+[wallet]
+private_key = "0x1234567890123456789012345678901234567890123456789012345678901234"
+
+[trading]
+mode = "backtest"
+base_currency = "USDC"
+initial_balance = 50000
+max_position_size = 5000
+max_daily_loss = 2500
+
+[strategy]
+type = "custom"
+id = "multi_indicator_v1"
+risk_level = "medium"
+trading_pairs = ["SOL/USDC"]
+
+# Multi-Indicator Strategy Parameters (more sensitive for testing)
+[strategy.parameters]
+# RSI Settings (more sensitive)
+rsiPeriod = 10
+
+# MACD Settings
+macdFast = 8
+macdSlow = 20
+macdSignal = 7
+
+# Bollinger Bands Settings
+bbPeriod = 15
+bbStdDev = 1.8
+
+# Confluence Settings (require only 2 indicators to agree)
+confluenceThreshold = 2
+
+[network]
+rpc_url = "https://evm-rpc-testnet.sei.io"
+chain_id = 713715
+
+# Backtest Configuration
+[backtest]
+start_date = "2024-07-01"
+end_date = "2024-07-02"
+commission = 0.001  # 0.1%
+slippage = 0.0005   # 0.05%

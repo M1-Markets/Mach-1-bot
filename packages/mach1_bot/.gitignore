@@ -1,0 +1,77 @@
+# Dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Build outputs
+dist/
+build/
+*.tsbuildinfo
+
+# Coverage reports
+coverage/
+*.lcov
+
+# Environment variables
+.env
+.env.local
+.env.production
+.env.staging
+.codex
+
+# Logs
+logs/
+*.log
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Test files
+test-results/
+*.test.js.map
+
+# Trading specific
+config/secrets.yaml
+keys/
+wallets/
+backtest-results/
+trade-logs/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Package manager
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Documentation build
+docs/build/
+docs/.docusaurus/
+
+# Bot data
+backtest-data/
+mach-one-bot.toml
+mach-one-bot-*.toml
+test-config.json
+
+# Github
+.github/
+
+# Remove unecessary markdown files on root directory
+/*.md
+!README.md
+
+/.npm-cache/
+build.err
+build.out

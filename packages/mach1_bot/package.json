@@ -1,0 +1,110 @@
+{
+  "name": "mach1-bot",
+  "version": "1.0.0",
+  "description": "Advanced algorithmic trading SDK built on Monaco Protocol CLOB",
+  "license": "MIT",
+  "exports": {
+    "./bot": {
+      "types": "./dist/bot.d.ts",
+      "import": "./dist/bot.js",
+      "require": "./dist/bot.js"
+    },
+    "./trading": {
+      "types": "./dist/trading.d.ts",
+      "import": "./dist/trading.js",
+      "require": "./dist/trading.js"
+    },
+    "./execution": {
+      "types": "./dist/execution.d.ts",
+      "import": "./dist/execution.js",
+      "require": "./dist/execution.js"
+    },
+    "./strategies": {
+      "types": "./dist/strategies.d.ts",
+      "import": "./dist/strategies.js",
+      "require": "./dist/strategies.js"
+    },
+    "./analytics": {
+      "types": "./dist/analytics.d.ts",
+      "import": "./dist/analytics.js",
+      "require": "./dist/analytics.js"
+    },
+    "./config": {
+      "types": "./dist/config.d.ts",
+      "import": "./dist/config.js",
+      "require": "./dist/config.js"
+    },
+    "./types": {
+      "types": "./dist/types.d.ts",
+      "import": "./dist/types.js",
+      "require": "./dist/types.js"
+    },
+    "./errors": {
+      "types": "./dist/errors.d.ts",
+      "import": "./dist/errors.js",
+      "require": "./dist/errors.js"
+    },
+    "./utils": {
+      "types": "./dist/utils.d.ts",
+      "import": "./dist/utils.js",
+      "require": "./dist/utils.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "build:cli": "tsup --config tsup.config.ts",
+    "cli": "node dist/cli/main.js",
+    "clean": "rimraf dist",
+    "prepublishOnly": "npm run build && npm run build:cli",
+    "dev": "tsc -w",
+    "test": "vitest run",
+    "cover": "vitest run --coverage",
+    "format": "biome format --write src tests",
+    "lint": "biome check src tests",
+    "monaco:balances": "tsx ../standalone_scripts/monaco-balances.ts",
+    "typecheck": "tsc --noEmit",
+    "postinstall": "patch-package"
+  },
+  "bin": {
+    "mach-one-bot": "./mach-one-bot"
+  },
+  "keywords": [
+    "trading",
+    "defi",
+    "monaco",
+    "clob",
+    "sdk"
+  ],
+  "dependencies": {
+    "commander": "^14.0.3",
+    "dotenv": "^17.4.2",
+    "ink": "^7.0.1",
+    "ink-text-input": "^6.0.0",
+    "mach1_sdk": "file:../mach1_sdk",
+    "pico": "^0.1.17",
+    "react": "^19.2.5",
+    "smol-toml": "^1.6.1",
+    "viem": "^2.48.1"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.4.12",
+    "@tsconfig/node20": "^20.1.9",
+    "@vitest/coverage-istanbul": "^1.3.1",
+    "@types/node": "^25.6.0",
+    "@types/prompts": "^2.4.9",
+    "@types/react": "^19.2.14",
+    "esbuild": "^0.28.0",
+    "globals": "^17.5.0",
+    "jiti": "^2.6.1",
+    "patch-package": "^8.0.1",
+    "picocolors": "^1.1.1",
+    "prompts": "^2.4.2",
+    "rimraf": "^6.1.3",
+    "vitest": "^1.3.1",
+    "ts-node": "^10.9.2",
+    "tsc-alias": "^1.8.16",
+    "tsup": "^8.5.1",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  }
+}

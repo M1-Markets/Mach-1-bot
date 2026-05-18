@@ -1,0 +1,55 @@
+{
+  "name": "modultest",
+  "version": "1.0.0",
+  "description": "",
+  "license": "ISC",
+  "author": "",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "format": "biome format --write",
+    "lint": "biome check",
+    "lint:fix": "biome check --write",
+    "test": "mocha",
+    "test:all": "RUN_PUPPETEER_E2E=1 mocha",
+    "typecheck": "tsc --noEmit --noUncheckedIndexedAccess",
+    "test:puppeteer": "RUN_PUPPETEER_E2E=1 mocha --no-config --no-package --import=tsx tests/puppeteer/app.m1.markets.test.ts",
+    "test:puppeteer:wallet": "RUN_PUPPETEER_E2E=1 mocha --no-config --no-package --import=tsx tests/puppeteer/app.m1.markets.wallet-auth.test.ts"
+  },
+  "dependencies": {
+    "@0xmonaco/contracts": "^0.6.1",
+    "@0xmonaco/core": "^0.6.1",
+    "@0xmonaco/types": "^0.6.1",
+    "dotenv": "^17.3.1",
+    "viem": "^2.47.6"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.4.9",
+    "@tsconfig/node20": "^20.1.9",
+    "@types/chai": "^5.2.3",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "^25.5.0",
+    "@types/ws": "^8.18.1",
+    "chai": "^6.2.2",
+    "mocha": "^11.7.5",
+    "puppeteer": "^24.40.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "ws": "^8.20.0"
+  },
+  "engines": {
+    "node": "^22.16.0",
+    "npm": "^11.6.4"
+  },
+  "devEngines": {
+    "packageManager": {
+      "name": "npm",
+      "onFail": "error"
+    },
+    "runtime": {
+      "name": "node",
+      "version": ">=22.16.0",
+      "onFail": "error"
+    }
+  }
+}

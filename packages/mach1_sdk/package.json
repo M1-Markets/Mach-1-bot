@@ -1,0 +1,79 @@
+{
+  "name": "mach1_sdk",
+  "version": "1.0.0",
+  "description": "Advanced algorithmic trading SDK built on Monaco Protocol CLOB",
+  "license": "MIT",
+  "author": "",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "exports": {
+    ".": "./dist/index.js",
+    "./monaco": "./dist/monaco/index.js",
+    "./sdk": "./dist/sdk.js",
+    "./api": "./dist/api/index.js",
+    "./api/base": "./dist/api/base.js",
+    "./api/applications": "./dist/api/applications/index.js",
+    "./api/applications/api": "./dist/api/applications/api.js",
+    "./api/auth": "./dist/api/auth/index.js",
+    "./api/auth/api": "./dist/api/auth/api.js",
+    "./api/fees": "./dist/api/fees/index.js",
+    "./api/fees/api": "./dist/api/fees/api.js",
+    "./api/margin-accounts": "./dist/api/margin-accounts/index.js",
+    "./api/margin-accounts/api": "./dist/api/margin-accounts/api.js",
+    "./api/market": "./dist/api/market/index.js",
+    "./api/market/api": "./dist/api/market/api.js",
+    "./api/orderbook": "./dist/api/orderbook/index.js",
+    "./api/orderbook/api": "./dist/api/orderbook/api.js",
+    "./api/perp": "./dist/api/perp/index.js",
+    "./api/perp/routes": "./dist/api/perp/routes.js",
+    "./api/positions": "./dist/api/positions/index.js",
+    "./api/positions/api": "./dist/api/positions/api.js",
+    "./api/profile": "./dist/api/profile/index.js",
+    "./api/profile/api": "./dist/api/profile/api.js",
+    "./api/trades": "./dist/api/trades/index.js",
+    "./api/trades/api": "./dist/api/trades/api.js",
+    "./api/trading": "./dist/api/trading/index.js",
+    "./api/trading/api": "./dist/api/trading/api.js",
+    "./api/vault": "./dist/api/vault/index.js",
+    "./api/vault/api": "./dist/api/vault/api.js",
+    "./api/websocket": "./dist/api/websocket/index.js",
+    "./api/websocket/types": "./dist/api/websocket/types.js",
+    "./api/websocket/utils": "./dist/api/websocket/utils.js",
+    "./api/websocket/websocket": "./dist/api/websocket/websocket.js",
+    "./errors": "./dist/errors/index.js",
+    "./errors/errors": "./dist/errors/errors.js",
+    "./networks": "./dist/networks/index.js",
+    "./networks/networks": "./dist/networks/networks.js",
+    "./types": "./dist/types.js",
+    "./utils": "./dist/utils/index.js",
+    "./utils/magnitude": "./dist/utils/magnitude.js",
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "tsup --config ./tsup.config.ts && tsc -p ./tsconfig.build.json && node ./scripts/postbuild-scrub.mjs",
+    "test": "npm run typecheck && npm run build && node --test ./tests/*.test.mjs",
+    "typecheck": "tsc --noEmit -p ./tsconfig.json",
+    "format": "biome format --write src tests",
+    "lint": "biome check src tests",
+    "lint:fix": "biome check --write src tests"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.4.12",
+    "@types/node": "^24.9.1",
+    "tsup": "^8.5.1",
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "@0xmonaco/core": "^0.7.9",
+    "@0xmonaco/types": "^0.7.9"
+  },
+  "peerDependencies": {
+    "viem": "^2.45.2"
+  }
+}

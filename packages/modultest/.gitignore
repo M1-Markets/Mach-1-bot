@@ -1,0 +1,10 @@
+/*.md
+!README.md
+
+/node_modules
+/dist
+/*.toml
+/tests/puppeteer-artifacts
+/invariant-wallet-injection.js
+/sample.js
+/replay.js

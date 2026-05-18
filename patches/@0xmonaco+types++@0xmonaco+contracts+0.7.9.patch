@@ -1,0 +1,23 @@
+diff --git a/node_modules/@0xmonaco/types/node_modules/@0xmonaco/contracts/dist/abis/index.js b/node_modules/@0xmonaco/types/node_modules/@0xmonaco/contracts/dist/abis/index.js
+index 7b13e26..ec9e90b 100644
+--- a/node_modules/@0xmonaco/types/node_modules/@0xmonaco/contracts/dist/abis/index.js
++++ b/node_modules/@0xmonaco/types/node_modules/@0xmonaco/contracts/dist/abis/index.js
+@@ -4,4 +4,4 @@
+  * This module exports all contract ABIs for the Monaco protocol.
+  * Each ABI provides type-safe contract interaction capabilities.
+  */
+-export { VAULT_ABI } from "./vault"; // Vault for managing user balances
++export { VAULT_ABI } from "./vault.js"; // Vault for managing user balances
+diff --git a/node_modules/@0xmonaco/types/node_modules/@0xmonaco/contracts/dist/index.js b/node_modules/@0xmonaco/types/node_modules/@0xmonaco/contracts/dist/index.js
+index f457028..c0b6106 100644
+--- a/node_modules/@0xmonaco/types/node_modules/@0xmonaco/contracts/dist/index.js
++++ b/node_modules/@0xmonaco/types/node_modules/@0xmonaco/contracts/dist/index.js
+@@ -5,7 +5,7 @@
+  * This package provides the interface definitions and deployed addresses
+  * for all Monaco protocol contracts.
+  */
+-import { VAULT_ABI } from "./abis";
++import { VAULT_ABI } from "./abis/index.js";
+ /**
+  * Contract ABIs for all protocol contracts.
+  * These ABIs are used to interact with the deployed contracts.

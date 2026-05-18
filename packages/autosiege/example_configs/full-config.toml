@@ -1,0 +1,43 @@
+# Full autosiege config template.
+# Keep this file local and never commit real private keys.
+
+# Monaco network preset ("local", "development", "staging", "mainnet")
+# or a custom API base URL (e.g. "https://my-monaco-api.example.com").
+network = "development"
+
+# Optional explicit overrides.
+rpcUrl = "https://evm-rpc-testnet.sei-apis.com"
+wsUrl = "wss://develop.apimonaco.xyz/ws"
+
+# Required for authenticated order placement.
+# Select which key to use with CLI arg: --wallet-id <index> (default: 0).
+privateKeys = [
+  "0xYOUR_64_HEX_PRIVATE_KEY_0",
+  "0xYOUR_64_HEX_PRIVATE_KEY_1",
+]
+# Optional single key fallback (if privateKeys is omitted).
+# privateKey = "0xYOUR_64_HEX_PRIVATE_KEY"
+clientId = "YOUR_MONACO_CLIENT_ID"
+
+# Trading configuration.
+tradingPair = "BTC/USDC"
+# Quote notional per order (for BTC/USDC, this is USDC amount).
+quantity = "10"
+ordersPerSec = 10
+workers = 4
+
+# Stop conditions: set at least one.
+durationSec = 60
+# maxOrders = 1000
+
+# Side mode: "buy" | "sell" | "alternate"
+side = "alternate"
+
+# Order options.
+tradingMode = "SPOT" # "SPOT" | "MARGIN"
+
+# Slippage tolerance in basis points (100 = 1%).
+slippageBps = 50
+
+# Progress log interval in seconds.
+logEverySec = 5

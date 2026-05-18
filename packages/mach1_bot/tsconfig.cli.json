@@ -1,0 +1,18 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "noEmit": false,
+    "baseUrl": "./",
+    "paths": {
+      "@/*": ["src/*"],
+      "mach1_sdk": ["../mach1_sdk/src/index.ts"]
+    },
+    "typeRoots": ["../../node_modules/@types", "./types"],
+    "resolveJsonModule": true,
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist", "tests/**/*", "examples/**/*"]
+}

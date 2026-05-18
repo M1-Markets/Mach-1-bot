@@ -1,0 +1,47 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+test("root and subpath exports resolve", async () => {
+  const root = await import("mach1_sdk");
+  const monaco = await import("mach1_sdk/monaco");
+  const sdk = await import("mach1_sdk/sdk");
+  const api = await import("mach1_sdk/api");
+  const marginAccountsApi = await import("mach1_sdk/api/margin-accounts/api");
+  const marketApi = await import("mach1_sdk/api/market/api");
+  const perp = await import("mach1_sdk/api/perp");
+  const perpRoutes = await import("mach1_sdk/api/perp/routes");
+  const positionsApi = await import("mach1_sdk/api/positions/api");
+  const websocket = await import("mach1_sdk/api/websocket");
+  const errors = await import("mach1_sdk/errors");
+  const networks = await import("mach1_sdk/networks");
+  const types = await import("mach1_sdk/types");
+  const utils = await import("mach1_sdk/utils");
+
+  assert.equal(typeof root.createMach1SDK, "function");
+  assert.equal(typeof root.createMonacoSDK, "function");
+  assert.equal(typeof sdk.createMach1SDK, "function");
+  assert.equal(typeof sdk.createMonacoSDK, "function");
+  assert.equal(typeof root.Mach1SDK, "function");
+  assert.equal(typeof root.MonacoSDK, "function");
+  assert.equal(typeof sdk.Mach1SDK, "function");
+  assert.equal(typeof sdk.MonacoSDK, "function");
+  assert.equal(typeof root.MonacoCoreSDK, "function");
+  assert.equal(typeof monaco.MonacoCoreSDK, "function");
+  assert.equal(typeof root.tradingPairResolver.resolveSymbolToId, "function");
+  assert.equal(typeof monaco.tradingPairResolver.resolveSymbolToId, "function");
+  assert.equal(typeof monaco.TradingPairResolver, "function");
+  assert.equal(typeof monaco.resolveMonacoApiUrl, "function");
+  assert.equal(typeof api.BaseAPI, "function");
+  assert.equal(typeof api.MarginAccountsAPIImpl, "function");
+  assert.equal(typeof marketApi.MarketAPIImpl, "function");
+  assert.equal(typeof marginAccountsApi.MarginAccountsAPIImpl, "function");
+  assert.equal(typeof positionsApi.PositionsAPIImpl, "function");
+  assert.equal(typeof perp.perpRoutes, "object");
+  assert.equal(typeof perpRoutes.perpRoutes, "object");
+  assert.equal(typeof websocket.createMonacoWebSocket, "function");
+  assert.equal(typeof errors.APIError, "function");
+  assert.equal(typeof networks.resolveApiUrl, "function");
+  assert.equal(typeof types.validate, "function");
+  assert.equal(typeof root.validate, "function");
+  assert.ok(Array.isArray(utils.ALL_MAGNITUDES));
+});

@@ -1,0 +1,386 @@
+diff --git a/node_modules/@0xmonaco/core/dist/api/applications/api.js b/node_modules/@0xmonaco/core/dist/api/applications/api.js
+index b460994..2ec67f6 100644
+--- a/node_modules/@0xmonaco/core/dist/api/applications/api.js
++++ b/node_modules/@0xmonaco/core/dist/api/applications/api.js
+@@ -17,7 +17,7 @@
+  * console.log(`Allowed origins: ${config.allowedOrigins.join(', ')}`);
+  * ```
+  */
+-import { BaseAPI } from "../base";
++import { BaseAPI } from "../base.js";
+ export class ApplicationsAPIImpl extends BaseAPI {
+     /**
+      * Gets the configuration for the authenticated application.
+diff --git a/node_modules/@0xmonaco/core/dist/api/applications/index.js b/node_modules/@0xmonaco/core/dist/api/applications/index.js
+index 24f848f..d82d15d 100644
+--- a/node_modules/@0xmonaco/core/dist/api/applications/index.js
++++ b/node_modules/@0xmonaco/core/dist/api/applications/index.js
+@@ -1,4 +1,4 @@
+ /**
+  * Applications API Module
+  */
+-export { ApplicationsAPIImpl } from "./api";
++export { ApplicationsAPIImpl } from "./api.js";
+diff --git a/node_modules/@0xmonaco/core/dist/api/auth/api.js b/node_modules/@0xmonaco/core/dist/api/auth/api.js
+index 9738ba4..7b336ae 100644
+--- a/node_modules/@0xmonaco/core/dist/api/auth/api.js
++++ b/node_modules/@0xmonaco/core/dist/api/auth/api.js
+@@ -28,8 +28,8 @@
+  * const backendAuth = await authAPI.authenticateBackend(secretKey);
+  * ```
+  */
+-import { InvalidConfigError } from "../../errors";
+-import { BaseAPI } from "../base";
++import { InvalidConfigError } from "../../errors/index.js";
++import { BaseAPI } from "../base.js";
+ export class AuthAPIImpl extends BaseAPI {
+     chain;
+     walletClient;
+diff --git a/node_modules/@0xmonaco/core/dist/api/auth/index.js b/node_modules/@0xmonaco/core/dist/api/auth/index.js
+index f3ac1cd..184ae65 100644
+--- a/node_modules/@0xmonaco/core/dist/api/auth/index.js
++++ b/node_modules/@0xmonaco/core/dist/api/auth/index.js
+@@ -1,4 +1,4 @@
+ /**
+  * Auth API Module
+  */
+-export { AuthAPIImpl } from "./api";
++export { AuthAPIImpl } from "./api.js";
+diff --git a/node_modules/@0xmonaco/core/dist/api/base.js b/node_modules/@0xmonaco/core/dist/api/base.js
+index a7ed744..e19a73e 100644
+--- a/node_modules/@0xmonaco/core/dist/api/base.js
++++ b/node_modules/@0xmonaco/core/dist/api/base.js
+@@ -21,7 +21,7 @@
+  * ```
+  */
+ import { StatusCodes } from "http-status-codes";
+-import { APIError } from "../errors";
++import { APIError } from "../errors/index.js";
+ export class BaseAPI {
+     apiUrl;
+     accessToken;
+diff --git a/node_modules/@0xmonaco/core/dist/api/fees/api.js b/node_modules/@0xmonaco/core/dist/api/fees/api.js
+index ab2c666..9076d85 100644
+--- a/node_modules/@0xmonaco/core/dist/api/fees/api.js
++++ b/node_modules/@0xmonaco/core/dist/api/fees/api.js
+@@ -22,7 +22,7 @@
+  * ```
+  */
+ import { SimulateFeeParamsSchema, validate } from "@0xmonaco/types";
+-import { BaseAPI } from "../base";
++import { BaseAPI } from "../base.js";
+ export class FeesAPIImpl extends BaseAPI {
+     /**
+      * Simulate fees for an order before placing it.
+diff --git a/node_modules/@0xmonaco/core/dist/api/fees/index.js b/node_modules/@0xmonaco/core/dist/api/fees/index.js
+index 383a478..cf8438d 100644
+--- a/node_modules/@0xmonaco/core/dist/api/fees/index.js
++++ b/node_modules/@0xmonaco/core/dist/api/fees/index.js
+@@ -3,4 +3,4 @@
+  *
+  * Exports fees API implementation.
+  */
+-export { FeesAPIImpl } from "./api";
++export { FeesAPIImpl } from "./api.js";
+diff --git a/node_modules/@0xmonaco/core/dist/api/index.js b/node_modules/@0xmonaco/core/dist/api/index.js
+index e619ba2..5b52d6b 100644
+--- a/node_modules/@0xmonaco/core/dist/api/index.js
++++ b/node_modules/@0xmonaco/core/dist/api/index.js
+@@ -3,16 +3,16 @@
+  *
+  * This module exports the new simplified APIs for the Monaco SDK.
+  */
+-export * from "./applications/index";
+-export * from "./base";
+-export * from "./fees";
+-export * from "./margin-accounts";
+-export * from "./market";
+-export * from "./orderbook";
+-export * from "./perp";
+-export * from "./positions";
+-export * from "./profile";
+-export * from "./trades";
+-export * from "./trading";
+-export * from "./vault";
+-export * from "./websocket";
++export * from "./applications/index.js";
++export * from "./base.js";
++export * from "./fees/index.js";
++export * from "./margin-accounts/index.js";
++export * from "./market/index.js";
++export * from "./orderbook/index.js";
++export * from "./perp/index.js";
++export * from "./positions/index.js";
++export * from "./profile/index.js";
++export * from "./trades/index.js";
++export * from "./trading/index.js";
++export * from "./vault/index.js";
++export * from "./websocket/index.js";
+diff --git a/node_modules/@0xmonaco/core/dist/api/margin-accounts/api.js b/node_modules/@0xmonaco/core/dist/api/margin-accounts/api.js
+index 76e2a5b..8fb77d5 100644
+--- a/node_modules/@0xmonaco/core/dist/api/margin-accounts/api.js
++++ b/node_modules/@0xmonaco/core/dist/api/margin-accounts/api.js
+@@ -1,6 +1,6 @@
+ import { CreateMarginAccountSchema, GetAvailableCollateralSchema, GetMarginAccountMovementsSchema, GetMarginAccountSummarySchema, ListMarginAccountsSchema, SimulateOrderRiskSchema, TransferCollateralSchema, validate, } from "@0xmonaco/types";
+-import { BaseAPI } from "../base";
+-import { perpRoutes } from "../perp";
++import { BaseAPI } from "../base.js";
++import { perpRoutes } from "../perp/index.js";
+ export class MarginAccountsAPIImpl extends BaseAPI {
+     async listMarginAccounts(params) {
+         if (params) {
+diff --git a/node_modules/@0xmonaco/core/dist/api/margin-accounts/index.js b/node_modules/@0xmonaco/core/dist/api/margin-accounts/index.js
+index 87cf89b..4c2625a 100644
+--- a/node_modules/@0xmonaco/core/dist/api/margin-accounts/index.js
++++ b/node_modules/@0xmonaco/core/dist/api/margin-accounts/index.js
+@@ -1 +1 @@
+-export { MarginAccountsAPIImpl } from "./api";
++export { MarginAccountsAPIImpl } from "./api.js";
+diff --git a/node_modules/@0xmonaco/core/dist/api/market/api.js b/node_modules/@0xmonaco/core/dist/api/market/api.js
+index bb31f2b..1d1fc88 100644
+--- a/node_modules/@0xmonaco/core/dist/api/market/api.js
++++ b/node_modules/@0xmonaco/core/dist/api/market/api.js
+@@ -1,6 +1,6 @@
+ import { GetCandlesticksByPairIdSchema, GetMarketMetadataSchema, validate } from "@0xmonaco/types";
+-import { BaseAPI } from "../base";
+-import { perpRoutes } from "../perp";
++import { BaseAPI } from "../base.js";
++import { perpRoutes } from "../perp/index.js";
+ /**
+  * Market API Implementation
+  *
+diff --git a/node_modules/@0xmonaco/core/dist/api/market/index.js b/node_modules/@0xmonaco/core/dist/api/market/index.js
+index a253bf1..7fd1b4a 100644
+--- a/node_modules/@0xmonaco/core/dist/api/market/index.js
++++ b/node_modules/@0xmonaco/core/dist/api/market/index.js
+@@ -1 +1 @@
+-export { MarketAPIImpl } from "./api";
++export { MarketAPIImpl } from "./api.js";
+diff --git a/node_modules/@0xmonaco/core/dist/api/orderbook/api.js b/node_modules/@0xmonaco/core/dist/api/orderbook/api.js
+index 9bea9fa..919bb00 100644
+--- a/node_modules/@0xmonaco/core/dist/api/orderbook/api.js
++++ b/node_modules/@0xmonaco/core/dist/api/orderbook/api.js
+@@ -1,4 +1,4 @@
+-import { BaseAPI } from "../base";
++import { BaseAPI } from "../base.js";
+ export class OrderbookAPIImpl extends BaseAPI {
+     async getOrderbook(tradingPairId, options = {}) {
+         const { depth = 10, tradingMode, magnitude, denomination } = options;
+diff --git a/node_modules/@0xmonaco/core/dist/api/orderbook/index.js b/node_modules/@0xmonaco/core/dist/api/orderbook/index.js
+index 8bb5dda..6d13680 100644
+--- a/node_modules/@0xmonaco/core/dist/api/orderbook/index.js
++++ b/node_modules/@0xmonaco/core/dist/api/orderbook/index.js
+@@ -1 +1 @@
+-export { OrderbookAPIImpl } from "./api";
++export { OrderbookAPIImpl } from "./api.js";
+diff --git a/node_modules/@0xmonaco/core/dist/api/perp/index.js b/node_modules/@0xmonaco/core/dist/api/perp/index.js
+index 4fa35fe..eda9ed2 100644
+--- a/node_modules/@0xmonaco/core/dist/api/perp/index.js
++++ b/node_modules/@0xmonaco/core/dist/api/perp/index.js
+@@ -1 +1 @@
+-export { perpRoutes } from "./routes";
++export { perpRoutes } from "./routes.js";
+diff --git a/node_modules/@0xmonaco/core/dist/api/positions/api.js b/node_modules/@0xmonaco/core/dist/api/positions/api.js
+index 596c368..dfcc28c 100644
+--- a/node_modules/@0xmonaco/core/dist/api/positions/api.js
++++ b/node_modules/@0xmonaco/core/dist/api/positions/api.js
+@@ -1,6 +1,6 @@
+ import { AddPositionMarginSchema, AttachPositionTpSlSchema, ClosePositionSchema, GetPositionRiskSchema, GetPositionSchema, ListPositionHistorySchema, ListPositionsSchema, ReducePositionMarginSchema, validate, } from "@0xmonaco/types";
+-import { BaseAPI } from "../base";
+-import { perpRoutes } from "../perp";
++import { BaseAPI } from "../base.js";
++import { perpRoutes } from "../perp/index.js";
+ export class PositionsAPIImpl extends BaseAPI {
+     async listPositions(params) {
+         if (params) {
+diff --git a/node_modules/@0xmonaco/core/dist/api/positions/index.js b/node_modules/@0xmonaco/core/dist/api/positions/index.js
+index e3a6a7b..dfac1b8 100644
+--- a/node_modules/@0xmonaco/core/dist/api/positions/index.js
++++ b/node_modules/@0xmonaco/core/dist/api/positions/index.js
+@@ -1 +1 @@
+-export { PositionsAPIImpl } from "./api";
++export { PositionsAPIImpl } from "./api.js";
+diff --git a/node_modules/@0xmonaco/core/dist/api/profile/api.js b/node_modules/@0xmonaco/core/dist/api/profile/api.js
+index edaa3ee..f03e332 100644
+--- a/node_modules/@0xmonaco/core/dist/api/profile/api.js
++++ b/node_modules/@0xmonaco/core/dist/api/profile/api.js
+@@ -18,8 +18,8 @@
+  * ```
+  */
+ import { GetUserMovementsSchema, GetUserTradesSchema, validate } from "@0xmonaco/types";
+-import { APIError } from "../../errors";
+-import { BaseAPI } from "../base";
++import { APIError } from "../../errors/index.js";
++import { BaseAPI } from "../base.js";
+ export class ProfileAPIImpl extends BaseAPI {
+     /**
+      * Get the current user's profile information.
+diff --git a/node_modules/@0xmonaco/core/dist/api/profile/index.js b/node_modules/@0xmonaco/core/dist/api/profile/index.js
+index b764902..99ffddf 100644
+--- a/node_modules/@0xmonaco/core/dist/api/profile/index.js
++++ b/node_modules/@0xmonaco/core/dist/api/profile/index.js
+@@ -3,4 +3,4 @@
+  *
+  * Exports the ProfileAPI implementation for user profile operations.
+  */
+-export * from "./api";
++export * from "./api.js";
+diff --git a/node_modules/@0xmonaco/core/dist/api/trades/api.js b/node_modules/@0xmonaco/core/dist/api/trades/api.js
+index 0628e63..fb560df 100644
+--- a/node_modules/@0xmonaco/core/dist/api/trades/api.js
++++ b/node_modules/@0xmonaco/core/dist/api/trades/api.js
+@@ -1,4 +1,4 @@
+-import { BaseAPI } from "../base";
++import { BaseAPI } from "../base.js";
+ /**
+  * Convert a raw trade event (snake_case) to a TradeEvent (camelCase)
+  */
+diff --git a/node_modules/@0xmonaco/core/dist/api/trades/index.js b/node_modules/@0xmonaco/core/dist/api/trades/index.js
+index d158c57..e4fa9cd 100644
+--- a/node_modules/@0xmonaco/core/dist/api/trades/index.js
++++ b/node_modules/@0xmonaco/core/dist/api/trades/index.js
+@@ -1 +1 @@
+-export * from "./api";
++export * from "./api.js";
+diff --git a/node_modules/@0xmonaco/core/dist/api/trading/api.js b/node_modules/@0xmonaco/core/dist/api/trading/api.js
+index cab5988..2c7726c 100644
+--- a/node_modules/@0xmonaco/core/dist/api/trading/api.js
++++ b/node_modules/@0xmonaco/core/dist/api/trading/api.js
+@@ -22,8 +22,8 @@
+  * ```
+  */
+ import { BatchCreateOrdersSchema, BatchReplaceOrdersSchema, CancelConditionalOrderSchema, CancelOrderSchema, CreateConditionalOrderSchema, GetPaginatedOrdersSchema, ListConditionalOrdersSchema, PlaceLimitOrderSchema, PlaceMarketOrderSchema, ReplaceOrderSchema, validate, } from "@0xmonaco/types";
+-import { BaseAPI } from "../base";
+-import { perpRoutes } from "../perp";
++import { BaseAPI } from "../base.js";
++import { perpRoutes } from "../perp/index.js";
+ function parentTpSlLegToRequest(leg) {
+     if (!leg)
+         return undefined;
+diff --git a/node_modules/@0xmonaco/core/dist/api/trading/index.js b/node_modules/@0xmonaco/core/dist/api/trading/index.js
+index 6bc2067..d9d3dc9 100644
+--- a/node_modules/@0xmonaco/core/dist/api/trading/index.js
++++ b/node_modules/@0xmonaco/core/dist/api/trading/index.js
+@@ -1,4 +1,4 @@
+ /**
+  * Trading API Module
+  */
+-export { TradingAPIImpl } from "./api";
++export { TradingAPIImpl } from "./api.js";
+diff --git a/node_modules/@0xmonaco/core/dist/api/vault/api.js b/node_modules/@0xmonaco/core/dist/api/vault/api.js
+index 1bb0c14..23b18e0 100644
+--- a/node_modules/@0xmonaco/core/dist/api/vault/api.js
++++ b/node_modules/@0xmonaco/core/dist/api/vault/api.js
+@@ -26,8 +26,8 @@
+ import { CONTRACT_ABIS } from "@0xmonaco/contracts";
+ import { ApproveTokenSchema, DepositSchema, validate, WithdrawSchema } from "@0xmonaco/types";
+ import { erc20Abi, zeroAddress } from "viem";
+-import { APIError, ContractError, InvalidConfigError } from "../../errors";
+-import { BaseAPI } from "../base";
++import { APIError, ContractError, InvalidConfigError } from "../../errors/index.js";
++import { BaseAPI } from "../base.js";
+ export class VaultAPIImpl extends BaseAPI {
+     publicClient;
+     chain;
+diff --git a/node_modules/@0xmonaco/core/dist/api/vault/index.js b/node_modules/@0xmonaco/core/dist/api/vault/index.js
+index 57ce651..3e473a1 100644
+--- a/node_modules/@0xmonaco/core/dist/api/vault/index.js
++++ b/node_modules/@0xmonaco/core/dist/api/vault/index.js
+@@ -1,4 +1,4 @@
+ /**
+  * Vault API Module
+  */
+-export { VaultAPIImpl } from "./api";
++export { VaultAPIImpl } from "./api.js";
+diff --git a/node_modules/@0xmonaco/core/dist/api/websocket/index.js b/node_modules/@0xmonaco/core/dist/api/websocket/index.js
+index 268e83b..8517497 100644
+--- a/node_modules/@0xmonaco/core/dist/api/websocket/index.js
++++ b/node_modules/@0xmonaco/core/dist/api/websocket/index.js
+@@ -1,3 +1,3 @@
+-export * from "./types";
+-export * from "./utils";
+-export * from "./websocket";
++export * from "./types.js";
++export * from "./utils.js";
++export * from "./websocket.js";
+diff --git a/node_modules/@0xmonaco/core/dist/api/websocket/websocket.js b/node_modules/@0xmonaco/core/dist/api/websocket/websocket.js
+index f1ef469..52b3ca8 100644
+--- a/node_modules/@0xmonaco/core/dist/api/websocket/websocket.js
++++ b/node_modules/@0xmonaco/core/dist/api/websocket/websocket.js
+@@ -1,5 +1,5 @@
+-import { ALL_MAGNITUDES } from "../../utils";
+-import { keysToCamelCase } from "./utils";
++import { ALL_MAGNITUDES } from "../../utils/index.js";
++import { keysToCamelCase } from "./utils.js";
+ // Connection constants
+ const CONNECTION_TIMEOUT = 10000;
+ const HEARTBEAT_INTERVAL = 15000;
+diff --git a/node_modules/@0xmonaco/core/dist/errors/index.js b/node_modules/@0xmonaco/core/dist/errors/index.js
+index 49bbc16..3cec8d9 100644
+--- a/node_modules/@0xmonaco/core/dist/errors/index.js
++++ b/node_modules/@0xmonaco/core/dist/errors/index.js
+@@ -1 +1 @@
+-export * from "./errors";
++export * from "./errors.js";
+diff --git a/node_modules/@0xmonaco/core/dist/index.js b/node_modules/@0xmonaco/core/dist/index.js
+index 0982051..bb644cc 100644
+--- a/node_modules/@0xmonaco/core/dist/index.js
++++ b/node_modules/@0xmonaco/core/dist/index.js
+@@ -1,5 +1,5 @@
+-export { createMonacoWebSocket } from "./api/websocket";
+-export { APIError, ContractError, InvalidConfigError, InvalidStateError, MonacoCoreError } from "./errors";
+-export { resolveApiUrl, resolveWsUrl } from "./networks";
+-export { createMonacoSDK, MonacoSDKImpl as MonacoSDK } from "./sdk";
+-export { ALL_MAGNITUDES, calculateValidMagnitudes, MAX_BUCKETS_ALLOWED, MIN_BUCKETS_ALLOWED, } from "./utils";
++export { createMonacoWebSocket } from "./api/websocket/index.js";
++export { APIError, ContractError, InvalidConfigError, InvalidStateError, MonacoCoreError } from "./errors/index.js";
++export { resolveApiUrl, resolveWsUrl } from "./networks/index.js";
++export { createMonacoSDK, MonacoSDKImpl as MonacoSDK } from "./sdk.js";
++export { ALL_MAGNITUDES, calculateValidMagnitudes, MAX_BUCKETS_ALLOWED, MIN_BUCKETS_ALLOWED, } from "./utils/index.js";
+diff --git a/node_modules/@0xmonaco/core/dist/networks/index.js b/node_modules/@0xmonaco/core/dist/networks/index.js
+index 3737efd..9f74313 100644
+--- a/node_modules/@0xmonaco/core/dist/networks/index.js
++++ b/node_modules/@0xmonaco/core/dist/networks/index.js
+@@ -1 +1 @@
+-export * from "./networks";
++export * from "./networks.js";
+diff --git a/node_modules/@0xmonaco/core/dist/sdk.js b/node_modules/@0xmonaco/core/dist/sdk.js
+index 058b602..8bd49f4 100644
+--- a/node_modules/@0xmonaco/core/dist/sdk.js
++++ b/node_modules/@0xmonaco/core/dist/sdk.js
+@@ -1,17 +1,17 @@
+ import { StatusCodes } from "http-status-codes";
+ import { createPublicClient, http } from "viem";
+ import { sei, seiTestnet } from "viem/chains";
+-import { ApplicationsAPIImpl, createMonacoWebSocket, OrderbookAPIImpl, TradesAPIImpl } from "./api";
+-import { AuthAPIImpl } from "./api/auth";
+-import { FeesAPIImpl } from "./api/fees";
+-import { MarginAccountsAPIImpl } from "./api/margin-accounts";
+-import { MarketAPIImpl } from "./api/market";
+-import { PositionsAPIImpl } from "./api/positions";
+-import { ProfileAPIImpl } from "./api/profile";
+-import { TradingAPIImpl } from "./api/trading";
+-import { VaultAPIImpl } from "./api/vault";
+-import { APIError, InvalidConfigError, InvalidStateError } from "./errors";
+-import { resolveApiUrl, resolveWsUrl } from "./networks";
++import { ApplicationsAPIImpl, createMonacoWebSocket, OrderbookAPIImpl, TradesAPIImpl } from "./api/index.js";
++import { AuthAPIImpl } from "./api/auth/index.js";
++import { FeesAPIImpl } from "./api/fees/index.js";
++import { MarginAccountsAPIImpl } from "./api/margin-accounts/index.js";
++import { MarketAPIImpl } from "./api/market/index.js";
++import { PositionsAPIImpl } from "./api/positions/index.js";
++import { ProfileAPIImpl } from "./api/profile/index.js";
++import { TradingAPIImpl } from "./api/trading/index.js";
++import { VaultAPIImpl } from "./api/vault/index.js";
++import { APIError, InvalidConfigError, InvalidStateError } from "./errors/index.js";
++import { resolveApiUrl, resolveWsUrl } from "./networks/index.js";
+ export class MonacoSDKImpl {
+     auth;
+     applications;
+diff --git a/node_modules/@0xmonaco/core/dist/utils/index.js b/node_modules/@0xmonaco/core/dist/utils/index.js
+index e2c51ef..15740f1 100644
+--- a/node_modules/@0xmonaco/core/dist/utils/index.js
++++ b/node_modules/@0xmonaco/core/dist/utils/index.js
+@@ -1 +1 @@
+-export * from "./magnitude";
++export * from "./magnitude.js";

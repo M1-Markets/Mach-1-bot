@@ -1,0 +1,46 @@
+# Example configuration with AI Helper enabled
+# This shows how to configure the bot with an AI assistant for trading analysis
+
+[bot]
+name = "AI-Enhanced Trading Bot"
+description = "A trading bot with AI assistant for market analysis and insights"
+
+[wallet]
+private_key = "your_private_key_here"
+
+[trading]
+mode = "simulation"  # Can be "backtest", "simulation", or "live"
+base_currency = "USDC"
+initial_balance = 10000
+max_position_size = 1000
+max_daily_loss = 500
+
+[strategy]
+type = "rsi"
+risk_level = "medium"
+trading_pairs = ["BTC/USDC", "ETH/USDC", "SOL/USDC"]
+
+# Custom parameters for the RSI strategy
+[strategy.parameters]
+rsiPeriod = 14
+oversoldThreshold = 30
+overboughtThreshold = 70
+positionSize = 0.1
+stopLoss = 0.05
+
+[network]
+rpc_url = "https://evm-rpc-testnet.sei.io"
+chain_id = 713715
+
+# AI Helper Configuration
+[ai_helper]
+enabled = true
+provider = "gemini"  # Options: "gemini", "chatgpt", "claude"
+api_key = "your_ai_api_key_here"
+
+# Optional: Custom AI prompt (if not specified, a default prompt will be used)
+# prompt = """
+# You are an AI trading assistant helping with cryptocurrency trading.
+# Provide insights on market trends, risk management, and trading opportunities.
+# Always prioritize capital preservation and risk management.
+# """

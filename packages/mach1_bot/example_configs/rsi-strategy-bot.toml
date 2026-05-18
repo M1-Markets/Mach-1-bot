@@ -1,0 +1,37 @@
+# Example configuration for using RSI Strategy from examples
+# This shows how to configure the advanced RSI strategy from the strategy extension system
+
+[bot]
+name = "RSI Trading Bot"
+description = "A sophisticated RSI-based mean reversion trading bot"
+
+[wallet]
+private_key = "your_private_key_here"
+
+[trading]
+mode = "backtest"  # Can be "backtest", "simulation", or "live"
+base_currency = "USDC"
+initial_balance = 10000
+max_position_size = 1000
+max_daily_loss = 500
+
+[strategy]
+# Use the registered RSI strategy from the extension system
+type = "rsi"
+id = "rsi_strategy_v1"  # This refers to the RSI strategy from examples
+risk_level = "medium"
+
+# Trading pairs to monitor
+trading_pairs = ["BTC/USDC", "ETH/USDC", "SOL/USDC"]
+
+# Custom parameters for the RSI strategy
+[strategy.parameters]
+rsiPeriod = 14              # RSI calculation period (default: 14)
+oversoldThreshold = 30      # Buy when RSI < 30 (default: 30)
+overboughtThreshold = 70    # Sell when RSI > 70 (default: 70)
+positionSize = 0.1          # Use 10% of portfolio per trade (default: 0.1)
+stopLoss = 0.05             # 5% stop loss (default: 0.05)
+
+[network]
+rpc_url = "https://evm-rpc-testnet.sei.io"
+chain_id = 713715

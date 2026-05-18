@@ -1,0 +1,3 @@
+{
+  "reject": ["@vitejs/plugin-react", "typescript"]
+}

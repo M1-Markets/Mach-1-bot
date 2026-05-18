@@ -1,0 +1,15 @@
+{
+  "name": "mach-one-sdk-workspace",
+  "private": true,
+  "scripts": {
+    "postinstall": "patch-package"
+  },
+  "workspaces": [
+    "packages/mach1_bot",
+    "packages/mach1_sdk"
+  ],
+  "dependencies": {
+    "@0xmonaco/core": "^0.7.9",
+    "@0xmonaco/types": "^0.7.9"
+  }
+}

@@ -1,0 +1,35 @@
+# Grid Trading Strategy Configuration
+[general]
+name = "grid-trading-bot"
+description = "Grid trading strategy bot for ETH/USDC"
+
+[wallet]
+private_key = "0x1234567890123456789012345678901234567890123456789012345678901234"
+
+[trading]
+mode = "backtest"
+base_currency = "USDC"
+initial_balance = 10000
+max_position_size = 2000
+max_daily_loss = 500
+
+[strategy]
+type = "grid"
+risk_level = "medium"
+
+# Grid Strategy Parameters
+[strategy.parameters]
+pair = "ETH/USDC"
+lowerBound = 2500.0    # Lower price bound for the grid
+upperBound = 3500.0    # Upper price bound for the grid
+gridCount = 10         # Number of grid levels
+totalAmount = 5000.0   # Total USD amount for grid trading
+mode = "neutral"       # Grid mode: neutral, long, or short
+rebalanceThreshold = 5.0  # Percentage threshold for rebalancing
+takeProfit = 20.0      # Profit percentage target
+stopLoss = -15.0       # Loss percentage limit
+maxActiveOrders = 20   # Maximum concurrent orders
+
+[network]
+rpc_url = "https://evm-rpc-testnet.sei.io"
+chain_id = 713715
