@@ -33,6 +33,7 @@ import {
   getDefaultAiPrompt,
   getStrategiesByCategory,
   getStrategyById,
+  isVerboseLogLevel,
   initializeMach1Bot,
   parseTomlConfig,
   searchStrategies,
@@ -910,18 +911,17 @@ export const registerCliCommands = (target: Command): Command => {
 type RunOptions = { testMode?: boolean; logPrefix?: string };
 
 async function runBot(configFile: string, runOptions: RunOptions = {}) {
-  console.log(pc.cyan(`🚀 Starting mach-one-bot with config: ${configFile}`));
   let runUi: RunUiController | undefined;
   let restoreConsole: (() => void) | undefined;
   const disableUi = process.env.MACH_ONE_NO_UI === "1";
 
   try {
     // Load and parse TOML configuration
-    console.log(pc.blue("📖 Loading configuration..."));
     const tomlConfig = await parseTomlConfig(configFile);
 
     // Convert TOML config to bot configuration
     const botConfig = convertToBotConfig(tomlConfig);
+    const verbose = isVerboseLogLevel(botConfig.logLevel);
 
     // Get additional config for bot initialization
     const initialBalance = tomlConfig.trading?.initial_balance || 10000;
@@ -967,7 +967,11 @@ async function runBot(configFile: string, runOptions: RunOptions = {}) {
     } else {
       restoreConsole = attachFileLogger(logFilePath);
     }
-    console.log(pc.gray(`📝 Logging to ${logFilePath}`));
+    if (verbose) {
+      console.log(pc.cyan(`🚀 Starting mach-one-bot with config: ${configFile}`));
+      console.log(pc.blue("📖 Loading configuration..."));
+      console.log(pc.gray(`📝 Logging to ${logFilePath}`));
+    }
 
     // Initialize Mach1Bot with configuration
     const initOptions: BotInitializationOptions = {
@@ -990,10 +994,14 @@ async function runBot(configFile: string, runOptions: RunOptions = {}) {
     await executeBotMode(bot, botConfig, initialBalance);
     runUi?.setStatus("Running");
 
-    console.log(pc.gray("🛑 Press Ctrl+C to stop the bot"));
+    if (verbose) {
+      console.log(pc.gray("🛑 Press Ctrl+C to stop the bot"));
+    }
 
     if (runOptions.testMode) {
-      console.log(pc.gray("⏱️ Test mode: bot will auto-exit after 1 minutes"));
+      if (verbose) {
+        console.log(pc.gray("⏱️ Test mode: bot will auto-exit after 1 minutes"));
+      }
       setTimeout(
         async () => {
           try {

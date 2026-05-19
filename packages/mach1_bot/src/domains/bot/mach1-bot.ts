@@ -51,6 +51,7 @@ import type {
 import { LiveTradingConfig } from "@/shared/types/execution";
 import type {
   OrderBookEvent,
+  InternalOrder,
   TradeEvent,
 } from "@/shared/types/internal-events";
 import { RiskLimits as TradingRiskLimits } from "@/shared/types/trading";
@@ -118,6 +119,10 @@ const isOptimizationMethod = (
 ): value is OptimizationConfig["method"] =>
   typeof value === "string" &&
   optimizationMethods.has(value as OptimizationConfig["method"]);
+
+const isVerboseLogLevel = (
+  logLevel: BotConfig["logLevel"] | undefined,
+): boolean => typeof logLevel === "string" && logLevel.toUpperCase() === "DEBUG";
 
 type StrategySummary = {
   id: string;
@@ -397,11 +402,7 @@ export class Mach1Bot {
     const currentPrice = await this.getPriceForMode(pair);
     const orderType = options.orderType || "market";
 
-    const quantity = options.amountUsd
-      ? BigInt(
-          Math.floor(((options.amountUsd * 100) / Number(currentPrice)) * 100),
-        )
-      : BigInt(options.amount || 0);
+    const quantity = this.calculateOrderQuantity(currentPrice, options);
 
     const orderRequest: OrderRequest = {
       baseToken: pair.base,
@@ -463,6 +464,8 @@ export class Mach1Bot {
           ? await this.orderManager.placeLimitOrder(orderRequest)
           : await this.orderManager.placeMarketOrder(orderRequest);
 
+      await this.recordFilledSimulationOrder(orderRequest, result);
+
       return {
         id: result.orderId,
         symbol,
@@ -484,11 +487,7 @@ export class Mach1Bot {
     const currentPrice = await this.getPriceForMode(pair);
     const orderType = options.orderType || "market";
 
-    const quantity = options.amountUsd
-      ? BigInt(
-          Math.floor(((options.amountUsd * 100) / Number(currentPrice)) * 100),
-        )
-      : BigInt(options.amount || 0);
+    const quantity = this.calculateOrderQuantity(currentPrice, options);
 
     const orderRequest: OrderRequest = {
       baseToken: pair.base,
@@ -550,6 +549,8 @@ export class Mach1Bot {
           ? await this.orderManager.placeLimitOrder(orderRequest)
           : await this.orderManager.placeMarketOrder(orderRequest);
 
+      await this.recordFilledSimulationOrder(orderRequest, result);
+
       return {
         id: result.orderId,
         symbol,
@@ -560,6 +561,53 @@ export class Mach1Bot {
         status: result.status,
       };
     }
+  }
+
+  private async recordFilledSimulationOrder(
+    orderRequest: OrderRequest,
+    result: { orderId: string; status: string },
+  ): Promise<void> {
+    if (result.status !== "filled") {
+      return;
+    }
+
+    const internalOrder: InternalOrder = {
+      id: result.orderId,
+      trader: "0x0000000000000000000000000000000000000000",
+      baseToken: orderRequest.baseToken,
+      quoteToken: orderRequest.quoteToken,
+      price: orderRequest.price,
+      quantity: orderRequest.quantity,
+      filledQuantity: orderRequest.quantity,
+      remainingQuantity: 0n,
+      orderType:
+        orderRequest.orderType === "limit" ? "LIMIT" : "MARKET",
+      status: "FILLED",
+      isBuy: orderRequest.isBuy,
+      timestamp: Date.now(),
+    };
+
+    await this.positionTracker.recordTrade(
+      internalOrder,
+      orderRequest.price,
+      orderRequest.quantity,
+    );
+  }
+
+  private calculateOrderQuantity(
+    currentPrice: bigint,
+    options: TradeOptions,
+  ): bigint {
+    if (options.amountUsd !== undefined) {
+      const rawQuantity = Math.floor(
+        ((options.amountUsd * 100) / Number(currentPrice)) * 100,
+      );
+
+      // Preserve tiny notional orders in simulation instead of rounding to zero.
+      return BigInt(options.amountUsd > 0 ? Math.max(rawQuantity, 1) : 0);
+    }
+
+    return BigInt(options.amount || 0);
   }
 
   private parseSymbol(symbol: string): TradingPair {
@@ -928,6 +976,18 @@ export class Mach1Bot {
     this.preferredTradingPairs = cleaned;
   }
 
+  private async getAllLiveSymbols(): Promise<string[]> {
+    const resolver = this.tradingPairResolver;
+    const pairs = await this.marketManager.getAllTradingPairs();
+
+    return pairs.map((pair) => {
+      const symbol = pair.symbol.includes("-")
+        ? pair.symbol.replace("-", "/")
+        : pair.symbol;
+      return resolver ? resolver.normalizeSymbol(symbol) : symbol;
+    });
+  }
+
   /**
    * Wait for a price condition to trigger an order, polling live prices.
    */
@@ -1219,15 +1279,19 @@ export class Mach1Bot {
     // Initialize LiveTradingEngine and keep it for order routing
     const _liveEngine = await this.getOrCreateLiveEngine(options);
 
-    console.log("✅ Live trading engine initialized");
-    console.log(`🌐 Connected to: ${this.config.rpcUrl}`);
-    console.log(`📊 Max slippage: 1.00%`);
+    if (isVerboseLogLevel(this.config.logLevel)) {
+      console.log("✅ Live trading engine initialized");
+      console.log(`🌐 Connected to: ${this.config.rpcUrl}`);
+      console.log(`📊 Max slippage: 1.00%`);
+    }
 
     if (this.strategyCallback) {
       const strategyLabel = this.getActiveStrategyLabel();
-      console.log(
-        `🔄 Executing strategy in LIVE mode${strategyLabel ? `: ${strategyLabel}` : ""}...`,
-      );
+      if (isVerboseLogLevel(this.config.logLevel)) {
+        console.log(
+          `🔄 Executing strategy in LIVE mode${strategyLabel ? `: ${strategyLabel}` : ""}...`,
+        );
+      }
 
       // Set up real-time strategy execution
       const executeStrategy = async () => {
@@ -1408,22 +1472,22 @@ export class Mach1Bot {
     const resolver = this.tradingPairResolver;
 
     if (this.preferredTradingPairs.length > 0) {
-      return this.preferredTradingPairs.map((symbol) =>
-        resolver ? resolver.normalizeSymbol(symbol) : symbol,
+      const normalizedPreferredPairs = this.preferredTradingPairs.map(
+        (symbol) => (resolver ? resolver.normalizeSymbol(symbol) : symbol),
       );
+
+      if (
+        normalizedPreferredPairs.some(
+          (symbol) => symbol === "*" || symbol.toLowerCase() === "all",
+        )
+      ) {
+        return this.getAllLiveSymbols();
+      }
+
+      return normalizedPreferredPairs;
     }
 
-    const pairs = await this.marketManager.getAllTradingPairs();
-    if (pairs.length === 0) {
-      return [];
-    }
-
-    return pairs.map((pair) => {
-      const symbol = pair.symbol.includes("-")
-        ? pair.symbol.replace("-", "/")
-        : pair.symbol;
-      return resolver ? resolver.normalizeSymbol(symbol) : symbol;
-    });
+    return this.getAllLiveSymbols();
   }
 
   /**

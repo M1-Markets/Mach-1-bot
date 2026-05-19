@@ -47,6 +47,12 @@ const formatPrice = (price?: number): string =>
 
 const formatAmount = (amountUsd: number): string => `$${amountUsd.toFixed(2)}`;
 
+const fitLine = (value: string, width: number): string => {
+  if (width <= 0) return "";
+  if (value.length > width) return value.slice(0, width);
+  return value.padEnd(width);
+};
+
 const fitTableLines = (lines: string[], maxLines: number): string[] => {
   if (maxLines <= 0) return [];
   if (lines.length <= maxLines) return lines;
@@ -59,7 +65,7 @@ const makeRunComponent = (Ink: InkModule) => {
 
   return ({ state }: { state: RunUiState }) => {
     const viewport = resolveViewport(state.viewport);
-    const contentWidth = Math.max(20, viewport.width - 2);
+    const contentWidth = Math.max(20, viewport.width - 6);
     const orderLines = buildTableLines(
       [
         "Time",
@@ -96,56 +102,97 @@ const makeRunComponent = (Ink: InkModule) => {
       state.network ? `Network: ${state.network}` : undefined,
     ].filter((value): value is string => Boolean(value));
 
-    const headerLines =
-      2 + (state.walletAddress ? 1 : 0) + (infoParts.length > 0 ? 1 : 0);
-    const contentHeight = Math.max(4, viewport.height - headerLines);
-    const ordersHeight = Math.max(2, Math.floor(contentHeight / 2));
-    const logsHeight = Math.max(2, contentHeight - ordersHeight);
-    const orderContentLines = Math.max(0, ordersHeight - 1);
-    const logContentLines = Math.max(0, logsHeight - 1);
+    const walletLine = state.walletAddress
+      ? `WALLET ${state.walletAddress}`
+      : "WALLET not connected";
+    const metaLine =
+      infoParts.length > 0 ? infoParts.join(" | ") : "Mode: - | Strategy: -";
+    const chromeHeight = 7;
+    const contentHeight = Math.max(4, viewport.height - chromeHeight);
+    const ordersHeight = Math.max(3, Math.floor(contentHeight / 2));
+    const logsHeight = Math.max(3, contentHeight - ordersHeight);
+    const orderContentLines = Math.max(0, ordersHeight - 3);
+    const logContentLines = Math.max(0, logsHeight - 3);
     const visibleOrderLines = fitTableLines(orderLines, orderContentLines);
     const visibleLogLines = fitTableLines(logLines, logContentLines);
+    const statusBar = fitLine(
+      ` MACH-ONE BOT // ${state.status.toUpperCase()}`,
+      viewport.width,
+    );
+    const footer = fitLine(
+      ` ORDERS ${state.orders.length} | LOGS ${state.logs.length} | CTRL-C EXIT`,
+      viewport.width,
+    );
 
     return (
       <Box
         flexDirection="column"
         width={viewport.width}
         height={viewport.height}
-        paddingLeft={1}
-        paddingRight={1}
       >
-        <Text color="cyan">🤖 Mach-One Bot</Text>
-        {state.walletAddress ? (
-          <Text color="gray">{`Wallet: ${state.walletAddress}`}</Text>
-        ) : null}
-        <Text color="gray">{`Status: ${state.status}`}</Text>
-        {infoParts.length > 0 ? (
-          <Text color="gray" key="meta">
-            {infoParts.join(" | ")}
+        <Text color="black" backgroundColor="cyan">
+          {statusBar}
+        </Text>
+        <Box
+          borderStyle="single"
+          borderColor="cyan"
+          flexDirection="column"
+          paddingLeft={1}
+          paddingRight={1}
+        >
+          <Text color="green">{fitLine(walletLine, contentWidth)}</Text>
+          <Text color="green">
+            {fitLine(`STATUS ${state.status}`, contentWidth)}
           </Text>
-        ) : null}
+          <Text color="green">{fitLine(metaLine, contentWidth)}</Text>
+        </Box>
         <Box flexDirection="column" flexGrow={1}>
-          <Box flexDirection="column" height={ordersHeight}>
-            <Text color="cyan">Orders</Text>
+          <Box
+            borderStyle="single"
+            borderColor="green"
+            flexDirection="column"
+            height={ordersHeight}
+            paddingLeft={1}
+            paddingRight={1}
+          >
+            <Text color="cyan" bold>
+              ORDERS
+            </Text>
             {visibleOrderLines.length > 0 ? (
               visibleOrderLines.map((line) => (
-                <Text key={`order-${line}`}>{line}</Text>
+                <Text color="green" key={`order-${line}`}>
+                  {line}
+                </Text>
               ))
             ) : (
-              <Text color="gray">No orders yet.</Text>
+              <Text color="gray">[empty] No orders yet.</Text>
             )}
           </Box>
-          <Box flexDirection="column" height={logsHeight}>
-            <Text color="cyan">Logs</Text>
+          <Box
+            borderStyle="single"
+            borderColor="green"
+            flexDirection="column"
+            height={logsHeight}
+            paddingLeft={1}
+            paddingRight={1}
+          >
+            <Text color="cyan" bold>
+              LOGS
+            </Text>
             {visibleLogLines.length > 0 ? (
               visibleLogLines.map((line) => (
-                <Text key={`log-${line}`}>{line}</Text>
+                <Text color="green" key={`log-${line}`}>
+                  {line}
+                </Text>
               ))
             ) : (
-              <Text color="gray">No logs yet.</Text>
+              <Text color="gray">[empty] No logs yet.</Text>
             )}
           </Box>
         </Box>
+        <Text color="black" backgroundColor="green">
+          {footer}
+        </Text>
       </Box>
     );
   };

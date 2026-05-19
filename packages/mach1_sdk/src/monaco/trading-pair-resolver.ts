@@ -4,6 +4,87 @@ import { createLogger } from "./runtime-utils";
 
 const logger = createLogger("TradingPairResolver");
 
+function normalizeTradingPairsResponse(
+  response: unknown,
+): ResolvedTradingPair[] | undefined {
+  if (!response || typeof response !== "object") {
+    return undefined;
+  }
+
+  const body = response as {
+    trading_pairs?: unknown;
+    data?: unknown;
+  };
+
+  if (Array.isArray(body.trading_pairs)) {
+    return body.trading_pairs as ResolvedTradingPair[];
+  }
+
+  if (Array.isArray(body.data)) {
+    return body.data as ResolvedTradingPair[];
+  }
+
+  if (!body.data || typeof body.data !== "object") {
+    return undefined;
+  }
+
+  const nested = body.data as {
+    trading_pairs?: unknown;
+    data?: unknown;
+  };
+
+  if (Array.isArray(nested.trading_pairs)) {
+    return nested.trading_pairs as ResolvedTradingPair[];
+  }
+
+  if (Array.isArray(nested.data)) {
+    return nested.data as ResolvedTradingPair[];
+  }
+
+  return undefined;
+}
+
+function getTradingPairsTotalPages(response: unknown): number | undefined {
+  if (!response || typeof response !== "object") {
+    return undefined;
+  }
+
+  const parseNumber = (value: unknown): number | undefined => {
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return value;
+    }
+
+    if (typeof value === "string") {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : undefined;
+    }
+
+    return undefined;
+  };
+
+  const body = response as {
+    total_pages?: unknown;
+    total?: unknown;
+    data?: unknown;
+  };
+
+  const totalFromBody = parseNumber(body.total_pages ?? body.total);
+  if (totalFromBody !== undefined) {
+    return totalFromBody;
+  }
+
+  if (!body.data || typeof body.data !== "object") {
+    return undefined;
+  }
+
+  const nested = body.data as {
+    total_pages?: unknown;
+    total?: unknown;
+  };
+
+  return parseNumber(nested.total_pages ?? nested.total);
+}
+
 export interface ResolvedTradingPair {
   id: string;
   symbol: string;
@@ -75,8 +156,15 @@ export class TradingPairResolver {
         is_active: true,
       });
 
-      allPairs.push(...response.trading_pairs);
-      totalPages = response.total_pages;
+      const tradingPairs = normalizeTradingPairsResponse(response);
+      const fetchedTotalPages = getTradingPairsTotalPages(response);
+
+      if (!tradingPairs || fetchedTotalPages === undefined) {
+        throw new Error("Failed to fetch trading pairs from Monaco SDK");
+      }
+
+      allPairs.push(...tradingPairs);
+      totalPages = fetchedTotalPages;
       page++;
     }
 

@@ -51,7 +51,6 @@ temp/
 *.tmp
 
 # Package manager
-package-lock.json
 yarn.lock
 pnpm-lock.yaml
 
@@ -75,3 +74,6 @@ test-config.json
 /.npm-cache/
 build.err
 build.out
+
+# Remove emitted js files
+*.js

@@ -20,6 +20,87 @@ import { createLogger } from "@/shared/utils/logger";
 
 const logger = createLogger("MarketManager");
 
+function normalizeTradingPairsResponse(
+  response: unknown,
+): MonacoTradingPair[] | undefined {
+  if (!response || typeof response !== "object") {
+    return undefined;
+  }
+
+  const body = response as {
+    trading_pairs?: unknown;
+    data?: unknown;
+  };
+
+  if (Array.isArray(body.trading_pairs)) {
+    return body.trading_pairs as MonacoTradingPair[];
+  }
+
+  if (Array.isArray(body.data)) {
+    return body.data as MonacoTradingPair[];
+  }
+
+  if (!body.data || typeof body.data !== "object") {
+    return undefined;
+  }
+
+  const nested = body.data as {
+    trading_pairs?: unknown;
+    data?: unknown;
+  };
+
+  if (Array.isArray(nested.trading_pairs)) {
+    return nested.trading_pairs as MonacoTradingPair[];
+  }
+
+  if (Array.isArray(nested.data)) {
+    return nested.data as MonacoTradingPair[];
+  }
+
+  return undefined;
+}
+
+function getTradingPairsTotalPages(response: unknown): number | undefined {
+  if (!response || typeof response !== "object") {
+    return undefined;
+  }
+
+  const parseNumber = (value: unknown): number | undefined => {
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return value;
+    }
+
+    if (typeof value === "string") {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : undefined;
+    }
+
+    return undefined;
+  };
+
+  const body = response as {
+    total_pages?: unknown;
+    total?: unknown;
+    data?: unknown;
+  };
+
+  const totalFromBody = parseNumber(body.total_pages ?? body.total);
+  if (totalFromBody !== undefined) {
+    return totalFromBody;
+  }
+
+  if (!body.data || typeof body.data !== "object") {
+    return undefined;
+  }
+
+  const nested = body.data as {
+    total_pages?: unknown;
+    total?: unknown;
+  };
+
+  return parseNumber(nested.total_pages ?? nested.total);
+}
+
 export class MarketManager {
   private mockPrices: Map<string, bigint> = new Map();
   private mockOrderBooks: Map<string, InternalOrderBook> = new Map();
@@ -411,16 +492,19 @@ export class MarketManager {
       do {
         const response = await this.sdk.market.getPaginatedTradingPairs({
           page,
-          limit: 100,
+          page_size: 100,
           is_active: true,
         });
 
-        if (!response.success || !response.data) {
+        const tradingPairs = normalizeTradingPairsResponse(response);
+        const fetchedTotalPages = getTradingPairsTotalPages(response);
+
+        if (!tradingPairs || fetchedTotalPages === undefined) {
           throw new Error("Failed to fetch trading pairs from Monaco SDK");
         }
 
-        pairs.push(...response.data.data);
-        totalPages = response.data.total_pages;
+        pairs.push(...tradingPairs);
+        totalPages = fetchedTotalPages;
         page++;
       } while (page <= totalPages);
 

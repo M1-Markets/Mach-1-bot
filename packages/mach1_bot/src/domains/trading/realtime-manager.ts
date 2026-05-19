@@ -710,7 +710,24 @@ export class RealtimeManager {
     }
 
     try {
-      logger.debug("Subscribing to orderbook", { symbol });
+      const normalizedSymbol = tradingPairResolver.normalizeSymbol(symbol);
+      let tradingPairId = normalizedSymbol;
+
+      try {
+        tradingPairId = tradingPairResolver.resolveSymbolToId(normalizedSymbol);
+      } catch (error) {
+        logger.warn("Unable to resolve trading pair ID for orderbook", {
+          symbol,
+          normalizedSymbol,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+
+      logger.debug("Subscribing to orderbook", {
+        symbol,
+        normalizedSymbol,
+        tradingPairId,
+      });
 
       await this.sdk.ws.connect();
 
@@ -718,13 +735,14 @@ export class RealtimeManager {
       const magnitude = 1;
 
       const unsubscribeFn = this.sdk.ws.orderbook(
-        symbol,
+        tradingPairId,
         "SPOT",
         magnitude,
         quotationMode,
         (event: MonacoOrderbookEvent) => {
           logger.debug("Received orderbook event", {
             symbol,
+            tradingPairId,
             bidsCount: event.bids.length,
             asksCount: event.asks.length,
           });

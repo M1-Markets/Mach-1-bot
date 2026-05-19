@@ -42,6 +42,66 @@ const isAuthError = (error: unknown): boolean => {
   );
 };
 
+const NON_RETRYABLE_ORDER_ERROR_PATTERNS = [
+  "bad request",
+  "insufficient liquidity",
+  "validation failed",
+  "invalid order",
+  "insufficient balance",
+  "insufficient funds",
+  "unauthorized",
+  "forbidden",
+] as const;
+
+const RETRYABLE_ORDER_ERROR_PATTERNS = [
+  "rate limit",
+  "too many requests",
+  "timeout",
+  "temporarily unavailable",
+  "connection reset",
+  "network error",
+  "service unavailable",
+  "gateway timeout",
+] as const;
+
+const isRetryableOrderPlacementError = (error: unknown): boolean => {
+  if (isRecord(error)) {
+    const retryable = error.retryable;
+    if (typeof retryable === "boolean") {
+      return retryable;
+    }
+
+    const statusCode = error.statusCode;
+    if (typeof statusCode === "number") {
+      if (statusCode === 429 || statusCode >= 500) {
+        return true;
+      }
+      if (statusCode >= 400) {
+        return false;
+      }
+    }
+  }
+
+  const message =
+    error instanceof Error ? error.message.toLowerCase() : String(error);
+
+  if (
+    NON_RETRYABLE_ORDER_ERROR_PATTERNS.some((pattern) =>
+      message.includes(pattern),
+    )
+  ) {
+    return false;
+  }
+
+  if (
+    RETRYABLE_ORDER_ERROR_PATTERNS.some((pattern) => message.includes(pattern))
+  ) {
+    return true;
+  }
+
+  return true;
+};
+
 export interface LiveOrderData {
   order: OrderRequest;
   status: "pending" | "filled" | "cancelled" | "rejected" | "partially_filled";
@@ -100,6 +160,20 @@ export class LiveTradingEngine extends BaseTradingMode {
   private confirmationTimes: number[] = [];
   /** True when the caller supplied their own RealtimeManager instance. */
   private readonly _realtimeManagerProvided: boolean;
+
+  private resolvePairSymbolFromContracts(
+    baseToken: Address,
+    quoteToken: Address,
+  ): string {
+    const resolver = this.monacoSDK.getTradingPairResolver();
+    const pair = resolver.getPairByContracts(baseToken, quoteToken);
+
+    if (pair?.symbol) {
+      return resolver.normalizeSymbol(pair.symbol);
+    }
+
+    return `${baseToken}/${quoteToken}`;
+  }
 
   constructor(
     config: LiveTradingConfig,
@@ -310,6 +384,7 @@ export class LiveTradingEngine extends BaseTradingMode {
         {
           maxRetries: this.config.maxRetries,
           baseDelayMs: this.config.retryDelay,
+          shouldRetry: isRetryableOrderPlacementError,
           onRetry: (attempt, error, delay) => {
             logger.warn("Order placement retry scheduled", {
               orderId,
@@ -506,7 +581,10 @@ export class LiveTradingEngine extends BaseTradingMode {
 
   private async calculateSlippage(order: OrderRequest): Promise<number> {
     try {
-      const pairSymbol = `${order.baseToken}/${order.quoteToken}`;
+      const pairSymbol = this.resolvePairSymbolFromContracts(
+        order.baseToken,
+        order.quoteToken,
+      );
       const orderbook =
         await this.realtimeManager.getOrderbookSnapshot(pairSymbol);
 
@@ -851,7 +929,10 @@ export class LiveTradingEngine extends BaseTradingMode {
           pair: {
             base: orderData.order.baseToken,
             quote: orderData.order.quoteToken,
-            symbol: `${orderData.order.baseToken}/${orderData.order.quoteToken}`,
+            symbol: this.resolvePairSymbolFromContracts(
+              orderData.order.baseToken,
+              orderData.order.quoteToken,
+            ),
           },
           side: orderData.order.isBuy ? "buy" : "sell",
           price: orderData.executionPrice ?? orderData.order.price,

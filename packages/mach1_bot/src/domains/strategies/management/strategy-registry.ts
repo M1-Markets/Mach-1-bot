@@ -58,6 +58,10 @@ export interface StrategySearchResult {
   pageSize: number;
 }
 
+const isVerboseLoggingEnabled = (): boolean =>
+  process.env.MONACO_LOG_LEVEL?.toUpperCase() === "DEBUG" ||
+  process.env.MACH1_LOG_LEVEL?.toUpperCase() === "DEBUG";
+
 /**
  * Strategy Registry manages all registered strategies
  */
@@ -123,9 +127,11 @@ export class StrategyRegistry {
     // Update indices
     this.updateIndices(config, metadata);
 
-    console.log(
-      `✅ Strategy '${config.name}' v${config.version} registered successfully`,
-    );
+    if (isVerboseLoggingEnabled()) {
+      console.log(
+        `✅ Strategy '${config.name}' v${config.version} registered successfully`,
+      );
+    }
   }
 
   /**

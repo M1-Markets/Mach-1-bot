@@ -2,14 +2,15 @@
   "name": "mach-one-sdk-workspace",
   "private": true,
   "scripts": {
-    "postinstall": "patch-package"
+    "mach-one-bot": "npm --workspace packages/mach1_bot exec -- mach-one-bot",
+    "create-cross-repo-patch": "bash ./scripts/create-cross-repo-patch.sh",
+    "apply-cross-repo-patch": "bash ./scripts/apply-cross-repo-patch.sh",
+    "test-mach-one-bot-tempdir": "bash ./scripts/test-mach-one-bot-tempdir.sh",
+    "postinstall": "patch-package",
+    "test": "npm --workspace packages/mach1_bot test"
   },
   "workspaces": [
     "packages/mach1_bot",
     "packages/mach1_sdk"
-  ],
-  "dependencies": {
-    "@0xmonaco/core": "^0.7.9",
-    "@0xmonaco/types": "^0.7.9"
-  }
+  ]
 }

@@ -9,6 +9,7 @@ import { vi } from "vitest";
 import {
   convertToBotConfig,
   displayConfigSummary,
+  isVerboseLogLevel,
   parseTomlConfig,
   TomlConfig,
   validateDryRun,
@@ -39,6 +40,8 @@ const mockConsole = {
 beforeEach(() => {
   vi.clearAllMocks();
   Object.assign(console, mockConsole);
+  delete process.env.MONACO_LOG_LEVEL;
+  delete process.env.MACH1_LOG_LEVEL;
 });
 
 describe("CLI Bot Utilities", () => {
@@ -136,6 +139,14 @@ describe("CLI Bot Utilities", () => {
       expect(result.chainId).toBe(713715);
     });
 
+    it("should prefer env log level when provided", () => {
+      process.env.MONACO_LOG_LEVEL = "DEBUG";
+
+      const result = convertToBotConfig(validTomlConfig);
+
+      expect(result.logLevel).toBe("DEBUG");
+    });
+
     it("should throw error if private_key is missing", () => {
       const configWithoutKey = {
         ...validTomlConfig,
@@ -160,7 +171,7 @@ describe("CLI Bot Utilities", () => {
   });
 
   describe("displayConfigSummary", () => {
-    it("should display configuration summary", () => {
+    it("should hide configuration summary when not verbose", () => {
       const botConfig = {
         privateKey: "0x123",
         rpcUrl: "https://test.rpc.url",
@@ -187,10 +198,47 @@ describe("CLI Bot Utilities", () => {
 
       displayConfigSummary(botConfig, tomlConfig);
 
-      expect(mockConsole.log).toHaveBeenCalled();
+      expect(mockConsole.log).not.toHaveBeenCalled();
+    });
+
+    it("should display configuration summary in verbose mode", () => {
+      const botConfig = {
+        privateKey: "0x123",
+        rpcUrl: "https://test.rpc.url",
+        mode: "simulation" as const,
+        maxPositionSize: 1000,
+        maxDailyLoss: 500,
+        chainId: 713715,
+        logLevel: "DEBUG" as const,
+      };
+
+      const tomlConfig: TomlConfig = {
+        general: { name: "test", description: "test" },
+        wallet: { private_key: "0x123" },
+        trading: {
+          mode: "simulation",
+          base_currency: "USDC",
+          initial_balance: 10000,
+          max_position_size: 1000,
+          max_daily_loss: 500,
+        },
+        strategy: { type: "dca", risk_level: "medium" },
+        network: { rpc_url: "https://test.rpc.url", chain_id: 713715 },
+      };
+
+      displayConfigSummary(botConfig, tomlConfig);
+
       expect(mockConsole.log).toHaveBeenCalledWith(
         expect.stringContaining("Configuration loaded successfully"),
       );
+    });
+  });
+
+  describe("isVerboseLogLevel", () => {
+    it("should only enable verbose logging for DEBUG", () => {
+      expect(isVerboseLogLevel("DEBUG")).toBe(true);
+      expect(isVerboseLogLevel("debug")).toBe(true);
+      expect(isVerboseLogLevel("info")).toBe(false);
     });
   });
 

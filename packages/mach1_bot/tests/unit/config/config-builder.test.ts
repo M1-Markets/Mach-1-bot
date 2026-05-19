@@ -17,7 +17,7 @@ describe("ConfigBuilder", () => {
         .build();
 
       expect(config.privateKey).toBe(validPrivateKey);
-      expect(config.mode).toBe("paper");
+      expect(config.mode).toBe("simulation");
       expect(config.maxPositionSize).toBe(1000);
       expect(config.maxDailyLoss).toBe(500);
       expect(config.rpcUrl).toBe(NETWORK_PRESETS["testnet"].rpcUrl);

@@ -5,6 +5,7 @@ const fs = require("fs");
 const path = require("path");
 
 const cliEntryPath = path.join(__dirname, "dist", "cli", "main.js");
+const invocationCwd = process.env.INIT_CWD || process.cwd();
 
 if (!fs.existsSync(cliEntryPath)) {
   console.error(`CLI entry not found: ${cliEntryPath}`);
@@ -16,7 +17,7 @@ const child = spawn(
   process.execPath,
   [cliEntryPath, ...process.argv.slice(2)],
   {
-    cwd: __dirname,
+    cwd: invocationCwd,
     stdio: "inherit",
   },
 );

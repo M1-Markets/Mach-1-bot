@@ -96,6 +96,19 @@ export type BotRunHooks = {
   onOrder?: (entry: BotOrderLogEntry) => void;
 };
 
+const isVerboseLogLevel = (
+  logLevel: BotConfig["logLevel"] | undefined,
+): boolean => typeof logLevel === "string" && logLevel.toUpperCase() === "DEBUG";
+
+const logIfVerbose = (
+  logLevel: BotConfig["logLevel"] | undefined,
+  message: string,
+): void => {
+  if (isVerboseLogLevel(logLevel)) {
+    console.log(message);
+  }
+};
+
 type VaultClient = {
   getBalance: (
     assetId: string,
@@ -236,7 +249,9 @@ function createEmptyMetrics(): StrategyMetrics {
   };
 }
 
-function createStrategyUtils(): StrategyUtils {
+function createStrategyUtils(
+  logLevel?: BotConfig["logLevel"],
+): StrategyUtils {
   const indicators = {
     rsi: (prices: number[], period: number) => {
       if (prices.length < period + 1) return 50;
@@ -332,7 +347,8 @@ function createStrategyUtils(): StrategyUtils {
   return {
     log: {
       info: (msg: string, meta?: unknown) =>
-        console.log(
+        logIfVerbose(
+          logLevel,
           pc.gray(`📊 ${msg}${meta ? ` ${JSON.stringify(meta)}` : ""}`),
         ),
       warn: (msg: string, meta?: unknown) =>
@@ -344,7 +360,8 @@ function createStrategyUtils(): StrategyUtils {
           pc.red(`❌ ${msg}${meta ? ` ${JSON.stringify(meta)}` : ""}`),
         ),
       debug: (msg: string, meta?: unknown) =>
-        console.log(
+        logIfVerbose(
+          logLevel,
           pc.gray(`🔎 ${msg}${meta ? ` ${JSON.stringify(meta)}` : ""}`),
         ),
     },
@@ -516,7 +533,8 @@ async function validateStrategyBalances(
 
   const pairsToCheck = tradingPairs.filter((pair) => pair && pair !== "*");
   if (pairsToCheck.length === 0) {
-    console.log(
+    logIfVerbose(
+      botConfig.logLevel,
       pc.gray(
         "⚠️  No explicit trading pairs configured. Skipping balance validation.",
       ),
@@ -537,7 +555,8 @@ async function validateStrategyBalances(
     environment,
   });
 
-  console.log(
+  logIfVerbose(
+    botConfig.logLevel,
     pc.cyan("🔎 Validating available balances for configured trading pairs..."),
   );
 
@@ -650,6 +669,11 @@ export async function parseTomlConfig(configFile: string): Promise<TomlConfig> {
  * Convert TOML config to bot configuration
  */
 export function convertToBotConfig(tomlConfig: TomlConfig): BotConfig {
+  const resolvedLogLevel =
+    process.env.MONACO_LOG_LEVEL ??
+    process.env.MACH1_LOG_LEVEL ??
+    "info";
+
   // Validate required configuration
   if (!tomlConfig.wallet?.private_key) {
     throw new Error("private_key is required in [wallet] section");
@@ -667,7 +691,7 @@ export function convertToBotConfig(tomlConfig: TomlConfig): BotConfig {
     maxPositionSize: tomlConfig.trading?.max_position_size || 1000,
     maxDailyLoss: tomlConfig.trading?.max_daily_loss || 500,
     chainId: tomlConfig.network?.chain_id || 713715,
-    logLevel: "info" as const,
+    logLevel: resolvedLogLevel as BotConfig["logLevel"],
   };
 
   // Add AI helper configuration if enabled
@@ -692,13 +716,16 @@ export async function initializeMach1Bot(
   strategyConfig?: TomlConfig["strategy"],
   hooks?: BotRunHooks,
 ): Promise<Mach1Bot> {
-  console.log(pc.blue("🤖 Initializing Mach1Bot..."));
+  logIfVerbose(botConfig.logLevel, pc.blue("🤖 Initializing Mach1Bot..."));
 
   // Create bot instance
   const bot = new Mach1Bot(botConfig);
 
   // Ensure enhanced features and strategies are loaded FIRST
-  console.log(pc.blue("🔧 Loading enhanced features and strategies..."));
+  logIfVerbose(
+    botConfig.logLevel,
+    pc.blue("🔧 Loading enhanced features and strategies..."),
+  );
   await bot.ensureInitialized();
 
   // Set up risk limits based on configuration
@@ -731,7 +758,10 @@ export async function initializeMach1Bot(
     hooks,
   );
 
-  console.log(pc.green("✅ Mach1Bot initialization complete"));
+  logIfVerbose(
+    botConfig.logLevel,
+    pc.green("✅ Mach1Bot initialization complete"),
+  );
   return bot;
 }
 
@@ -770,7 +800,10 @@ export async function setupStrategy(
 
   // Check if this is a registered strategy ID (like 'rsi_strategy_v1')
   if (strategyConfig?.id) {
-    console.log(pc.cyan(`🔬 Setting up custom strategy: ${strategyConfig.id}`));
+    logIfVerbose(
+      botConfig?.logLevel,
+      pc.cyan(`🔬 Setting up custom strategy: ${strategyConfig.id}`),
+    );
 
     try {
       // Initialize strategy system if not already done
@@ -803,8 +836,14 @@ export async function setupStrategy(
         registeredStrategy,
       );
 
-      console.log(pc.gray(`   Parameters: ${JSON.stringify(parameters)}`));
-      console.log(pc.gray(`   Trading Pairs: ${tradingPairs.join(", ")}`));
+      logIfVerbose(
+        botConfig?.logLevel,
+        pc.gray(`   Parameters: ${JSON.stringify(parameters)}`),
+      );
+      logIfVerbose(
+        botConfig?.logLevel,
+        pc.gray(`   Trading Pairs: ${tradingPairs.join(", ")}`),
+      );
 
       await validateStrategyBalances(botConfig, tradingPairs);
       bot.setPreferredTradingPairs(tradingPairs);
@@ -822,7 +861,7 @@ export async function setupStrategy(
       );
 
       const strategyState = new Map<string, unknown>();
-      const strategyUtils = createStrategyUtils();
+      const strategyUtils = createStrategyUtils(botConfig?.logLevel);
       const baseMetrics = createEmptyMetrics();
       let lastSignals: StrategySignal[] | undefined;
       let aiStopRequested = false;
@@ -1061,13 +1100,18 @@ export async function setupStrategy(
   ) as StrategyParameters;
   const tradingPairs = extractTradingPairs(strategyConfig, registeredStrategy);
 
-  console.log(
+  logIfVerbose(
+    botConfig?.logLevel,
     pc.cyan(
       `🔬 Setting up registered strategy for type '${strategyType}': ${registeredStrategy.config.id}`,
     ),
   );
-  console.log(pc.gray(`   Parameters: ${JSON.stringify(parameters)}`));
-  console.log(
+  logIfVerbose(
+    botConfig?.logLevel,
+    pc.gray(`   Parameters: ${JSON.stringify(parameters)}`),
+  );
+  logIfVerbose(
+    botConfig?.logLevel,
     pc.gray(
       `   Trading Pairs: ${Array.isArray(tradingPairs) ? tradingPairs.join(", ") : tradingPairs}`,
     ),
@@ -1090,7 +1134,7 @@ export async function setupStrategy(
   );
 
   const strategyState = new Map<string, unknown>();
-  const strategyUtils = createStrategyUtils();
+  const strategyUtils = createStrategyUtils(botConfig?.logLevel);
   const baseMetrics = createEmptyMetrics();
   let lastSignals: StrategySignal[] | undefined;
   let aiStopRequested = false;
@@ -1279,7 +1323,7 @@ export async function executeBotMode(
   botConfig: BotConfig,
   initialBalance: number,
 ): Promise<void> {
-  console.log(pc.blue("✅ Starting bot execution..."));
+  logIfVerbose(botConfig.logLevel, pc.blue("✅ Starting bot execution..."));
 
   if (botConfig.mode === "backtest") {
     console.log(
@@ -1327,8 +1371,14 @@ export async function executeBotMode(
       );
     }
   } else if (botConfig.mode === "simulation") {
-    console.log(pc.green("🎮 Starting simulation mode - paper trading"));
-    console.log(pc.gray("💡 Monitor console for simulated trades"));
+    logIfVerbose(
+      botConfig.logLevel,
+      pc.green("🎮 Starting simulation mode - paper trading"),
+    );
+    logIfVerbose(
+      botConfig.logLevel,
+      pc.gray("💡 Monitor console for simulated trades"),
+    );
 
     // Start paper trading simulation
     await bot.simulate({
@@ -1336,8 +1386,14 @@ export async function executeBotMode(
       initialCapital: initialBalance,
     });
   } else if (botConfig.mode === "live") {
-    console.log(pc.red("🔴 Starting LIVE mode - real trading"));
-    console.log(pc.yellow("⚠️ WARNING: Real money is at risk!"));
+    logIfVerbose(
+      botConfig.logLevel,
+      pc.red("🔴 Starting LIVE mode - real trading"),
+    );
+    logIfVerbose(
+      botConfig.logLevel,
+      pc.yellow("⚠️ WARNING: Real money is at risk!"),
+    );
 
     // Start live trading
     await bot.goLive({
@@ -1353,6 +1409,10 @@ export function displayConfigSummary(
   botConfig: BotConfig,
   tomlConfig: TomlConfig,
 ): void {
+  if (!isVerboseLogLevel(botConfig.logLevel)) {
+    return;
+  }
+
   console.log(pc.green("✅ Configuration loaded successfully"));
   console.log(pc.gray(`   Mode: ${pc.bold(botConfig.mode)}`));
   console.log(pc.gray(`   Network: ${pc.bold(botConfig.rpcUrl)}`));
@@ -1392,6 +1452,8 @@ export function validateDryRun(configFile: string): void {
   console.log(pc.green(`✅ Configuration file found: ${configFile}`));
   console.log(pc.gray("Dry run mode - bot validation would happen here."));
 }
+
+export { isVerboseLogLevel };
 
 /**
  * Get the default AI helper prompt for trading analysis

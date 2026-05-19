@@ -7,3 +7,17 @@ tasks:
     commands:
       - echo "Hello, World!"
     description: Sample greet command
+  spawn-dev:
+    commands:
+      - command: |
+          podman run -it -p 3000:3000 \
+            --userns=keep-id \
+            --user "$(id -u):$(id -g)" \
+            -v "${PWD}:/workspace" \
+            -v /workspace/.npm \
+            -v /workspace/node_modules \
+            -w /workspace \
+            node:24-bookworm bash
+        interactive: true
+    description: Spawn a development environment.
+

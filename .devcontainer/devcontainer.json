@@ -1,0 +1,23 @@
+{
+  "name": "Debian",
+  "build": {
+    "dockerfile": "Containerfile"
+  },
+  "runArgs": [
+    "--userns=keep-id"
+  ],
+  "remoteUser": "node",
+  "mounts": [
+    "source=mach-one-sdk-node-modules,target=/workspaces/mach-one-sdk/node_modules,type=volume"
+  ],
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-vscode-remote.remote-containers"
+      ]
+    }
+  },
+  "forwardPorts": [
+    "3000:3000"
+  ]
+}

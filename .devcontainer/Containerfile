@@ -1,0 +1,21 @@
+FROM node:24-bookworm
+
+# Install all development tools and use the existing node user in the base image.
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    curl \
+    git \
+    vim \
+    wget \
+    unzip \
+    software-properties-common \
+    iputils-ping \
+    sudo \
+ && groupadd -g 20 staff 2>/dev/null || true \
+ && useradd -m -u 501 -g 20 -s /bin/bash core \
+ && echo "node ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/node \
+ && echo "core ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers.d/core \
+ && chmod 0440 /etc/sudoers.d/node /etc/sudoers.d/core
+
+USER node
+

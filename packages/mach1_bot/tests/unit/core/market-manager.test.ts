@@ -1,5 +1,6 @@
 import { MarketManager } from "@/domains/trading/market-manager";
 import { Address, TradingPair } from "@/shared/types";
+import { vi } from "vitest";
 
 describe("MarketManager", () => {
   let marketManager: MarketManager;
@@ -100,6 +101,47 @@ describe("MarketManager", () => {
         expect(typeof pair.symbol).toBe("string");
         expect(typeof pair.is_active).toBe("boolean");
       });
+    });
+
+    it("should normalize nested Monaco API responses", async () => {
+      const sdkPairs = [
+        {
+          id: "pair-1",
+          base_token: "BTC",
+          quote_token: "USDC",
+          base_asset_id: "btc",
+          quote_asset_id: "usdc",
+          base_icon_url: "",
+          quote_icon_url: "",
+          base_token_contract: "0x1234567890123456789012345678901234567890",
+          quote_token_contract: "0x0987654321098765432109876543210987654321",
+          symbol: "BTC/USDC",
+          base_decimals: 8,
+          quote_decimals: 6,
+          market_type: "SPOT",
+          is_active: true,
+          maker_fee_bps: 10,
+          taker_fee_bps: 20,
+          min_order_size: "0.0001",
+          max_order_size: "1000",
+          tick_size: "0.01",
+        },
+      ];
+
+      marketManager.setSDK({
+        market: {
+          getPaginatedTradingPairs: vi.fn().mockResolvedValue({
+            data: {
+              data: sdkPairs,
+              total_pages: 1,
+            },
+          }),
+        },
+      } as any);
+
+      const pairs = await marketManager.getAllTradingPairs();
+
+      expect(pairs).toEqual(sdkPairs);
     });
   });
 

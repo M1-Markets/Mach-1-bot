@@ -64,6 +64,29 @@ vi.mock("mach1_sdk", async () => {
   const actual = await vi.importActual<typeof import("mach1_sdk")>("mach1_sdk");
   return {
     ...actual,
+    OrderStatus: {
+      PENDING: "PENDING",
+      SUBMITTED: "SUBMITTED",
+      PARTIALLY_FILLED: "PARTIALLY_FILLED",
+      FILLED: "FILLED",
+      SETTLED_ON_CHAIN: "SETTLED_ON_CHAIN",
+      SETTLED: "SETTLED",
+      CANCELLED: "CANCELLED",
+      REJECTED: "REJECTED",
+      EXPIRED: "EXPIRED",
+    },
+    OrderType: {
+      LIMIT: "LIMIT",
+      MARKET: "MARKET",
+      STOP_LOSS: "STOP_LOSS",
+      TAKE_PROFIT: "TAKE_PROFIT",
+      STOP_LIMIT: "STOP_LIMIT",
+      TRAILING_STOP: "TRAILING_STOP",
+    },
+    OrderSide: {
+      BUY: "BUY",
+      SELL: "SELL",
+    },
     createMach1SDK: vi.fn(() => ({
       login: vi.fn().mockResolvedValue({}),
       logout: vi.fn().mockResolvedValue(undefined),
