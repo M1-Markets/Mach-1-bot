@@ -909,7 +909,7 @@ export const registerCliCommands = (target: Command): Command => {
   target
     .command("demo")
     .description(
-      "Run a quick simulation buy of ETH/USDC on sei-testnet using .env in the current directory",
+      "Run a quick demo buy of ETH/USDC on sei-testnet. Mode (simulation/live) is read from .env.",
     )
     .action(async () => {
       try {
@@ -949,14 +949,48 @@ export const registerCliCommands = (target: Command): Command => {
           process.exit(1);
         }
 
+        // Resolve mode from .env (default: simulation). Only "live" is
+        // routed through the on-chain Monaco engine; "simulation" and
+        // "paper" both use the simulated execution path internally.
+        const rawMode = (process.env.MODE || "simulation").toLowerCase();
+        const validModes = ["simulation", "paper", "live"] as const;
+        const mode = (
+          validModes.includes(rawMode as (typeof validModes)[number])
+            ? rawMode
+            : "simulation"
+        ) as "simulation" | "paper" | "live";
+
+        if (rawMode !== mode) {
+          console.warn(
+            pc.yellow(
+              `⚠️  Unknown MODE="${rawMode}" in .env. Falling back to "simulation".`,
+            ),
+          );
+        }
+
+        if (mode === "live") {
+          console.log(
+            pc.red("\n⚠️  LIVE MODE — this will place a real on-chain order."),
+          );
+          console.log(
+            pc.red(
+              "   $100 ETH/USDC buy will hit the Monaco protocol on sei-testnet using the wallet in PRIVATE_KEY.",
+            ),
+          );
+          console.log(
+            pc.yellow("   Press Ctrl+C in the next 5 seconds to abort.\n"),
+          );
+          await new Promise((resolve) => setTimeout(resolve, 5000));
+        }
+
         console.log(
-          pc.cyan("🚀 Running mach1 demo (simulation on sei-testnet)..."),
+          pc.cyan(`🚀 Running mach1 demo (mode=${mode} on sei-testnet)...`),
         );
 
         const bot = new Mach1Bot({
           privateKey,
           rpcUrl,
-          mode: "simulation",
+          mode,
           network: "sei-testnet",
         });
 
@@ -969,6 +1003,13 @@ export const registerCliCommands = (target: Command): Command => {
             `     id=${order.id} symbol=${order.symbol} side=${order.side} type=${order.type} size=${order.size} price=${order.price} status=${order.status}`,
           ),
         );
+        if (mode !== "live") {
+          console.log(
+            pc.gray(
+              "\n   This order was simulated locally — no on-chain transaction occurred.",
+            ),
+          );
+        }
         console.log(
           pc.cyan(
             "\n💡 Next steps: explore packages/mach1_bot/examples/ for strategy and backtest demos.",

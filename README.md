@@ -12,8 +12,10 @@ Mach1 SDK lets you build and run algorithmic trading bots on the Monaco perpetua
 git clone https://github.com/M1-Markets/Mach-1-bot.git && cd Mach-1-bot
 npm install                     # installs deps and builds workspaces (via postinstall)
 cp .env.example .env            # then fill in PRIVATE_KEY + SEI_RPC_URL
-npx mach1 demo                  # runs a sim trade end-to-end
+npx mach1 demo                  # places a $100 ETH/USDC sim buy (no real funds moved)
 ```
+
+By default the demo is a **simulated** trade — no on-chain transaction, no real funds. To run against the real Monaco protocol, change `MODE=simulation` to `MODE=live` in your `.env`. The demo prints a warning and waits 5 seconds before submitting a live order so you can Ctrl+C to abort.
 
 If `npx mach1 demo` isn't available yet on your checkout, fall back to:
 
@@ -22,6 +24,30 @@ npm run example:quickstart
 ```
 
 Also available: `npm run example:strategy` (RSI strategy callback) and `npm run example:backtest` (historical backtest).
+
+## Trading modes
+
+Set `MODE` in your `.env` to control whether `mach1 demo` (and bots you build) execute against the real protocol or stay local.
+
+| Mode | What happens | Real funds at risk? | When to use |
+|------|--------------|---------------------|-------------|
+| `simulation` *(default)* | Order routed through the simulated execution path. No network call to Monaco, no on-chain tx. | No | Smoke tests, building/debugging strategies, demos |
+| `paper` | Identical to `simulation` in the current build. Reserved for a future "real market data, fake fills" path. | No | Treat as a synonym for simulation today |
+| `live` | Order routed through the on-chain Monaco engine using `PRIVATE_KEY`. Submits a real transaction. | **Yes** | Real trading. Requires a funded wallet (use the testnet faucet first). |
+
+To switch:
+
+```bash
+# Edit .env
+MODE=live          # or MODE=simulation
+```
+
+Then re-run `npx mach1 demo` (or your own script). When you build your own bot, the same value flows into `new Mach1Bot({ mode: process.env.MODE, ... })`.
+
+Safety notes for `live`:
+- The demo currently hardcodes a $100 ETH/USDC buy. If your wallet has less than that on testnet, the order will fail; if you point at mainnet, you're spending real money.
+- `mach1 demo` prints a red warning and a 5-second countdown when `MODE=live`. Other example scripts and your own code won't — handle the safety check yourself in production code.
+- The faucet for sei-testnet is available via `mach1 live faucet --config <your-bot.toml>` once you have a config; see `packages/mach1_bot/example_configs/` for samples.
 
 ## Which package do I need?
 
