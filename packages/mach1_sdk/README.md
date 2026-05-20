@@ -4,7 +4,7 @@ Mach1 SDK for interacting with Monaco Protocol. Single-package entrypoint exposi
 
 **Install**
 
-- npm: `npm install ../..` (or install from registry when published)
+From inside this monorepo, the package is resolved via npm workspaces — no separate install needed. After cloning, `npm install` at the repo root builds it automatically. When the package is published, install it from the registry with `npm install mach1_sdk`.
 
 **Quick Start**
 
@@ -12,7 +12,7 @@ Mach1 SDK for interacting with Monaco Protocol. Single-package entrypoint exposi
 import { createMach1SDK } from "mach1_sdk";
 
 const sdk = createMach1SDK({
-	network: "development",
+	network: "sei-testnet",
 	seiRpcUrl: "https://sei-block-external.rpc.example",
 });
 
@@ -170,13 +170,7 @@ Note: websocket API is provided by `@0xmonaco/core`; use `createMonacoWebSocket(
 
 1) Install package
 
-```bash
-# from registry
-npm install mach1_sdk
-
-# or from monorepo/local path during development
-npm install /path/to/mach-one-sdk/packages/mach1_sdk
-```
+From inside this monorepo, the package is resolved via npm workspaces — no separate install needed. After cloning, `npm install` at the repo root builds it automatically. When the package is published, install it from the registry with `npm install mach1_sdk`.
 
 2) Basic TypeScript setup (if using TS)
 
@@ -199,7 +193,7 @@ import { createMach1SDK } from "mach1_sdk";
 
 async function main() {
 	const sdk = createMach1SDK({
-		network: "development",
+		network: "sei-testnet",
 		seiRpcUrl: "https://sei-block-external.rpc.example",
 	});
 

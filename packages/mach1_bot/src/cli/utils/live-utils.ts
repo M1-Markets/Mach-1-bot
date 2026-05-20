@@ -593,7 +593,7 @@ export const resolveFaucetBaseUrl = (
   network: ChainNetwork,
   environment: MonacoEnvironment,
 ): string => {
-  const isTestnet = environment !== "mainnet" && network !== "mainnet";
+  const isTestnet = environment !== "mainnet" && network !== "sei-mainnet";
   if (!isTestnet) {
     throw new Error("Faucet is only available on testnet environments.");
   }

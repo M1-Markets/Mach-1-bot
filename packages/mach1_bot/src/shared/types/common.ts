@@ -3,7 +3,7 @@
  */
 
 export type Address = `0x${string}`;
-export type ChainNetwork = "mainnet" | "testnet";
+export type ChainNetwork = "sei-mainnet" | "sei-testnet";
 export type MonacoEnvironment = "mainnet" | "staging" | "development" | "local";
 
 // Event system types

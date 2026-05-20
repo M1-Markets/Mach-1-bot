@@ -14,8 +14,17 @@ export { EMBEDDED_KEY_MATERIAL } from "./internal/embedded-key-material";
 export {
   DEFAULT_ENVIRONMENT,
   DEFAULT_RATE_LIMIT,
+  getClientId,
+  getMonacoConfig,
+  MONACO_API_URLS,
+  MONACO_CLIENT_IDS,
   NETWORK_RPC_URLS,
+  OrderSide,
+  OrderStatus,
+  OrderType,
   TOKEN_REFRESH_CONFIG,
+  TRADING_PAIR_REFRESH_INTERVAL_MS,
+  WEBSOCKET_CONFIG,
   type MonacoEnvironment,
   resolveMonacoApiUrl,
 } from "./monaco/constants";

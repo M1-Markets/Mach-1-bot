@@ -419,7 +419,7 @@ function createStrategyUtils(
 }
 
 const deriveNetworkFromRpc = (rpcUrl: string): ChainNetwork =>
-  rpcUrl.includes("testnet") ? "testnet" : "mainnet";
+  rpcUrl.includes("testnet") ? "sei-testnet" : "sei-mainnet";
 
 function extractTradingPairs(
   strategyConfig?: TomlConfig["strategy"],
@@ -548,7 +548,7 @@ async function validateStrategyBalances(
     "staging",
   );
   const monaco = new MonacoCoreSDK({
-    network,
+    network: network === "sei-mainnet" ? "mainnet" : "testnet",
     privateKey: botConfig.privateKey,
     mode: "live",
     rpcUrl: botConfig.rpcUrl,

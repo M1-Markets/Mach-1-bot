@@ -55,7 +55,7 @@ export interface EnvironmentConfig {
 // Preset configurations for common networks
 export interface NetworkPreset {
   name: string;
-  network: "mainnet" | "testnet";
+  network: "sei-mainnet" | "sei-testnet";
   chainId: number;
   rpcUrl: string;
 }

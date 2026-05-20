@@ -36,12 +36,15 @@ export const resolveEnvironmentOption = (
 };
 
 const deriveNetworkFromRpc = (rpcUrl: string): ChainNetwork => {
-  return rpcUrl.includes("testnet") ? "testnet" : "mainnet";
+  return rpcUrl.includes("testnet") ? "sei-testnet" : "sei-mainnet";
 };
 
 const getViemChain = (network: ChainNetwork) => {
-  return network === "testnet" ? seiTestnet : sei;
+  return network === "sei-testnet" ? seiTestnet : sei;
 };
+
+const toMonacoNetwork = (network: ChainNetwork): "mainnet" | "testnet" =>
+  network === "sei-mainnet" ? "mainnet" : "testnet";
 
 export type PreparedConfig = {
   configFile: string;
@@ -92,7 +95,7 @@ export const withMonacoSession = async (
   const { botConfig, environment, network } = prepared;
 
   const monacoSDK = new MonacoCoreSDK({
-    network,
+    network: toMonacoNetwork(network),
     privateKey: botConfig.privateKey,
     mode: "live",
     environment,

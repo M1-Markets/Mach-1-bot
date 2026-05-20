@@ -27,7 +27,7 @@ import { resolveApiUrl, resolveWsUrl } from "./networks/index";
 export type { Interval } from "@0xmonaco/types";
 
 export type SDKConfig = {
-  network: "mainnet" | "development" | "staging" | "local";
+  network: "sei-testnet" | "sei-mainnet";
   seiRpcUrl: string;
   walletClient?: WalletClient;
 };
@@ -93,7 +93,7 @@ export class Mach1SDKImpl implements Mach1SDK {
   private readonly network: SDKConfig["network"];
 
   constructor(config: SDKConfig) {
-    const presetNetworks = ["mainnet", "development", "staging", "local"];
+    const presetNetworks = ["sei-testnet", "sei-mainnet"];
 
     if (!config.network || !presetNetworks.includes(config.network)) {
       throw new InvalidConfigError(
@@ -116,7 +116,7 @@ export class Mach1SDKImpl implements Mach1SDK {
     }
 
     this.network = config.network;
-    this.chain = this.network === "mainnet" ? sei : seiTestnet;
+    this.chain = this.network === "sei-mainnet" ? sei : seiTestnet;
 
     if (
       config.walletClient &&
