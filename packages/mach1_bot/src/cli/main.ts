@@ -909,7 +909,7 @@ export const registerCliCommands = (target: Command): Command => {
   target
     .command("demo")
     .description(
-      "Run a quick demo buy of ETH/USDC on sei-testnet. Mode (simulation/live) is read from .env.",
+      "Run a quick demo buy of ETH/USDC on sei-testnet. MODE (paper/simulation/live) is read from .env.",
     )
     .action(async () => {
       // Hoist mode so the catch block can branch on it for clearer error messages.
@@ -1013,10 +1013,14 @@ export const registerCliCommands = (target: Command): Command => {
           ),
         );
 
+        // BotConfig.mode accepts "backtest" | "simulation" | "live". "paper"
+        // and "simulation" both route through the same simulated execution
+        // path in bot.buy(), so translate paper → simulation here.
+        const botMode = mode === "paper" ? "simulation" : mode;
         const bot = new Mach1Bot({
           privateKey,
           rpcUrl,
-          mode,
+          mode: botMode,
           network: "sei-testnet",
           environment: monacoEnv,
         });

@@ -35,8 +35,10 @@ async function main() {
   });
 
   bot.onTradeComplete((trade: any) => {
+    const notional =
+      trade.value ?? (trade.price ?? 0) * (trade.size ?? 0);
     console.log(
-      `Trade complete: ${trade.symbol} ${trade.side} $${trade.value}`,
+      `Trade complete: ${trade.symbol} ${trade.side} @ ${trade.price} (notional $${notional})`,
     );
   });
 
