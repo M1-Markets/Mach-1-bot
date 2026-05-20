@@ -4,50 +4,127 @@
 
 # MACH1 SDK
 
-Mach1 SDK lets you build and run algorithmic trading bots on the Monaco perpetuals CLOB (Sei). Place orders, run strategies, and backtest with ~10 lines of code.
+Build and run algorithmic trading bots on the Monaco perpetuals CLOB (Sei). Place orders, run strategies, and backtest with ~10 lines of code.
 
-## Quickstart
+## Quickstart (60 seconds, no risk)
 
 ```bash
 git clone https://github.com/M1-Markets/Mach-1-bot.git && cd Mach-1-bot
 npm install                     # installs deps and builds workspaces (via postinstall)
 cp .env.example .env            # then fill in PRIVATE_KEY + SEI_RPC_URL
-npx mach1 demo                  # places a $100 ETH/USDC sim buy (no real funds moved)
+npx mach1 demo                  # places a $100 ETH/USDC paper trade
 ```
 
-By default the demo is a **simulated** trade — no on-chain transaction, no real funds. To run against the real Monaco protocol, change `MODE=simulation` to `MODE=live` in your `.env`. The demo prints a warning and waits 5 seconds before submitting a live order so you can Ctrl+C to abort.
+The demo runs in **paper trading mode** by default. Your wallet isn't touched, no transaction is sent, no funds at risk. You're free to break things.
 
-If `npx mach1 demo` isn't available yet on your checkout, fall back to:
+You should see something like:
+
+```
+🚀 Running mach1 demo (mode=paper on sei-testnet)...
+✅ Demo trade submitted successfully
+   Order: id=order_1_... symbol=ETH/USDC side=buy type=market size=3 price=2998.45 status=filled
+   This order was simulated locally — no on-chain transaction occurred.
+```
+
+If you saw that, you're set. Skip to the journey below.
+
+If `npx mach1 demo` errors with "Cannot find module @rollup/...", run `rm -rf node_modules package-lock.json && npm install` once — known npm bug with platform-specific optional deps.
+
+## Your first 30 minutes
+
+A path from "demo worked" to "I can trade for real, with my own strategy."
+
+### 1. Run the example scripts
+
+Same trade as the demo, but as TypeScript files you can edit:
 
 ```bash
-npm run example:quickstart
+npm run example:quickstart   # one paper buy, 2 seconds
+npm run example:strategy     # adds an RSI strategy, runs for 30s
+npm run example:backtest     # runs the backtest engine
 ```
 
-Also available: `npm run example:strategy` (RSI strategy callback) and `npm run example:backtest` (historical backtest).
+Open `packages/mach1_bot/examples/quickstart.ts` to see the minimum viable bot — about 30 lines.
+
+### 2. Edit a strategy
+
+Open `packages/mach1_bot/examples/with-strategy.ts`. You'll see:
+
+```ts
+if (eth.rsi < 30) {
+  await bot.buy("ETH/USDC", { amountUsd: 100 });
+} else if (eth.rsi > 70) {
+  await bot.sell("ETH/USDC", { amountUsd: 100 });
+}
+```
+
+Change the thresholds (e.g., `35`/`65` for more frequent signals) and re-run `npm run example:strategy`. The bot stays alive for 30 seconds watching market ticks — the strategy fires when RSI crosses your levels.
+
+### 3. Run a backtest with real data
+
+`npm run example:backtest` runs the backtest engine, but it'll report 0 trades until you provide data. Drop OHLCV CSVs into a `backtest-data/` directory at the repo root (one CSV per trading pair), then re-run. The CLI's `mach1 strategy <id>` command can help you discover and parameterize strategies; see [packages/mach1_bot/example_configs/RSI_STRATEGY_GUIDE.md](packages/mach1_bot/example_configs/RSI_STRATEGY_GUIDE.md) for a walkthrough.
+
+### 4. Try live trading on testnet
+
+When you're ready to place a real on-chain order (on testnet, with testnet funds), change one line in `.env`:
+
+```bash
+MODE=live           # was: MODE=paper
+```
+
+Two things you need first — Monaco doesn't accept orders without them:
+
+```bash
+# 1. Claim testnet tokens (SEI for gas, USDC for collateral)
+npx mach1 live faucet  --config packages/mach1_bot/example_configs/grid-trading-bot.toml --env staging
+
+# 2. Deposit USDC into the Monaco vault so the bot has collateral
+npx mach1 live deposit --token USDC --amount 100 --config packages/mach1_bot/example_configs/grid-trading-bot.toml --env staging
+```
+
+(Use any of the sample configs — they're all configured for sei-testnet.)
+
+Then run `npx mach1 demo`. You'll see a red warning and a 5-second countdown — Ctrl+C aborts. Otherwise the $100 ETH/USDC buy hits the Monaco protocol on sei-testnet using `PRIVATE_KEY`.
+
+If you skip the faucet + deposit step, the demo will reach Monaco but the order will be **rejected at pre-trade checks** with `hasFunds: false`. No on-chain transaction occurs — your wallet is untouched — but you'll see a yellow rejection message instead of the green success one.
+
+When you're done, set `MODE=paper` back. The demo and example scripts read this value on every run.
+
+### 5. Go beyond the demo
+
+For real bots you'll want the TOML + CLI flow rather than the JS examples:
+
+```bash
+npx mach1 init --file my-bot.toml         # interactive scaffold
+npx mach1 run --config my-bot.toml         # one bot
+npx mach1 run --config bots/alpha.toml --config bots/beta.toml   # supervisor mode
+npx mach1 list-strategies                 # browse what's available
+```
+
+Sample configs live in `packages/mach1_bot/example_configs/`. The CLI handles wallet setup, market resolution, risk limits, and graceful shutdown — things the example scripts skip for brevity.
 
 ## Trading modes
 
-Set `MODE` in your `.env` to control whether `mach1 demo` (and bots you build) execute against the real protocol or stay local.
+Set `MODE` in your `.env` to control execution path.
 
 | Mode | What happens | Real funds at risk? | When to use |
 |------|--------------|---------------------|-------------|
-| `simulation` *(default)* | Order routed through the simulated execution path. No network call to Monaco, no on-chain tx. | No | Smoke tests, building/debugging strategies, demos |
-| `paper` | Identical to `simulation` in the current build. Reserved for a future "real market data, fake fills" path. | No | Treat as a synonym for simulation today |
-| `live` | Order routed through the on-chain Monaco engine using `PRIVATE_KEY`. Submits a real transaction. | **Yes** | Real trading. Requires a funded wallet (use the testnet faucet first). |
+| `paper` *(default)* | Order routed through the simulated execution path. No network call to Monaco, no on-chain tx. | No | First runs, smoke tests, learning the API. The default for the demo and example scripts. |
+| `simulation` | Identical to `paper` today. The two names exist for future divergence (paper = real market data, fake fills; simulation = fully fake). Use either. | No | Same use cases as paper. |
+| `live` | Order routed through the on-chain Monaco engine using `PRIVATE_KEY`. Submits a real transaction. | **Yes** | Real trading. Requires a funded wallet (testnet for safety, mainnet when ready). |
 
-To switch:
+To switch, edit `.env`:
 
 ```bash
-# Edit .env
-MODE=live          # or MODE=simulation
+MODE=live          # or MODE=paper
 ```
 
-Then re-run `npx mach1 demo` (or your own script). When you build your own bot, the same value flows into `new Mach1Bot({ mode: process.env.MODE, ... })`.
+The demo, example scripts, and any bot you build off the same env vars will all respect the change on next run.
 
 Safety notes for `live`:
-- The demo currently hardcodes a $100 ETH/USDC buy. If your wallet has less than that on testnet, the order will fail; if you point at mainnet, you're spending real money.
-- `mach1 demo` prints a red warning and a 5-second countdown when `MODE=live`. Other example scripts and your own code won't — handle the safety check yourself in production code.
-- The faucet for sei-testnet is available via `mach1 live faucet --config <your-bot.toml>` once you have a config; see `packages/mach1_bot/example_configs/` for samples.
+- `mach1 demo` prints a red warning and a 5-second countdown when `MODE=live`. Your own scripts won't — wire your own confirmation in production.
+- The demo currently hardcodes `amountUsd: 100`. On testnet that needs ~$100 worth of testnet USDC in your vault. On mainnet that's real money.
+- `NETWORK` in `.env` is read by your own code, but `mach1 demo` is hardcoded to `sei-testnet`. To run on mainnet you'd write your own script that passes `network: "sei-mainnet"`.
 
 ## Which package do I need?
 
@@ -94,8 +171,8 @@ Root `package.json` defines npm workspaces for `packages/mach1_bot` and `package
 ## Going deeper
 
 - [`packages/mach1_sdk/README.md`](packages/mach1_sdk/README.md) — SDK API reference
-- [`packages/mach1_bot/examples/README.md`](packages/mach1_bot/examples/README.md) — runnable examples (`quickstart.ts`, `with-strategy.ts`, `with-backtest.ts`)
-- [`packages/mach1_bot/example_configs/RSI_STRATEGY_GUIDE.md`](packages/mach1_bot/example_configs/RSI_STRATEGY_GUIDE.md) — RSI strategy walkthrough
+- [`packages/mach1_bot/examples/README.md`](packages/mach1_bot/examples/README.md) — runnable examples
+- [`packages/mach1_bot/example_configs/RSI_STRATEGY_GUIDE.md`](packages/mach1_bot/example_configs/RSI_STRATEGY_GUIDE.md) — end-to-end RSI strategy walkthrough
 
 ## Support
 

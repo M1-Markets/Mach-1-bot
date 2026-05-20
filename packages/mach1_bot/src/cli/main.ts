@@ -949,21 +949,21 @@ export const registerCliCommands = (target: Command): Command => {
           process.exit(1);
         }
 
-        // Resolve mode from .env (default: simulation). Only "live" is
-        // routed through the on-chain Monaco engine; "simulation" and
-        // "paper" both use the simulated execution path internally.
-        const rawMode = (process.env.MODE || "simulation").toLowerCase();
-        const validModes = ["simulation", "paper", "live"] as const;
+        // Resolve mode from .env (default: paper). Only "live" is
+        // routed through the on-chain Monaco engine; "paper" and
+        // "simulation" both use the simulated execution path internally.
+        const rawMode = (process.env.MODE || "paper").toLowerCase();
+        const validModes = ["paper", "simulation", "live"] as const;
         const mode = (
           validModes.includes(rawMode as (typeof validModes)[number])
             ? rawMode
-            : "simulation"
-        ) as "simulation" | "paper" | "live";
+            : "paper"
+        ) as "paper" | "simulation" | "live";
 
         if (rawMode !== mode) {
           console.warn(
             pc.yellow(
-              `⚠️  Unknown MODE="${rawMode}" in .env. Falling back to "simulation".`,
+              `⚠️  Unknown MODE="${rawMode}" in .env. Falling back to "paper".`,
             ),
           );
         }
@@ -996,14 +996,46 @@ export const registerCliCommands = (target: Command): Command => {
 
         const order = await bot.buy("ETH/USDC", { amountUsd: 100 });
 
-        console.log(pc.green("\n✅ Demo trade submitted successfully"));
+        const orderRejected = order.status === "rejected";
+        const header = orderRejected
+          ? pc.yellow("\n⚠️  Demo order was REJECTED by the protocol")
+          : pc.green("\n✅ Demo trade submitted successfully");
+
+        console.log(header);
         console.log(pc.gray("   Order:"));
         console.log(
           pc.gray(
             `     id=${order.id} symbol=${order.symbol} side=${order.side} type=${order.type} size=${order.size} price=${order.price} status=${order.status}`,
           ),
         );
-        if (mode !== "live") {
+
+        if (orderRejected && mode === "live") {
+          console.log(
+            pc.yellow(
+              "\n   Common cause: no collateral in the Monaco vault for the quote asset.",
+            ),
+          );
+          console.log(
+            pc.gray(
+              "   Use a config + the live commands to deposit, e.g.:",
+            ),
+          );
+          console.log(
+            pc.gray(
+              "     mach1 live faucet  --config <bot.toml>   # claim testnet tokens",
+            ),
+          );
+          console.log(
+            pc.gray(
+              "     mach1 live deposit --token USDC --amount 100 --config <bot.toml>",
+            ),
+          );
+          console.log(
+            pc.gray(
+              "   Sample configs: packages/mach1_bot/example_configs/",
+            ),
+          );
+        } else if (mode !== "live") {
           console.log(
             pc.gray(
               "\n   This order was simulated locally — no on-chain transaction occurred.",
@@ -1015,7 +1047,7 @@ export const registerCliCommands = (target: Command): Command => {
             "\n💡 Next steps: explore packages/mach1_bot/examples/ for strategy and backtest demos.",
           ),
         );
-        process.exit(0);
+        process.exit(orderRejected ? 2 : 0);
       } catch (error) {
         console.error(
           pc.red(
