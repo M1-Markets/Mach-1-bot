@@ -186,6 +186,24 @@ describe("CLI subcommands", () => {
     expect(mockUtils.validateDryRun).toHaveBeenCalledWith("/resolved/a.toml");
   });
 
+  it("runs run --no-ui --dry-run", async () => {
+    mockFs.existsSync.mockReturnValue(true);
+    delete process.env.MACH_ONE_NO_UI;
+
+    const program = await createProgram();
+    const code = await runCommand(program, [
+      "run",
+      "--no-ui",
+      "--dry-run",
+      "-c",
+      "a.toml",
+    ]);
+
+    expect(code).toBe(0);
+    expect(process.env.MACH_ONE_NO_UI).toBe("1");
+    expect(mockUtils.validateDryRun).toHaveBeenCalledWith("/resolved/a.toml");
+  });
+
   it("runs list-strategies", async () => {
     const program = await createProgram();
     const code = await runCommand(program, ["list-strategies"]);

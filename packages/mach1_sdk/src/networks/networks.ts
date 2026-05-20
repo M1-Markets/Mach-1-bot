@@ -6,8 +6,8 @@ export const NETWORK_API_URLS: Record<Mach1Network, string> = {
 };
 
 export const NETWORK_WS_URLS: Record<Mach1Network, string> = {
-  "sei-mainnet": "wss://api.monaco.xyz",
-  "sei-testnet": "wss://develop.apimonaco.xyz",
+  "sei-mainnet": "wss://api.monaco.xyz/ws",
+  "sei-testnet": "wss://develop.apimonaco.xyz/ws",
 };
 
 export function resolveApiUrl(network: Mach1Network): string {

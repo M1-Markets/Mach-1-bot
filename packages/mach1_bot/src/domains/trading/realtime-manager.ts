@@ -172,12 +172,16 @@ export class RealtimeManager {
   }
 
   private async tryConnectWebsocket(
-    client: { connect: () => Promise<void> },
+    client: { connect: () => Promise<void>; isConnected?: () => boolean },
     channel: string,
   ): Promise<boolean> {
     const timeoutMs = process.env.NODE_ENV === "test" ? 2000 : 5000;
 
     try {
+      if (client.isConnected?.()) {
+        return true;
+      }
+
       await Promise.race([
         client.connect(),
         new Promise((_, reject) =>

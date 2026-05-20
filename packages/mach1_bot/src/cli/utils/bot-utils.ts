@@ -109,10 +109,58 @@ const logIfVerbose = (
   }
 };
 
-type VaultClient = {
-  getBalance: (
-    assetId: string,
-  ) => Promise<{ formatted?: string; amount?: unknown }>;
+const formatTokenBalance = (
+  balance: number,
+  valueUsd: number,
+  symbol: string,
+): string => {
+  return `${balance.toLocaleString("en-US", {
+    maximumFractionDigits: 6,
+  })} ${symbol} (~$${valueUsd.toFixed(2)})`;
+};
+
+const getPairBalanceSummary = async (
+  bot: Mach1Bot,
+  pairSymbol: string,
+): Promise<string> => {
+  const [baseSymbol, quoteSymbol] = pairSymbol
+    .split("/")
+    .map((segment) => segment.trim().toUpperCase());
+  if (!baseSymbol || !quoteSymbol) return "";
+
+  try {
+    const portfolio = await bot.getPortfolio();
+    const positions = Object.values(portfolio.positions) as Array<{
+      symbol: string;
+      balance: number;
+      value: number;
+    }>;
+    const basePosition = positions.find(
+      (position) => position.symbol.toUpperCase() === baseSymbol,
+    );
+    const quotePosition = positions.find(
+      (position) => position.symbol.toUpperCase() === quoteSymbol,
+    );
+
+    const baseText = basePosition
+      ? formatTokenBalance(basePosition.balance, basePosition.value, baseSymbol)
+      : `no ${baseSymbol} position`;
+    const quoteText = quotePosition
+      ? formatTokenBalance(
+        quotePosition.balance,
+        quotePosition.value,
+        quoteSymbol,
+      )
+      : `no ${quoteSymbol} position`;
+
+    return `Balances: ${baseText} | ${quoteText}`;
+  } catch {
+    return "";
+  }
+};
+
+type ProfileClient = {
+  getUserBalanceByAssetId: (assetId: string) => Promise<{ available_balance?: string }>;
 };
 
 function buildAiSnapshot(
@@ -228,12 +276,12 @@ function shouldSkipForAiOrderDecision(
   return "approve";
 }
 
-function getVaultClient(value: unknown): VaultClient | undefined {
+function getProfileClient(value: unknown): ProfileClient | undefined {
   if (!isRecord(value)) {
     return undefined;
   }
-  const candidate = value as VaultClient;
-  return typeof candidate.getBalance === "function" ? candidate : undefined;
+  const candidate = value as ProfileClient;
+  return typeof candidate.getUserBalanceByAssetId === "function" ? candidate : undefined;
 }
 
 function createEmptyMetrics(): StrategyMetrics {
@@ -427,7 +475,7 @@ function extractTradingPairs(
 ): string[] {
   const configuredPairs =
     Array.isArray(strategyConfig?.trading_pairs) &&
-    strategyConfig.trading_pairs.length > 0
+      strategyConfig.trading_pairs.length > 0
       ? strategyConfig.trading_pairs
       : undefined;
 
@@ -463,10 +511,11 @@ async function getAvailableTokenBalance(
   assetId: string | undefined,
   decimals: number | undefined,
   profileBalances?: GetUserBalancesResponse,
-  vault?: unknown,
+  profile?: unknown,
 ): Promise<number> {
   const normalizedSymbol = tokenSymbol?.toUpperCase();
   let available = 0;
+  let foundInList = false;
 
   try {
     const detailedBalances = Array.isArray(profileBalances?.balances)
@@ -479,7 +528,11 @@ async function getAvailableTokenBalance(
         getStringProp(balanceRecord, "token") ||
         ""
       ).toUpperCase();
-      if (balanceSymbol === normalizedSymbol) {
+      const balanceAssetId = getStringProp(balanceRecord, "asset_id");
+      if (
+        balanceSymbol === normalizedSymbol ||
+        (assetId && balanceAssetId === assetId)
+      ) {
         const raw =
           getNumberProp(balanceRecord, "available_balance") ??
           getNumberProp(balanceRecord, "available") ??
@@ -488,35 +541,31 @@ async function getAvailableTokenBalance(
           0;
 
         available = Math.max(available, parseBalance(raw));
+        foundInList = true;
         break;
       }
     }
   } catch (error) {
     console.warn(
-      `⚠️  Unable to read profile balance for ${tokenSymbol}: ${
-        error instanceof Error ? error.message : String(error)
+      `⚠️  Unable to read profile balance for ${tokenSymbol}: ${error instanceof Error ? error.message : String(error)
       }`,
     );
   }
 
-  const vaultClient = getVaultClient(vault);
-  if (vaultClient && assetId) {
-    try {
-      const vaultBalance = await vaultClient.getBalance(assetId);
-
-      if (vaultBalance?.formatted) {
-        available = Math.max(available, parseBalance(vaultBalance.formatted));
-      } else if (vaultBalance?.amount !== undefined) {
-        const raw = parseBalance(vaultBalance.amount);
-        const scale = typeof decimals === "number" ? Math.pow(10, decimals) : 1;
-        available = Math.max(available, scale ? raw / scale : raw);
+  if (!foundInList && assetId) {
+    const profileClient = getProfileClient(profile);
+    if (profileClient) {
+      try {
+        const assetBalance = await profileClient.getUserBalanceByAssetId(assetId);
+        if (assetBalance?.available_balance !== undefined) {
+          available = Math.max(available, parseBalance(assetBalance.available_balance));
+        }
+      } catch (error) {
+        console.warn(
+          `⚠️  Unable to read balance for ${tokenSymbol}: ${error instanceof Error ? error.message : String(error)
+          }`,
+        );
       }
-    } catch (error) {
-      console.warn(
-        `⚠️  Unable to read vault balance for ${tokenSymbol}: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
     }
   }
 
@@ -581,19 +630,19 @@ async function validateStrategyBalances(
       const baseBalance = await getAvailableTokenBalance(
         pairDetails.base_token,
         pairDetails.base_asset_id ||
-          getStringProp(pairDetailsRecord, "base_asset_id"),
+        getStringProp(pairDetailsRecord, "base_asset_id"),
         pairDetails.base_decimals,
         profileBalances,
-        sdk.vault,
+        sdk.profile,
       );
 
       const quoteBalance = await getAvailableTokenBalance(
         pairDetails.quote_token,
         pairDetails.quote_asset_id ||
-          getStringProp(pairDetailsRecord, "quote_asset_id"),
+        getStringProp(pairDetailsRecord, "quote_asset_id"),
         pairDetails.quote_decimals,
         profileBalances,
-        sdk.vault,
+        sdk.profile,
       );
 
       const minOrderSize =
@@ -625,8 +674,7 @@ async function validateStrategyBalances(
       await monaco.shutdown();
     } catch (error) {
       console.warn(
-        `⚠️  Failed to shut down Monaco SDK after balance validation: ${
-          error instanceof Error ? error.message : String(error)
+        `⚠️  Failed to shut down Monaco SDK after balance validation: ${error instanceof Error ? error.message : String(error)
         }`,
       );
     }
@@ -970,6 +1018,14 @@ export async function setupStrategy(
               if (signal.action === "buy") {
                 // Use a fixed USD amount for consistency in testing
                 const amountUsd = 100;
+                const balanceSummary = await getPairBalanceSummary(bot, signal.pair);
+                if (balanceSummary) {
+                  console.log(
+                    pc.yellow(
+                      `🔎 Current balances for ${signal.pair}: ${balanceSummary}`,
+                    ),
+                  );
+                }
                 console.log(
                   pc.blue(
                     `🔄 Attempting to buy ${signal.pair} ($${amountUsd})...`,
@@ -1001,6 +1057,14 @@ export async function setupStrategy(
                 });
               } else if (signal.action === "sell") {
                 const amountUsd = 100;
+                const balanceSummary = await getPairBalanceSummary(bot, signal.pair);
+                if (balanceSummary) {
+                  console.log(
+                    pc.yellow(
+                      `🔎 Current balances for ${signal.pair}: ${balanceSummary}`,
+                    ),
+                  );
+                }
                 console.log(
                   pc.blue(
                     `🔄 Attempting to sell ${signal.pair} ($${amountUsd})...`,

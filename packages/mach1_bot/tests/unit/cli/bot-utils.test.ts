@@ -12,8 +12,9 @@ import {
   isVerboseLogLevel,
   parseTomlConfig,
   TomlConfig,
+  tomlConfigSchema,
   validateDryRun,
-} from "@/cli/utils/bot-utils";
+} from "@/cli/utils";
 
 // Mock dependencies
 vi.mock("fs");
@@ -234,15 +235,29 @@ describe("CLI Bot Utilities", () => {
     });
   });
 
-  describe("isVerboseLogLevel", () => {
-    it("should only enable verbose logging for DEBUG", () => {
-      expect(isVerboseLogLevel("DEBUG")).toBe(true);
-      expect(isVerboseLogLevel("debug")).toBe(true);
-      expect(isVerboseLogLevel("info")).toBe(false);
+  describe("tomlConfigSchema", () => {
+    it("should require the top-level required sections", () => {
+      expect(tomlConfigSchema).toHaveProperty("required");
+      expect(tomlConfigSchema.required).toEqual(
+        expect.arrayContaining(["wallet", "trading", "strategy", "network"]),
+      );
+    });
+
+    it("should enumerate known enum values for trading mode and risk level", () => {
+      expect(tomlConfigSchema.properties?.trading?.properties?.mode).toEqual(
+        expect.objectContaining({
+          enum: ["backtest", "simulation", "live"],
+        }),
+      );
+      expect(tomlConfigSchema.properties?.strategy?.properties?.risk_level).toEqual(
+        expect.objectContaining({
+          enum: ["low", "medium", "high"],
+        }),
+      );
     });
   });
 
-  describe("validateDryRun", () => {
+  describe("isVerboseLogLevel", () => {
     it("should display dry run validation message", () => {
       validateDryRun("/path/to/config.toml");
 

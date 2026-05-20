@@ -158,8 +158,6 @@ export class Mach1SDKImpl implements Mach1SDK {
     this.orderbook = new OrderbookAPIImpl(apiUrl);
     this.trades = new TradesAPIImpl(apiUrl);
     this.ws = createMonacoWebSocket(wsUrl);
-
-    this.ws.connect().catch(console.error);
   }
 
   private propagateAccessToken(accessValue: string): void {
@@ -189,7 +187,7 @@ export class Mach1SDKImpl implements Mach1SDK {
 
     this.propagateAccessToken(this.authState.accessToken);
 
-    if (options?.connectWebSocket) {
+    if (options?.connectWebSocket && !this.ws.isConnected()) {
       await this.ws.connect();
     }
 

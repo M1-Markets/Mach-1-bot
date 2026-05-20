@@ -1,4 +1,5 @@
 import { APIError } from "mach1_sdk";
+import { parseUnits } from "viem";
 import type { OrderRequest } from "@/shared/types";
 
 vi.mock("@/domains/trading/market-manager", () => ({
@@ -163,5 +164,60 @@ describe("LiveTradingEngine order placement retries", () => {
       status: "filled",
     });
     expect(placeOrder).toHaveBeenCalledTimes(2);
+  });
+
+  it("reads profile balance via asset endpoint", async () => {
+    const engine = makeEngine();
+    const token = "0x1111111111111111111111111111111111111111";
+    const getUserBalanceByAssetId = vi.fn().mockResolvedValue({
+      available_balance: "1.5",
+      locked_balance: "0",
+      total_balance: "1.5",
+      symbol: "ETH",
+    });
+    const getUserBalances = vi.fn();
+
+    (
+      engine as unknown as {
+        monacoSDK: {
+          getSDK: () => {
+            profile: {
+              getUserBalanceByAssetId: typeof getUserBalanceByAssetId;
+              getUserBalances: typeof getUserBalances;
+            };
+          };
+          getTradingPairResolver: () => {
+            getAssetIdByTokenAddress: (address: string) => string | undefined;
+            getAllPairs: () => Array<{
+              base_token_contract: string;
+              base_decimals: number;
+            }>;
+          };
+        };
+      }
+    ).monacoSDK = {
+      getSDK: () => ({
+        profile: {
+          getUserBalanceByAssetId,
+          getUserBalances,
+        },
+      }),
+      getTradingPairResolver: () => ({
+        getAssetIdByTokenAddress: (address: string) =>
+          address.toLowerCase() === token.toLowerCase()
+            ? "eth-asset-id"
+            : undefined,
+        getAllPairs: () => [
+          {
+            base_token_contract: token,
+            base_decimals: 18,
+          },
+        ],
+      }),
+    };
+
+    await expect(engine.getBalance(token)).resolves.toBe(parseUnits("1.5", 18));
+    expect(getUserBalanceByAssetId).toHaveBeenCalledWith("eth-asset-id");
+    expect(getUserBalances).not.toHaveBeenCalled();
   });
 });

@@ -547,6 +547,19 @@ export class LiveTradingEngine extends BaseTradingMode {
     sdk: Mach1SDK,
     assetId: string,
   ): Promise<string> {
+    const directBalance = await sdk.profile.getUserBalanceByAssetId(assetId);
+    const directBalanceRecord = isRecord(directBalance)
+      ? directBalance
+      : undefined;
+    const directAvailable = getStringProp(
+      directBalanceRecord,
+      "available_balance",
+    );
+
+    if (directAvailable) {
+      return directAvailable;
+    }
+
     const balances = await sdk.profile.getUserBalances();
     const balancesRecord = isRecord(balances) ? balances : undefined;
     const balanceEntries = balancesRecord?.balances;
@@ -594,8 +607,8 @@ export class LiveTradingEngine extends BaseTradingMode {
 
       const bookSide = (order.isBuy ? orderbook.asks : orderbook.bids).map(
         (level) => ({
-          price: BigInt(level.price),
-          quantity: BigInt(level.quantity),
+          price: parseFloat(String(level.price)),
+          quantity: parseFloat(String(level.quantity)),
         }),
       );
       return this.calculateOrderBookSlippage(order, bookSide);
@@ -609,28 +622,27 @@ export class LiveTradingEngine extends BaseTradingMode {
 
   private calculateOrderBookSlippage(
     order: OrderRequest,
-    bookSide: Array<{ price: bigint; quantity: bigint }>,
+    bookSide: Array<{ price: number; quantity: number }>,
   ): number {
-    let remainingQuantity = order.quantity;
-    let weightedPrice = 0n;
+    let remainingQuantity = Number(order.quantity);
+    let weightedPrice = 0;
 
     for (const level of bookSide) {
-      if (remainingQuantity <= 0n) break;
+      if (remainingQuantity <= 0) break;
 
-      const fillQuantity =
-        remainingQuantity > level.quantity ? level.quantity : remainingQuantity;
+      const fillQuantity = Math.min(remainingQuantity, level.quantity);
       weightedPrice += level.price * fillQuantity;
       remainingQuantity -= fillQuantity;
     }
 
-    if (remainingQuantity > 0n) {
+    if (remainingQuantity > 0) {
       // Order cannot be fully filled, high slippage
       return this.config.maxSlippage;
     }
 
-    const avgExecutionPrice = weightedPrice / order.quantity;
+    const avgExecutionPrice = weightedPrice / Number(order.quantity);
     const slippage =
-      Math.abs(Number(avgExecutionPrice - order.price)) / Number(order.price);
+      Math.abs(avgExecutionPrice - Number(order.price)) / Number(order.price);
 
     return Math.min(slippage, this.config.maxSlippage);
   }
@@ -710,12 +722,12 @@ export class LiveTradingEngine extends BaseTradingMode {
 
       return {
         bids: snapshot.bids.map((level) => ({
-          price: BigInt(level.price),
-          quantity: BigInt(level.quantity),
+          price: BigInt(Math.round(parseFloat(String(level.price)))),
+          quantity: BigInt(Math.round(parseFloat(String(level.quantity)))),
         })),
         asks: snapshot.asks.map((level) => ({
-          price: BigInt(level.price),
-          quantity: BigInt(level.quantity),
+          price: BigInt(Math.round(parseFloat(String(level.price)))),
+          quantity: BigInt(Math.round(parseFloat(String(level.quantity)))),
         })),
       };
     } catch (error) {
@@ -849,7 +861,7 @@ export class LiveTradingEngine extends BaseTradingMode {
     const averageConfirmationTime =
       this.confirmationTimes.length > 0
         ? this.confirmationTimes.reduce((sum, time) => sum + time, 0) /
-          this.confirmationTimes.length
+        this.confirmationTimes.length
         : 0;
 
     return {
@@ -1410,11 +1422,11 @@ export class LiveTradingEngine extends BaseTradingMode {
    */
   async getOrderStatus(orderId: string): Promise<{
     status:
-      | "pending"
-      | "filled"
-      | "cancelled"
-      | "rejected"
-      | "partially_filled";
+    | "pending"
+    | "filled"
+    | "cancelled"
+    | "rejected"
+    | "partially_filled";
     filledQuantity: bigint;
     remainingQuantity: bigint;
     transactionHash?: string;

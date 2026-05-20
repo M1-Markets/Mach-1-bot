@@ -1,0 +1,132 @@
+import * as fs from "fs";
+import * as path from "path";
+
+export const tomlConfigSchema = {
+    $schema: "https://json-schema.org/draft/2020-12/schema",
+    title: "Mach1 Bot TOML Configuration",
+    description: "Schema for mach1-bot TOML configuration files used by the CLI.",
+    type: "object",
+    properties: {
+        general: {
+            type: "object",
+            description: "Optional metadata for the bot.",
+            properties: {
+                name: { type: "string" },
+                description: { type: "string" },
+            },
+            additionalProperties: false,
+        },
+        bot: {
+            type: "object",
+            description: "Optional bot metadata section.",
+            properties: {
+                name: { type: "string" },
+                description: { type: "string" },
+            },
+            additionalProperties: false,
+        },
+        wallet: {
+            type: "object",
+            description: "Wallet configuration section.",
+            properties: {
+                private_key: {
+                    type: "string",
+                    description: "Private key used by the bot.",
+                },
+            },
+            required: ["private_key"],
+            additionalProperties: false,
+        },
+        trading: {
+            type: "object",
+            description: "Trading settings for the bot.",
+            properties: {
+                mode: {
+                    type: "string",
+                    enum: ["backtest", "simulation", "live"],
+                    description: "Trading mode.",
+                },
+                base_currency: { type: "string" },
+                initial_balance: { type: "number" },
+                max_position_size: { type: "number" },
+                max_daily_loss: { type: "number" },
+            },
+            required: [
+                "mode",
+                "base_currency",
+                "initial_balance",
+                "max_position_size",
+                "max_daily_loss",
+            ],
+            additionalProperties: false,
+        },
+        strategy: {
+            type: "object",
+            description: "Strategy selection and parameters.",
+            properties: {
+                type: { type: "string", description: "High-level strategy type." },
+                risk_level: {
+                    type: "string",
+                    enum: ["low", "medium", "high"],
+                    description: "Risk level for strategy execution.",
+                },
+                id: { type: "string", description: "Optional registered strategy ID." },
+                parameters: {
+                    type: "object",
+                    description: "Strategy-specific parameters.",
+                    additionalProperties: true,
+                },
+                trading_pairs: {
+                    type: "array",
+                    description: "Optional list of trading pairs.",
+                    items: { type: "string" },
+                },
+            },
+            required: ["type", "risk_level"],
+            additionalProperties: false,
+        },
+        network: {
+            type: "object",
+            description: "Network configuration.",
+            properties: {
+                rpc_url: {
+                    type: "string",
+                    description: "RPC endpoint for the target network.",
+                },
+                chain_id: {
+                    type: "number",
+                    description: "Chain ID for the selected network.",
+                },
+            },
+            required: ["rpc_url", "chain_id"],
+            additionalProperties: false,
+        },
+        ai_helper: {
+            type: "object",
+            description: "Optional AI helper configuration.",
+            properties: {
+                enabled: { type: "boolean" },
+                provider: {
+                    type: "string",
+                    enum: ["gemini", "chatgpt", "claude"],
+                },
+                api_key: { type: "string" },
+                prompt: { type: "string" },
+            },
+            required: ["enabled", "provider", "api_key"],
+            additionalProperties: false,
+        },
+    },
+    required: ["wallet", "trading", "strategy", "network"],
+    additionalProperties: false,
+} as const;
+
+export function getTomlConfigSchemaPath(): string {
+    return path.resolve(__dirname, "../../../../schema/toml-config.schema.json");
+}
+
+export function loadTomlConfigSchema(): unknown {
+    return JSON.parse(
+        fs.readFileSync(getTomlConfigSchemaPath(), "utf8"),
+    ) as unknown;
+}

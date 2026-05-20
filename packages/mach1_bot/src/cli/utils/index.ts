@@ -6,4 +6,5 @@
 
 export { getDefaultAiPrompt } from "@/shared/utils/ai-utils";
 export * from "./bot-utils";
+export * from "./config-schema";
 export * from "./strategy-utils";

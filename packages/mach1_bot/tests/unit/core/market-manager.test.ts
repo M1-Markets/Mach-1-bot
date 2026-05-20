@@ -88,6 +88,25 @@ describe("MarketManager", () => {
       expect(typeof price).toBe("bigint");
       expect(price).toBeGreaterThan(0n);
     });
+
+    it("should synthesize fallback price data for valid SDK pairs", async () => {
+      const sdkPair: TradingPair = {
+        base: "0x3333333333333333333333333333333333333333" as Address,
+        quote: "0x0987654321098765432109876543210987654321" as Address,
+        symbol: "AMZN/USDC",
+      };
+
+      marketManager.setSDK({
+        market: {
+          getCandlesticks: vi.fn().mockRejectedValue(new Error("timeout")),
+        },
+      } as any);
+
+      const price = await marketManager.getCurrentPrice(sdkPair);
+
+      expect(typeof price).toBe("bigint");
+      expect(price).toBeGreaterThan(0n);
+    });
   });
 
   describe("getAllTradingPairs", () => {
@@ -126,6 +145,27 @@ describe("MarketManager", () => {
           max_order_size: "1000",
           tick_size: "0.01",
         },
+        {
+          id: "pair-2",
+          base_token: "BTC",
+          quote_token: "USDC",
+          base_asset_id: "btc",
+          quote_asset_id: "usdc",
+          base_icon_url: "",
+          quote_icon_url: "",
+          base_token_contract: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          quote_token_contract: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          symbol: "BTC/USDC",
+          base_decimals: 8,
+          quote_decimals: 6,
+          market_type: "MARGIN",
+          is_active: true,
+          maker_fee_bps: 10,
+          taker_fee_bps: 20,
+          min_order_size: "0.0001",
+          max_order_size: "1000",
+          tick_size: "0.01",
+        },
       ];
 
       marketManager.setSDK({
@@ -141,7 +181,7 @@ describe("MarketManager", () => {
 
       const pairs = await marketManager.getAllTradingPairs();
 
-      expect(pairs).toEqual(sdkPairs);
+      expect(pairs).toEqual([sdkPairs[0]]);
     });
   });
 

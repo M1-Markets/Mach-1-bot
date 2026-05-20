@@ -33,8 +33,8 @@ import {
   getDefaultAiPrompt,
   getStrategiesByCategory,
   getStrategyById,
-  isVerboseLogLevel,
   initializeMach1Bot,
+  isVerboseLogLevel,
   parseTomlConfig,
   searchStrategies,
   TomlConfig,
@@ -44,7 +44,11 @@ import { resolveEnvironmentOption } from "@/cli/utils/monaco-session";
 import { Mach1Bot } from "@/domains/bot/mach1-bot";
 import type { StrategyFilter } from "@/domains/strategies/management/strategy-registry";
 import { getWalletAddressFromPrivateKey } from "@/shared/utils/crypto-utils";
-import { isRecord } from "@/shared/utils/record-utils";
+import {
+  getStringProp,
+  isRecord,
+  type UnknownRecord,
+} from "@/shared/utils/record-utils";
 
 // User Prompt Response Structure
 interface PromptResponse {
@@ -75,6 +79,112 @@ const hasEmergencyStop = (
 
 const stripAnsi = (value: string): string =>
   value.replace(new RegExp("\\u001b\\[[0-9;]*m", "g"), "");
+
+type MonacoSdkProvider = {
+  getSDK: () => unknown;
+  getTradingPairResolver?: () => unknown;
+};
+
+type ProfileApi = {
+  getUserBalances: () => Promise<unknown>;
+};
+
+const hasMonacoSdkProvider = (value: unknown): value is MonacoSdkProvider =>
+  isRecord(value) && typeof value.getSDK === "function";
+
+const hasProfileApi = (value: unknown): value is { profile: ProfileApi } =>
+  isRecord(value) &&
+  isRecord(value.profile) &&
+  typeof value.profile.getUserBalances === "function";
+
+const getBalanceText = (
+  balanceRecord: UnknownRecord,
+  key: string,
+): string | undefined => {
+  const value = balanceRecord[key];
+  if (typeof value === "string") return value;
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  if (typeof value === "bigint") return value.toString();
+  return undefined;
+};
+
+const formatSpotUsdcBalance = (value: string): string => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return value;
+  return parsed.toLocaleString("en-US", {
+    maximumFractionDigits: 2,
+  });
+};
+
+const getUsdcAssetIds = (monacoSdk: MonacoSdkProvider): Set<string> => {
+  const assetIds = new Set<string>();
+  if (typeof monacoSdk.getTradingPairResolver !== "function") return assetIds;
+
+  const resolver = monacoSdk.getTradingPairResolver();
+  if (!isRecord(resolver) || typeof resolver.getAllPairs !== "function") {
+    return assetIds;
+  }
+
+  const pairs = resolver.getAllPairs();
+  if (!Array.isArray(pairs)) return assetIds;
+
+  for (const pair of pairs) {
+    if (!isRecord(pair)) continue;
+    if (getStringProp(pair, "base_token")?.toUpperCase() === "USDC") {
+      const baseAssetId = getStringProp(pair, "base_asset_id");
+      if (baseAssetId) assetIds.add(baseAssetId);
+    }
+    if (getStringProp(pair, "quote_token")?.toUpperCase() === "USDC") {
+      const quoteAssetId = getStringProp(pair, "quote_asset_id");
+      if (quoteAssetId) assetIds.add(quoteAssetId);
+    }
+  }
+
+  return assetIds;
+};
+
+const readSpotUsdcBalance = async (
+  bot: Mach1Bot,
+): Promise<string | undefined> => {
+  const botRecord = bot as unknown as UnknownRecord;
+  const liveEngine = botRecord.liveEngine;
+  if (!isRecord(liveEngine)) return undefined;
+
+  const monacoSdk = liveEngine.monacoSDK;
+  if (!hasMonacoSdkProvider(monacoSdk)) return undefined;
+  const usdcAssetIds = getUsdcAssetIds(monacoSdk);
+
+  const sdk = monacoSdk.getSDK();
+  if (!hasProfileApi(sdk)) return undefined;
+
+  const balances = await sdk.profile.getUserBalances();
+  if (!isRecord(balances) || !Array.isArray(balances.balances)) {
+    return undefined;
+  }
+
+  for (const balance of balances.balances) {
+    if (!isRecord(balance)) continue;
+    const symbol = (
+      getStringProp(balance, "symbol") ||
+      getStringProp(balance, "token") ||
+      ""
+    ).toUpperCase();
+    const assetId = getStringProp(balance, "asset_id");
+    if (symbol !== "USDC" && (!assetId || !usdcAssetIds.has(assetId))) {
+      continue;
+    }
+
+    const raw =
+      getBalanceText(balance, "available_balance") ??
+      getBalanceText(balance, "available") ??
+      getBalanceText(balance, "total_balance") ??
+      getBalanceText(balance, "balance");
+
+    return raw ? formatSpotUsdcBalance(raw) : undefined;
+  }
+
+  return undefined;
+};
 
 const sendSupervisorLog = (entry: RunLogEntry): void => {
   if (process.env.MACH_ONE_SUPERVISED !== "1") return;
@@ -419,16 +529,16 @@ export const registerCliCommands = (target: Command): Command => {
             chain_id: response.chainId,
           },
           ...(response.enableAiHelper &&
-          response.aiHelperType &&
-          response.aiHelperApiKey
+            response.aiHelperType &&
+            response.aiHelperApiKey
             ? {
-                ai_helper: {
-                  enabled: true,
-                  provider: response.aiHelperType,
-                  api_key: response.aiHelperApiKey,
-                  prompt: getDefaultAiPrompt(),
-                },
-              }
+              ai_helper: {
+                enabled: true,
+                provider: response.aiHelperType,
+                api_key: response.aiHelperApiKey,
+                prompt: getDefaultAiPrompt(),
+              },
+            }
             : {}),
         };
 
@@ -507,6 +617,10 @@ export const registerCliCommands = (target: Command): Command => {
       "Prefix for log file name (stored under ./logs)",
     )
     .option(
+      "--no-ui",
+      "Disable interactive terminal UI and print execution output to stdout",
+    )
+    .option(
       "--instance <name>",
       "Run a named bot instance (alpha, beta) with predefined config/log prefix",
     )
@@ -540,6 +654,12 @@ export const registerCliCommands = (target: Command): Command => {
         instanceConfig?.configFile ?? configFiles[0] ?? "mach-one-bot.toml",
       );
       const logPrefix = options.logPrefix ?? instanceConfig?.logPrefix;
+      const noUiEnabled = Boolean(
+        options.ui === false || process.env.MACH_ONE_NO_UI === "1",
+      );
+      if (options.ui === false) {
+        process.env.MACH_ONE_NO_UI = "1";
+      }
 
       if (instanceConfig) {
         if (!fs.existsSync(configFile)) {
@@ -623,9 +743,80 @@ export const registerCliCommands = (target: Command): Command => {
 
       try {
         const isSupervisor =
+          !noUiEnabled &&
           !process.env.MACH_ONE_SUPERVISED &&
           !instanceConfig &&
           configFiles.length > 1;
+        if (noUiEnabled && !process.env.MACH_ONE_SUPERVISED && !instanceConfig && configFiles.length > 1) {
+          console.log(
+            pc.cyan(
+              `🧭 Starting ${configFiles.length} bot instances in non-interactive mode...`,
+            ),
+          );
+          const childArgsBase = [
+            "run",
+            "--env",
+            resolveEnvironmentOption(process.env.MONACO_ENV, "staging"),
+          ];
+          if (options.clientId) {
+            childArgsBase.push("--client-id", String(options.clientId));
+          }
+          if (options.rateLimit) {
+            childArgsBase.push("--rate-limit", String(options.rateLimit));
+          }
+          if (options.logLevel) {
+            childArgsBase.push("--log-level", String(options.logLevel));
+          }
+          if (options.test) {
+            childArgsBase.push("--test");
+          }
+          if (options.ui === false) {
+            childArgsBase.push("--no-ui");
+          }
+
+          activeChildren = configFiles.map((file: string) => {
+            const prefix =
+              logPrefix ??
+              sanitizeLogPrefix(path.parse(file).name) ??
+              undefined;
+            const args = [
+              ...childArgsBase,
+              "--config",
+              file,
+              ...(prefix ? ["--log-prefix", prefix] : []),
+            ];
+            const child = spawn(
+              process.execPath,
+              [...process.execArgv, __filename, ...args],
+              {
+                stdio: ["ignore", "inherit", "inherit", "ipc"],
+                env: {
+                  ...process.env,
+                  MACH_ONE_SUPERVISED: "1",
+                  MACH_ONE_NO_UI: "1",
+                },
+              },
+            );
+            child.on("exit", (code, signal) => {
+              const label = pc.gray(
+                `${path.basename(file)} exited with ${signal ? `signal ${signal}` : `code ${code ?? 0}`
+                }`,
+              );
+              console.log(label);
+            });
+            return child;
+          });
+          await Promise.all(
+            activeChildren.map(
+              (child) =>
+                new Promise<void>((resolve) => {
+                  child.once("exit", () => resolve());
+                }),
+            ),
+          );
+          return;
+        }
+
         if (isSupervisor) {
           console.log(
             pc.cyan(
@@ -698,8 +889,7 @@ export const registerCliCommands = (target: Command): Command => {
             });
             child.on("exit", (code, signal) => {
               const label = pc.gray(
-                `${path.basename(file)} exited with ${
-                  signal ? `signal ${signal}` : `code ${code ?? 0}`
+                `${path.basename(file)} exited with ${signal ? `signal ${signal}` : `code ${code ?? 0}`
                 }`,
               );
               supervisorUi?.setPaneStatus(
@@ -726,6 +916,7 @@ export const registerCliCommands = (target: Command): Command => {
         await runBot(configFile, {
           testMode: Boolean(options.test),
           logPrefix,
+          noUi: noUiEnabled,
         });
       } catch (error) {
         console.error(
@@ -1137,14 +1328,37 @@ export const registerCliCommands = (target: Command): Command => {
   return target;
 };
 
-type RunOptions = { testMode?: boolean; logPrefix?: string };
+type RunOptions = {
+  testMode?: boolean;
+  logPrefix?: string;
+  noUi?: boolean;
+};
+
+const formatBotOrderLog = (entry: BotOrderLogEntry): string => {
+  const priceLabel = entry.price !== undefined ? ` price=${entry.price}` : "";
+  const idLabel = entry.orderId ? ` id=${entry.orderId}` : "";
+  const reasonLabel = entry.reason ? ` reason=${entry.reason}` : "";
+  return `ORDER ${entry.side} ${entry.pair} amount=$${entry.amountUsd.toFixed(
+    2,
+  )}${priceLabel} status=${entry.status}${idLabel}${reasonLabel}`;
+};
 
 async function runBot(configFile: string, runOptions: RunOptions = {}) {
   let runUi: RunUiController | undefined;
   let restoreConsole: (() => void) | undefined;
+  let balanceRefreshTimer: NodeJS.Timeout | undefined;
   const disableUi = process.env.MACH_ONE_NO_UI === "1";
 
   try {
+    const disableUi =
+      runOptions.noUi ?? process.env.MACH_ONE_NO_UI === "1";
+
+    if (disableUi) {
+      console.log(
+        pc.cyan("🔧 Running without interactive UI (--no-ui)"),
+      );
+    }
+
     // Load and parse TOML configuration
     const tomlConfig = await parseTomlConfig(configFile);
 
@@ -1195,6 +1409,11 @@ async function runBot(configFile: string, runOptions: RunOptions = {}) {
       };
     } else {
       restoreConsole = attachFileLogger(logFilePath);
+      hooks = {
+        onOrder: (entry: BotOrderLogEntry) => {
+          console.log(formatBotOrderLog(entry));
+        },
+      };
     }
     if (verbose) {
       console.log(pc.cyan(`🚀 Starting mach-one-bot with config: ${configFile}`));
@@ -1222,6 +1441,16 @@ async function runBot(configFile: string, runOptions: RunOptions = {}) {
     // Execute bot based on mode
     await executeBotMode(bot, botConfig, initialBalance);
     runUi?.setStatus("Running");
+    const refreshSpotUsdcBalance = async () => {
+      if (!runUi) return;
+      try {
+        runUi.setSpotUsdcBalance(await readSpotUsdcBalance(bot));
+      } catch {
+        runUi.setSpotUsdcBalance(undefined);
+      }
+    };
+    await refreshSpotUsdcBalance();
+    balanceRefreshTimer = setInterval(refreshSpotUsdcBalance, 30_000);
 
     if (verbose) {
       console.log(pc.gray("🛑 Press Ctrl+C to stop the bot"));
@@ -1245,6 +1474,9 @@ async function runBot(configFile: string, runOptions: RunOptions = {}) {
             );
           }
           restoreConsole?.();
+          if (balanceRefreshTimer) {
+            clearInterval(balanceRefreshTimer);
+          }
           runUi?.unmount();
           process.exit(0);
         },
@@ -1255,6 +1487,9 @@ async function runBot(configFile: string, runOptions: RunOptions = {}) {
       process.stdin.resume();
     }
   } catch (error) {
+    if (balanceRefreshTimer) {
+      clearInterval(balanceRefreshTimer);
+    }
     restoreConsole?.();
     runUi?.unmount();
     throw new Error(

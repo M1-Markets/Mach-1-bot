@@ -101,6 +101,14 @@ function getTradingPairsTotalPages(response: unknown): number | undefined {
   return parseNumber(nested.total_pages ?? nested.total);
 }
 
+function filterSpotTradingPairs(
+  tradingPairs: MonacoTradingPair[],
+): MonacoTradingPair[] {
+  return tradingPairs.filter(
+    (pair) => pair.market_type?.toUpperCase() === "SPOT",
+  );
+}
+
 export class MarketManager {
   private mockPrices: Map<string, bigint> = new Map();
   private mockOrderBooks: Map<string, InternalOrderBook> = new Map();
@@ -165,6 +173,53 @@ export class MarketManager {
 
   private getPairKey(baseToken: Address, quoteToken: Address): string {
     return `${baseToken}-${quoteToken}`;
+  }
+
+  private isValidAddress(value: string): value is Address {
+    return /^0x[a-fA-F0-9]{40}$/.test(value);
+  }
+
+  private deriveInitialMockPrice(pair: TradingPair): bigint {
+    const symbol = pair.symbol.toUpperCase();
+    const baseSymbol = symbol.split("/")[0] || symbol;
+
+    if (baseSymbol.includes("BTC")) return 4_500_000n;
+    if (baseSymbol.includes("ETH")) return 300_000n;
+    if (baseSymbol.includes("SOL")) return 15_000n;
+    if (baseSymbol === "USDC" || baseSymbol === "USDT") return 100n;
+
+    let hash = 0;
+    for (const char of baseSymbol) {
+      hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+    }
+
+    return BigInt(10_000 + (hash % 490_000));
+  }
+
+  private ensureMockDataForPair(pair: TradingPair): bigint | undefined {
+    const pairKey = this.getPairKey(pair.base, pair.quote);
+    const existingPrice = this.mockPrices.get(pairKey);
+
+    if (existingPrice) {
+      return existingPrice;
+    }
+
+    if (!this.isValidAddress(pair.base) || !this.isValidAddress(pair.quote)) {
+      return undefined;
+    }
+
+    const initialPrice = this.deriveInitialMockPrice(pair);
+    this.mockPrices.set(pairKey, initialPrice);
+    this.mockOrderBooks.set(
+      pairKey,
+      this.generateMockOrderBook(pairKey, initialPrice),
+    );
+    this.mockTrades.set(
+      pairKey,
+      this.generateMockTrades(pairKey, initialPrice),
+    );
+
+    return initialPrice;
   }
 
   private generateMockOrderBook(
@@ -268,7 +323,7 @@ export class MarketManager {
     }
 
     const pairKey = this.getPairKey(pair.base, pair.quote);
-    const price = this.mockPrices.get(pairKey);
+    const price = this.ensureMockDataForPair(pair);
 
     if (!price) {
       throw new Error(`No price data for pair ${pair.symbol}`);
@@ -503,7 +558,7 @@ export class MarketManager {
           throw new Error("Failed to fetch trading pairs from Monaco SDK");
         }
 
-        pairs.push(...tradingPairs);
+        pairs.push(...filterSpotTradingPairs(tradingPairs));
         totalPages = fetchedTotalPages;
         page++;
       } while (page <= totalPages);

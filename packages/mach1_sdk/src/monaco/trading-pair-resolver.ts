@@ -85,6 +85,14 @@ function getTradingPairsTotalPages(response: unknown): number | undefined {
   return parseNumber(nested.total_pages ?? nested.total);
 }
 
+function filterSpotTradingPairs(
+  tradingPairs: ResolvedTradingPair[],
+): ResolvedTradingPair[] {
+  return tradingPairs.filter(
+    (pair) => pair.market_type?.toUpperCase() === "SPOT",
+  );
+}
+
 export interface ResolvedTradingPair {
   id: string;
   symbol: string;
@@ -163,7 +171,7 @@ export class TradingPairResolver {
         throw new Error("Failed to fetch trading pairs from Monaco SDK");
       }
 
-      allPairs.push(...tradingPairs);
+      allPairs.push(...filterSpotTradingPairs(tradingPairs));
       totalPages = fetchedTotalPages;
       page++;
     }
