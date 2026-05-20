@@ -72,21 +72,27 @@ When you're ready to place a real on-chain order (on testnet, with testnet funds
 MODE=live           # was: MODE=paper
 ```
 
-Two things you need first — Monaco doesn't accept orders without them:
+**Two things to do first — Monaco won't accept orders without them.**
+
+Easy path (recommended, via web UI):
+
+1. Go to **[https://app.m1.markets](https://app.m1.markets)**
+2. Connect the wallet whose private key is in your `.env`
+3. Request testnet tokens from the in-app faucet
+4. Deposit USDC into the Monaco vault
+
+Advanced path (CLI only, if you already have a TOML config):
 
 ```bash
-# 1. Claim testnet tokens (SEI for gas, USDC for collateral)
 npx mach1 live faucet  --config packages/mach1_bot/example_configs/grid-trading-bot.toml --env staging
-
-# 2. Deposit USDC into the Monaco vault so the bot has collateral
 npx mach1 live deposit --token USDC --amount 100 --config packages/mach1_bot/example_configs/grid-trading-bot.toml --env staging
 ```
 
-(Use any of the sample configs — they're all configured for sei-testnet.)
-
 Then run `npx mach1 demo`. You'll see a red warning and a 5-second countdown — Ctrl+C aborts. Otherwise the $100 ETH/USDC buy hits the Monaco protocol on sei-testnet using `PRIVATE_KEY`.
 
-If you skip the faucet + deposit step, the demo will reach Monaco but the order will be **rejected at pre-trade checks** with `hasFunds: false`. No on-chain transaction occurs — your wallet is untouched — but you'll see a yellow rejection message instead of the green success one.
+If you skip the faucet + deposit step, the demo will reach Monaco but the order will be **rejected at pre-trade checks** with `hasFunds: false`. No on-chain transaction occurs — your wallet is untouched — but you'll see a yellow rejection message pointing you back to the faucet flow.
+
+If the demo errors with `Network request failed for /api/v1/...`, that's a Monaco-side API issue, not your wallet. Check protocol status at [https://app.m1.markets](https://app.m1.markets) and retry.
 
 When you're done, set `MODE=paper` back. The demo and example scripts read this value on every run.
 
