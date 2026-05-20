@@ -970,6 +970,26 @@ export const registerCliCommands = (target: Command): Command => {
           );
         }
 
+        // Resolve Monaco environment (which API host the live engine talks
+        // to). Must match where the user deposited collateral. The web UI
+        // at app.m1.markets is the "mainnet" environment, so that's the
+        // default here; staging/development are for protocol contributors.
+        const rawEnv = (process.env.MONACO_ENV || "mainnet").toLowerCase();
+        const validEnvs = ["mainnet", "staging", "development", "local"] as const;
+        const monacoEnv = (
+          validEnvs.includes(rawEnv as (typeof validEnvs)[number])
+            ? rawEnv
+            : "mainnet"
+        ) as "mainnet" | "staging" | "development" | "local";
+
+        if (rawEnv !== monacoEnv) {
+          console.warn(
+            pc.yellow(
+              `⚠️  Unknown MONACO_ENV="${rawEnv}" in .env. Falling back to "mainnet".`,
+            ),
+          );
+        }
+
         if (mode === "live") {
           console.log(
             pc.red("\n⚠️  LIVE MODE — this will place a real on-chain order."),
@@ -986,7 +1006,9 @@ export const registerCliCommands = (target: Command): Command => {
         }
 
         console.log(
-          pc.cyan(`🚀 Running mach1 demo (mode=${mode} on sei-testnet)...`),
+          pc.cyan(
+            `🚀 Running mach1 demo (mode=${mode}, env=${monacoEnv}, chain=sei-testnet)...`,
+          ),
         );
 
         const bot = new Mach1Bot({
@@ -994,6 +1016,7 @@ export const registerCliCommands = (target: Command): Command => {
           rpcUrl,
           mode,
           network: "sei-testnet",
+          environment: monacoEnv,
         });
 
         const order = await bot.buy("ETH/USDC", { amountUsd: 100 });

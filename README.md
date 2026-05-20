@@ -94,6 +94,8 @@ If you skip the faucet + deposit step, the demo will reach Monaco but the order 
 
 If the demo errors with `Network request failed for /api/v1/...`, that's a Monaco-side API issue, not your wallet. Check protocol status at [https://app.m1.markets](https://app.m1.markets) and retry.
 
+**Monaco environment.** The demo defaults to `MONACO_ENV=mainnet` because that's what [app.m1.markets](https://app.m1.markets) uses. If your deposit doesn't show up to the bot after funding via the web UI, double-check that `MONACO_ENV` in `.env` matches the environment you deposited into. `staging` and `development` exist for protocol contributors and have separate balance ledgers.
+
 When you're done, set `MODE=paper` back. The demo and example scripts read this value on every run.
 
 ### 5. Go beyond the demo
