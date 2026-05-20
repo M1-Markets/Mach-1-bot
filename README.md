@@ -20,10 +20,15 @@ The demo runs in **paper trading mode** by default. Your wallet isn't touched, n
 You should see something like:
 
 ```
-🚀 Running mach1 demo (mode=paper on sei-testnet)...
+🚀 Running mach1 demo (mode=paper, env=staging, chain=sei-testnet)...
+
 ✅ Demo trade submitted successfully
-   Order: id=order_1_... symbol=ETH/USDC side=buy type=market size=3 price=2998.45 status=filled
+   Order:
+     id=order_1_... symbol=ETH/USDC side=buy type=market size=3 price=2998.45 status=filled
+
    This order was simulated locally — no on-chain transaction occurred.
+
+💡 Next steps: explore packages/mach1_bot/examples/ for strategy and backtest demos.
 ```
 
 If you saw that, you're set. Skip to the journey below.

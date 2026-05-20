@@ -4,17 +4,25 @@ Runnable examples for the high-level bot package. Start with `quickstart.ts`.
 
 ## Running
 
-From the repo root, after running `npm install` and creating `.env`:
+From the repo root, after `npm install` and setting up `.env`:
 
 ```bash
-npx tsx packages/mach1_bot/examples/quickstart.ts
+npm run example:quickstart   # paper buy, ~2s
+npm run example:strategy     # RSI strategy, runs 30s
+npm run example:backtest     # backtest (needs CSVs in ./backtest-data/)
+```
+
+You can also run any file directly with `tsx` if you prefer:
+
+```bash
+npx tsx --tsconfig packages/mach1_bot/tsconfig.json packages/mach1_bot/examples/quickstart.ts
 ```
 
 ## Examples
 
 | File | Demonstrates |
 |------|--------------|
-| quickstart.ts | Setup, single sim buy |
+| quickstart.ts | Setup, single paper buy |
 | with-strategy.ts | Strategy callback (RSI) |
 | with-backtest.ts | Backtesting a strategy |
 
