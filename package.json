@@ -1,13 +1,25 @@
 {
-  "name": "mach-one-sdk-workspace",
+  "name": "mach1",
   "private": true,
+  "bin": {
+    "mach1": "./bin/mach1.cjs"
+  },
   "scripts": {
+    "postinstall": "patch-package && npm --prefix packages/mach1_sdk run build && npm --prefix packages/mach1_bot run build:cli",
+    "build": "npm --prefix packages/mach1_sdk run build && npm --prefix packages/mach1_bot run build:cli",
+    "typecheck": "npm --prefix packages/mach1_sdk run typecheck && npm --prefix packages/mach1_bot run typecheck",
+    "demo": "node bin/mach1.cjs demo",
+    "example:quickstart": "tsx --tsconfig packages/mach1_bot/tsconfig.json packages/mach1_bot/examples/quickstart.ts",
+    "example:strategy": "tsx --tsconfig packages/mach1_bot/tsconfig.json packages/mach1_bot/examples/with-strategy.ts",
+    "example:backtest": "tsx --tsconfig packages/mach1_bot/tsconfig.json packages/mach1_bot/examples/with-backtest.ts",
     "mach-one-bot": "npm --workspace packages/mach1_bot exec -- mach-one-bot",
     "create-cross-repo-patch": "bash ./scripts/create-cross-repo-patch.sh",
     "apply-cross-repo-patch": "bash ./scripts/apply-cross-repo-patch.sh",
     "test-mach-one-bot-tempdir": "bash ./scripts/test-mach-one-bot-tempdir.sh",
-    "postinstall": "patch-package",
     "test": "npm --workspace packages/mach1_bot test"
+  },
+  "devDependencies": {
+    "tsx": "^4.20.3"
   },
   "workspaces": [
     "packages/mach1_bot",

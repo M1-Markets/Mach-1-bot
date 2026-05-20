@@ -165,7 +165,7 @@ export class MonacoSDKAdapter {
 
     this.sdk = createMach1SDK({
       walletClient,
-      network: environment,
+      network: network === "mainnet" ? "sei-mainnet" : "sei-testnet",
       seiRpcUrl: selectedRpcUrl,
     });
 

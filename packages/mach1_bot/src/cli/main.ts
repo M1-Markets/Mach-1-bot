@@ -905,6 +905,86 @@ export const registerCliCommands = (target: Command): Command => {
       }
     });
 
+  // Demo command - quick end-to-end smoke test using .env from cwd
+  target
+    .command("demo")
+    .description(
+      "Run a quick simulation buy of ETH/USDC on sei-testnet using .env in the current directory",
+    )
+    .action(async () => {
+      try {
+        // Load .env from where the user invoked the CLI. The bin launcher
+        // exports MACH1_INVOCATION_CWD because the bot CLI itself spawns
+        // with cwd=packages/mach1_bot, which would otherwise hide the
+        // repo-root .env.
+        // biome-ignore lint/security/detectNonLiteralRequire: dotenv is a known fixed module
+        const dotenv = require("dotenv");
+        const envCwd = process.env.MACH1_INVOCATION_CWD || process.cwd();
+        dotenv.config({ path: path.resolve(envCwd, ".env") });
+
+        const privateKey = process.env.PRIVATE_KEY;
+        const rpcUrl = process.env.SEI_RPC_URL;
+
+        if (!privateKey) {
+          console.error(
+            pc.red(
+              "❌ Missing PRIVATE_KEY in environment. Add it to your .env file at the repo root.",
+            ),
+          );
+          console.error(
+            pc.gray("   See .env.example for the expected format."),
+          );
+          process.exit(1);
+        }
+
+        if (!rpcUrl) {
+          console.error(
+            pc.red(
+              "❌ Missing SEI_RPC_URL in environment. Add it to your .env file at the repo root.",
+            ),
+          );
+          console.error(
+            pc.gray("   See .env.example for the expected format."),
+          );
+          process.exit(1);
+        }
+
+        console.log(
+          pc.cyan("🚀 Running mach1 demo (simulation on sei-testnet)..."),
+        );
+
+        const bot = new Mach1Bot({
+          privateKey,
+          rpcUrl,
+          mode: "simulation",
+          network: "sei-testnet",
+        });
+
+        const order = await bot.buy("ETH/USDC", { amountUsd: 100 });
+
+        console.log(pc.green("\n✅ Demo trade submitted successfully"));
+        console.log(pc.gray("   Order:"));
+        console.log(
+          pc.gray(
+            `     id=${order.id} symbol=${order.symbol} side=${order.side} type=${order.type} size=${order.size} price=${order.price} status=${order.status}`,
+          ),
+        );
+        console.log(
+          pc.cyan(
+            "\n💡 Next steps: explore packages/mach1_bot/examples/ for strategy and backtest demos.",
+          ),
+        );
+        process.exit(0);
+      } catch (error) {
+        console.error(
+          pc.red(
+            `❌ Demo failed: ${error instanceof Error ? error.message : String(error)}`,
+          ),
+        );
+        process.exit(1);
+      }
+    });
+
   return target;
 };
 
@@ -928,8 +1008,8 @@ async function runBot(configFile: string, runOptions: RunOptions = {}) {
     const strategyType = tomlConfig.strategy?.type || "dca";
     const riskLevel = tomlConfig.strategy?.risk_level || "medium";
     const network = botConfig.rpcUrl.includes("testnet")
-      ? "testnet"
-      : "mainnet";
+      ? "sei-testnet"
+      : "sei-mainnet";
     const environment = resolveEnvironmentOption(
       process.env.MONACO_ENV,
       "staging",

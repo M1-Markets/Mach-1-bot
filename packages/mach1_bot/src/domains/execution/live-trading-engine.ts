@@ -202,7 +202,7 @@ export class LiveTradingEngine extends BaseTradingMode {
 
     // Initialize Monaco SDK with new configuration
     const sdkConfig: MonacoCoreSDKConfig = {
-      network: config.network,
+      network: config.network === "sei-mainnet" ? "mainnet" : "testnet",
       privateKey: config.privateKey,
       mode: "live",
       environment: config.environment,

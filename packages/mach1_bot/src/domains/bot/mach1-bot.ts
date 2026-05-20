@@ -1237,8 +1237,8 @@ export class Mach1Bot {
     );
 
     const network: ChainNetwork = this.config.rpcUrl.includes("testnet")
-      ? "testnet"
-      : "mainnet";
+      ? "sei-testnet"
+      : "sei-mainnet";
     const tradingPairs = await this.getTargetSymbolsForLiveData();
 
     const liveConfig: LiveTradingConfig = {
