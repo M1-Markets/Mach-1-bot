@@ -5,7 +5,7 @@
     "mach1": "./bin/mach1.cjs"
   },
   "scripts": {
-    "postinstall": "patch-package && npm --prefix packages/mach1_sdk run build && npm --prefix packages/mach1_bot run build:cli",
+    "postinstall": "patch-package && (npm rebuild rollup --include=optional --silent 2>/dev/null || true) && npm --prefix packages/mach1_sdk run build && npm --prefix packages/mach1_bot run build:cli",
     "build": "npm --prefix packages/mach1_sdk run build && npm --prefix packages/mach1_bot run build:cli",
     "typecheck": "npm --prefix packages/mach1_sdk run typecheck && npm --prefix packages/mach1_bot run typecheck",
     "demo": "node bin/mach1.cjs demo",

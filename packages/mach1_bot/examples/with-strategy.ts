@@ -44,6 +44,16 @@ async function main() {
   // for market data ticks.
   const trade = await bot.buy("ETH/USDC", { amountUsd: 100 });
   console.log("Initial sim buy:", trade);
+
+  // Strategy callbacks fire on market-data ticks. Without an active wait,
+  // this script exits before any ticks arrive. Hold the process open for
+  // a window so the strategy has a chance to run.
+  const WATCH_SECONDS = 30;
+  console.log(
+    `Watching market for ${WATCH_SECONDS}s. RSI strategy will fire on incoming ticks. Ctrl+C to stop early.`,
+  );
+  await new Promise((resolve) => setTimeout(resolve, WATCH_SECONDS * 1000));
+  console.log("Watch window ended. In production code, run an event loop or SIGINT handler.");
 }
 
 main().catch((err) => {
