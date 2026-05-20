@@ -912,6 +912,8 @@ export const registerCliCommands = (target: Command): Command => {
       "Run a quick demo buy of ETH/USDC on sei-testnet. Mode (simulation/live) is read from .env.",
     )
     .action(async () => {
+      // Hoist mode so the catch block can branch on it for clearer error messages.
+      let mode: "paper" | "simulation" | "live" = "paper";
       try {
         // Load .env from where the user invoked the CLI. The bin launcher
         // exports MACH1_INVOCATION_CWD because the bot CLI itself spawns
@@ -954,7 +956,7 @@ export const registerCliCommands = (target: Command): Command => {
         // "simulation" both use the simulated execution path internally.
         const rawMode = (process.env.MODE || "paper").toLowerCase();
         const validModes = ["paper", "simulation", "live"] as const;
-        const mode = (
+        mode = (
           validModes.includes(rawMode as (typeof validModes)[number])
             ? rawMode
             : "paper"
@@ -1012,27 +1014,30 @@ export const registerCliCommands = (target: Command): Command => {
         if (orderRejected && mode === "live") {
           console.log(
             pc.yellow(
-              "\n   Common cause: no collateral in the Monaco vault for the quote asset.",
+              "\n   Most likely cause: your wallet has no collateral in the Monaco vault.",
             ),
           );
           console.log(
-            pc.gray(
-              "   Use a config + the live commands to deposit, e.g.:",
+            pc.cyan(
+              "\n   To fund a testnet wallet (easy path):",
             ),
+          );
+          console.log(pc.gray("     1. Go to https://app.m1.markets"));
+          console.log(pc.gray("     2. Connect this wallet"));
+          console.log(pc.gray("     3. Request testnet tokens from the faucet"));
+          console.log(pc.gray("     4. Deposit them into the Monaco vault"));
+          console.log(
+            pc.gray("\n   Then re-run `npx mach1 demo` with MODE=live."),
           );
           console.log(
             pc.gray(
-              "     mach1 live faucet  --config <bot.toml>   # claim testnet tokens",
+              "\n   CLI alternative (advanced): mach1 live faucet/deposit --config <bot.toml>",
             ),
           );
+        } else if (mode === "live" && !orderRejected) {
           console.log(
-            pc.gray(
-              "     mach1 live deposit --token USDC --amount 100 --config <bot.toml>",
-            ),
-          );
-          console.log(
-            pc.gray(
-              "   Sample configs: packages/mach1_bot/example_configs/",
+            pc.green(
+              "\n   This was a real on-chain transaction on sei-testnet.",
             ),
           );
         } else if (mode !== "live") {
@@ -1049,11 +1054,53 @@ export const registerCliCommands = (target: Command): Command => {
         );
         process.exit(orderRejected ? 2 : 0);
       } catch (error) {
-        console.error(
-          pc.red(
-            `❌ Demo failed: ${error instanceof Error ? error.message : String(error)}`,
-          ),
-        );
+        const message =
+          error instanceof Error ? error.message : String(error);
+        const isMonacoApiError =
+          /\/api\/v\d+\//.test(message) ||
+          /Network request failed/i.test(message);
+        const isNetworkLevelError =
+          /ECONNREFUSED|ETIMEDOUT|ENETUNREACH|ENOTFOUND|EAI_AGAIN/i.test(
+            message,
+          );
+
+        if (isMonacoApiError) {
+          console.error(
+            pc.red("\n❌ Monaco protocol API call failed."),
+          );
+          console.error(pc.gray(`   Error: ${message}`));
+          console.error(
+            pc.yellow(
+              "\n   This is typically a transient issue on the Monaco side, not your wallet.",
+            ),
+          );
+          console.error(
+            pc.gray(
+              "   Check protocol status at https://app.m1.markets and retry in a moment.",
+            ),
+          );
+        } else if (isNetworkLevelError) {
+          console.error(
+            pc.red("\n❌ Network error reaching the Monaco protocol or Sei RPC."),
+          );
+          console.error(pc.gray(`   Error: ${message}`));
+          console.error(
+            pc.yellow(
+              "\n   Check your internet connection and SEI_RPC_URL in .env.",
+            ),
+          );
+        } else if (mode === "live") {
+          console.error(
+            pc.red(`\n❌ Live demo failed: ${message}`),
+          );
+          console.error(
+            pc.gray(
+              "   If this looks like a Monaco protocol issue, check https://app.m1.markets",
+            ),
+          );
+        } else {
+          console.error(pc.red(`❌ Demo failed: ${message}`));
+        }
         process.exit(1);
       }
     });
