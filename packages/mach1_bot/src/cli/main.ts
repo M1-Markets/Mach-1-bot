@@ -972,20 +972,22 @@ export const registerCliCommands = (target: Command): Command => {
 
         // Resolve Monaco environment (which API host the live engine talks
         // to). Must match where the user deposited collateral. The web UI
-        // at app.m1.markets is the "mainnet" environment, so that's the
-        // default here; staging/development are for protocol contributors.
-        const rawEnv = (process.env.MONACO_ENV || "mainnet").toLowerCase();
+        // at app.m1.markets currently runs against the "staging"
+        // environment (https://staging.apimonaco.xyz), so that's the
+        // default here. Mainnet/development/local exist for protocol
+        // contributors.
+        const rawEnv = (process.env.MONACO_ENV || "staging").toLowerCase();
         const validEnvs = ["mainnet", "staging", "development", "local"] as const;
         const monacoEnv = (
           validEnvs.includes(rawEnv as (typeof validEnvs)[number])
             ? rawEnv
-            : "mainnet"
+            : "staging"
         ) as "mainnet" | "staging" | "development" | "local";
 
         if (rawEnv !== monacoEnv) {
           console.warn(
             pc.yellow(
-              `⚠️  Unknown MONACO_ENV="${rawEnv}" in .env. Falling back to "mainnet".`,
+              `⚠️  Unknown MONACO_ENV="${rawEnv}" in .env. Falling back to "staging".`,
             ),
           );
         }
