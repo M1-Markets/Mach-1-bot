@@ -22,6 +22,13 @@ async function main() {
     mode: "simulation",
   });
 
+  // The backtest engine reads CSV files from ./backtest-data/ (or the
+  // dataDirectory you configure on the engine). If that directory is
+  // empty, this example will complete successfully but with zero trades
+  // and zeroed stats. To get meaningful output, drop OHLCV CSVs into
+  // backtest-data/ before running.
+  console.log("Note: backtest runs against CSVs in ./backtest-data/. Empty directory = zero trades.");
+
   // The backtest engine drives the strategy callback on each bar.
   bot.strategy(async (marketData: MarketData) => {
     const eth = marketData["ETH/USDC"];
@@ -45,6 +52,16 @@ async function main() {
   console.log(`  sharpeRatio:  ${results.sharpeRatio.toFixed(2)}`);
   console.log(`  maxDrawdown:  ${(results.maxDrawdown * 100).toFixed(2)}%`);
   console.log(`  winRate:      ${(results.winRate * 100).toFixed(2)}%`);
+
+  const totalTrades = (results as { totalTrades?: number }).totalTrades ?? 0;
+  if (totalTrades === 0) {
+    console.log(
+      "\nZero trades executed — likely because no CSV data was found in ./backtest-data/.",
+    );
+    console.log(
+      "Populate that directory with OHLCV CSVs (one per pair) to see real results.",
+    );
+  }
 }
 
 main().catch((err) => {
