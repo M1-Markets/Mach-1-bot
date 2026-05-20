@@ -94,7 +94,9 @@ If you skip the faucet + deposit step, the demo will reach Monaco but the order 
 
 If the demo errors with `Network request failed for /api/v1/...`, that's a Monaco-side API issue, not your wallet. Check protocol status at [https://app.m1.markets](https://app.m1.markets) and retry.
 
-**Monaco environment.** The demo defaults to `MONACO_ENV=mainnet` because that's what [app.m1.markets](https://app.m1.markets) uses. If your deposit doesn't show up to the bot after funding via the web UI, double-check that `MONACO_ENV` in `.env` matches the environment you deposited into. `staging` and `development` exist for protocol contributors and have separate balance ledgers.
+**Monaco environment.** The demo defaults to `MONACO_ENV=staging` because that's what [app.m1.markets](https://app.m1.markets) currently runs against (`https://staging.apimonaco.xyz`). `mainnet` is reserved for future production; `development` and `local` exist for protocol contributors. Each environment has its own balance ledger — your deposit on app.m1.markets only shows up when `MONACO_ENV` matches the same host.
+
+**Heads up on transport.** app.m1.markets talks to Monaco over gRPC + websockets. This bot's SDK currently uses the REST surface (`/api/v1/...`) on the same host. The REST endpoints can be flaky (or partially deprecated) — if you see `Network request failed for /api/v1/auth/challenge`, that's a Monaco-side REST issue, not your wallet. The bot will need to migrate to gRPC eventually; until then, retry or check protocol status.
 
 When you're done, set `MODE=paper` back. The demo and example scripts read this value on every run.
 
