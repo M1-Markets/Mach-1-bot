@@ -4,12 +4,16 @@ import { createLogger } from "@/shared/utils/logger";
 const logger = createLogger("BacktestEngine");
 
 import * as path from "path";
+import { StrategyExecutionCoordinator } from "@/domains/execution/strategy-execution-coordinator";
 import { BaseTradingMode } from "@/domains/execution/trading-mode";
 import {
   Address,
   type BacktestConfig,
   type BacktestResult,
   type DataFileInfo,
+  type ExecutionOrderRecord,
+  type ExecutionOrderStatusResult,
+  type ExecutionTrade,
   type MarketData,
   type MarketState,
   OHLCV,
@@ -37,6 +41,7 @@ export class BacktestEngine extends BaseTradingMode {
   private currentTime = 0;
   private positions: Map<Address, bigint> = new Map();
   private cash = 0n;
+  private orders: Map<string, ExecutionOrderRecord> = new Map();
 
   // Enhanced market simulation
   private currentMarketState: MarketState = {
@@ -81,7 +86,7 @@ export class BacktestEngine extends BaseTradingMode {
   // Strategy execution support
   private strategyCallback?: (data: MarketData) => Promise<void>;
   private strategyExecutionInterval = 300000; // 5 minutes default
-  private lastStrategyExecution = 0;
+  private strategyExecutionCoordinator?: StrategyExecutionCoordinator;
 
   // Cancellation support
   private isCancelled = false;
@@ -693,6 +698,23 @@ export class BacktestEngine extends BaseTradingMode {
   ): void {
     this.strategyCallback = callback;
     this.strategyExecutionInterval = executionInterval;
+    this.strategyExecutionCoordinator = new StrategyExecutionCoordinator({
+      executor: async () => {
+        if (!this.strategyCallback) {
+          return false;
+        }
+
+        const marketData = this.constructMarketData(this.currentTime);
+        if (Object.keys(marketData).length === 0) {
+          return false;
+        }
+
+        await this.strategyCallback(marketData);
+        return true;
+      },
+      intervalMs: this.strategyExecutionInterval,
+      now: () => this.currentTime,
+    });
   }
 
   /**
@@ -953,12 +975,18 @@ export class BacktestEngine extends BaseTradingMode {
 
     // Validate order against available balance
     if (!this.validateOrder(order)) {
-      return {
+      const result: OrderResult = {
         orderId,
         status: "rejected",
         filledQuantity: 0n,
         remainingQuantity: order.quantity,
       };
+      this.orders.set(orderId, {
+        order,
+        timestamp: Date.now(),
+        ...result,
+      });
+      return result;
     }
 
     // Get current market price from historical data
@@ -969,12 +997,18 @@ export class BacktestEngine extends BaseTradingMode {
     });
 
     if (currentPrice === 0n) {
-      return {
+      const result: OrderResult = {
         orderId,
         status: "rejected",
         filledQuantity: 0n,
         remainingQuantity: order.quantity,
       };
+      this.orders.set(orderId, {
+        order,
+        timestamp: Date.now(),
+        ...result,
+      });
+      return result;
     }
 
     // Calculate slippage based on order size and market liquidity
@@ -992,31 +1026,38 @@ export class BacktestEngine extends BaseTradingMode {
 
     // Check if we have enough balance
     if (order.isBuy && this.cash < totalCost) {
-      return {
+      const result: OrderResult = {
         orderId,
         status: "rejected",
         filledQuantity: 0n,
         remainingQuantity: order.quantity,
       };
+      this.orders.set(orderId, {
+        order,
+        timestamp: Date.now(),
+        ...result,
+      });
+      return result;
     }
 
     // Execute the trade
     this.executeTrade(order, executionPrice, commission, slippage);
 
     // Log the trade
-    this.logTrade(order, {
-      orderId,
-      status: "filled",
-      filledQuantity: order.quantity,
-      remainingQuantity: 0n,
-    });
-
-    return {
+    const result: OrderResult = {
       orderId,
       status: "filled",
       filledQuantity: order.quantity,
       remainingQuantity: 0n,
     };
+    this.orders.set(orderId, {
+      order,
+      timestamp: Date.now(),
+      ...result,
+    });
+    this.logTrade(order, result);
+
+    return result;
   }
 
   /**
@@ -1174,6 +1215,20 @@ export class BacktestEngine extends BaseTradingMode {
     logger.info(
       `⚠️  Order cancellation not applicable in backtest mode: ${orderId}`,
     );
+  }
+
+  async getOrderStatus(orderId: string): Promise<ExecutionOrderStatusResult> {
+    const orderData = this.orders.get(orderId);
+    if (!orderData) {
+      throw new Error("Order not found");
+    }
+
+    return {
+      orderId,
+      status: orderData.status,
+      filledQuantity: orderData.filledQuantity,
+      remainingQuantity: orderData.remainingQuantity,
+    };
   }
 
   /**
@@ -1391,6 +1446,14 @@ export class BacktestEngine extends BaseTradingMode {
     return this.calculatePortfolioValue();
   }
 
+  getExecutedTrades(): ExecutionTrade[] {
+    return [...this.executedTrades];
+  }
+
+  getOrderHistory(): Map<string, ExecutionOrderRecord> {
+    return new Map(this.orders);
+  }
+
   /**
    * Get current price from historical data at current time (public method)
    */
@@ -1541,19 +1604,13 @@ export class BacktestEngine extends BaseTradingMode {
       this.updatePortfolioValue();
 
       // Execute strategy if callback is set and enough time has passed
-      if (
-        this.strategyCallback &&
-        this.currentTime - this.lastStrategyExecution >=
-          this.strategyExecutionInterval
-      ) {
+      if (this.strategyExecutionCoordinator) {
         try {
-          // Construct market data for strategy
-          const marketData = this.constructMarketData(this.currentTime);
-
-          // Only execute if we have valid market data
-          if (Object.keys(marketData).length > 0) {
-            await this.strategyCallback(marketData);
-            this.lastStrategyExecution = this.currentTime;
+          const executed =
+            await this.strategyExecutionCoordinator.executeIfIntervalElapsed(
+              this.currentTime,
+            );
+          if (executed) {
             strategyExecutions++;
           }
         } catch (error) {

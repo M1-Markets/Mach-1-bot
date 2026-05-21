@@ -3,7 +3,47 @@
  */
 
 import type { Interval } from "mach1_sdk";
-import type { ChainNetwork, MonacoEnvironment, TradingPair } from "./common";
+import type {
+  Address,
+  ChainNetwork,
+  MonacoEnvironment,
+  NormalizedOrderStatus,
+  OrderRequest,
+  OrderResult,
+  Position,
+  TradingPair,
+} from "./common";
+
+export type ExecutionOrderStatus = NormalizedOrderStatus;
+
+export interface ExecutionTrade {
+  timestamp: number;
+  pair: TradingPair;
+  side: "buy" | "sell";
+  price: bigint;
+  quantity: bigint;
+}
+
+export interface ExecutionOrderStatusResult extends OrderResult {
+  status: ExecutionOrderStatus;
+  [key: string]: unknown;
+}
+
+export interface ExecutionOrderRecord extends ExecutionOrderStatusResult {
+  order: OrderRequest;
+  timestamp: number;
+}
+
+export interface ExecutionEngine {
+  initialize?(): Promise<void>;
+  placeOrder(order: OrderRequest): Promise<OrderResult>;
+  cancelOrder(orderId: string): Promise<void>;
+  getOrderStatus(orderId: string): Promise<ExecutionOrderStatusResult>;
+  getPosition(pair: TradingPair): Promise<Position>;
+  getBalance(token: Address): Promise<bigint>;
+  getExecutedTrades(): ExecutionTrade[];
+  getOrderHistory(): Map<string, ExecutionOrderRecord>;
+}
 
 export interface BacktestConfig {
   startDate: Date;

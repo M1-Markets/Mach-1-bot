@@ -19,6 +19,9 @@ import {
 import type { LiveTradingConfig } from "@/shared/types";
 import {
   Address,
+  type ExecutionOrderRecord,
+  type ExecutionOrderStatusResult,
+  type ExecutionTrade,
   MarketData,
   OrderRequest,
   OrderResult,
@@ -29,6 +32,7 @@ import {
 import { createLogger } from "@/shared/utils/logger";
 import { retryWithBackoff } from "@/shared/utils/rate-limiter";
 import { getStringProp, isRecord } from "@/shared/utils/record-utils";
+import { StrategyExecutionCoordinator } from "@/domains/execution/strategy-execution-coordinator";
 
 const logger = createLogger("LiveTradingEngine");
 
@@ -102,9 +106,8 @@ const isRetryableOrderPlacementError = (error: unknown): boolean => {
   return true;
 };
 
-export interface LiveOrderData {
+export interface LiveOrderData extends ExecutionOrderRecord {
   order: OrderRequest;
-  status: "pending" | "filled" | "cancelled" | "rejected" | "partially_filled";
   timestamp: number;
   filledQuantity: bigint;
   remainingQuantity: bigint;
@@ -149,7 +152,7 @@ export class LiveTradingEngine extends BaseTradingMode {
   private strategyCallback?: (data: MarketData) => Promise<void>;
   private strategyExecutionInterval = 300000; // 5 minutes default
   private lastStrategyExecution = 0;
-  private strategyExecutionTimer?: NodeJS.Timeout;
+  private strategyExecutionCoordinator?: StrategyExecutionCoordinator;
   private isRunning = false;
 
   // Trading statistics
@@ -299,6 +302,7 @@ export class LiveTradingEngine extends BaseTradingMode {
         quantity: order.quantity.toString(),
       });
       this.orders.set(orderId, {
+        orderId,
         order,
         status: "rejected",
         timestamp: Date.now(),
@@ -317,6 +321,7 @@ export class LiveTradingEngine extends BaseTradingMode {
     const riskResult = await this.applyRiskChecks(order, orderId);
     if (riskResult && !riskResult.approved) {
       this.orders.set(orderId, {
+        orderId,
         order,
         status: "rejected",
         timestamp: Date.now(),
@@ -346,6 +351,7 @@ export class LiveTradingEngine extends BaseTradingMode {
         estimatedGas: preTradeCheck.estimatedGas.toString(),
       });
       this.orders.set(orderId, {
+        orderId,
         order,
         status: "rejected",
         timestamp: Date.now(),
@@ -363,6 +369,7 @@ export class LiveTradingEngine extends BaseTradingMode {
 
     // Create order record
     this.orders.set(orderId, {
+      orderId,
       order,
       status: "pending",
       timestamp: Date.now(),
@@ -1015,7 +1022,22 @@ export class LiveTradingEngine extends BaseTradingMode {
       await this.enableLiveMarketData();
 
       // Start strategy execution loop
-      this.startStrategyExecutionLoop();
+      this.strategyExecutionCoordinator = new StrategyExecutionCoordinator({
+        executor: async () => {
+          if (!this.strategyCallback) {
+            return;
+          }
+
+          const marketData = await this.constructLiveMarketData();
+          if (Object.keys(marketData).length > 0) {
+            await this.strategyCallback?.(marketData);
+            this.lastStrategyExecution = Date.now();
+          }
+        },
+        intervalMs: this.strategyExecutionInterval,
+      });
+
+      await this.strategyExecutionCoordinator.start();
 
       logger.info(
         `📈 Strategy will execute every ${this.strategyExecutionInterval / 1000} seconds`,
@@ -1040,10 +1062,9 @@ export class LiveTradingEngine extends BaseTradingMode {
     logger.info("🛑 Stopping live trading...");
     this.isRunning = false;
 
-    // Stop strategy execution timer
-    if (this.strategyExecutionTimer) {
-      clearInterval(this.strategyExecutionTimer);
-      this.strategyExecutionTimer = undefined;
+    if (this.strategyExecutionCoordinator) {
+      await this.strategyExecutionCoordinator.stop();
+      this.strategyExecutionCoordinator = undefined;
     }
 
     // Disconnect from live market data
@@ -1052,48 +1073,6 @@ export class LiveTradingEngine extends BaseTradingMode {
     logger.info("✅ Live trading stopped");
   }
 
-  /**
-   * Start the strategy execution loop
-   */
-  private startStrategyExecutionLoop(): void {
-    if (!this.strategyCallback) {
-      logger.warn(
-        "⚠️  No strategy callback set. Call setStrategyCallback() first.",
-      );
-      return;
-    }
-
-    this.strategyExecutionTimer = setInterval(async () => {
-      if (!this.isRunning) {
-        return;
-      }
-
-      try {
-        // Construct live market data for strategy
-        const marketData = await this.constructLiveMarketData();
-
-        if (Object.keys(marketData).length > 0) {
-          await this.strategyCallback?.(marketData);
-          this.lastStrategyExecution = Date.now();
-        }
-      } catch (error) {
-        logger.warn(`⚠️  Strategy execution error:`, error);
-      }
-    }, this.strategyExecutionInterval);
-
-    // Execute once immediately to avoid waiting for the first interval
-    (async () => {
-      try {
-        const marketData = await this.constructLiveMarketData();
-        if (Object.keys(marketData).length > 0) {
-          await this.strategyCallback?.(marketData);
-          this.lastStrategyExecution = Date.now();
-        }
-      } catch (error) {
-        logger.warn(`⚠️  Strategy execution error:`, error);
-      }
-    })();
-  }
 
   /**
    * Construct live market data for strategy execution
@@ -1356,13 +1335,18 @@ export class LiveTradingEngine extends BaseTradingMode {
     executionInterval: number;
     lastExecution: number;
     timeSinceLastExecution: number;
+    state?: string;
+    lastError?: string | null;
   } {
+    const stats = this.strategyExecutionCoordinator?.getStats();
     return {
       isRunning: this.isRunning,
       hasStrategy: !!this.strategyCallback,
       executionInterval: this.strategyExecutionInterval,
       lastExecution: this.lastStrategyExecution,
       timeSinceLastExecution: Date.now() - this.lastStrategyExecution,
+      state: stats?.state,
+      lastError: stats?.lastError,
     };
   }
 
@@ -1370,40 +1354,26 @@ export class LiveTradingEngine extends BaseTradingMode {
    * Manually trigger strategy execution (useful for testing)
    */
   async executeStrategyNow(): Promise<void> {
-    if (!this.strategyCallback) {
+    if (!this.strategyExecutionCoordinator) {
       throw new Error(
-        "No strategy callback set. Call setStrategyCallback() first.",
+        "No strategy execution coordinator available. Start live trading first.",
       );
     }
 
-    try {
-      logger.info("🔄 Manually executing strategy...");
-      const marketData = await this.constructLiveMarketData();
-
-      if (Object.keys(marketData).length > 0) {
-        await this.strategyCallback(marketData);
-        this.lastStrategyExecution = Date.now();
-        logger.info("✅ Strategy executed successfully");
-      } else {
-        logger.warn("⚠️  No market data available for strategy execution");
-      }
-    } catch (error) {
-      logger.error("❌ Strategy execution failed:", error);
-      throw error;
-    }
+    await this.strategyExecutionCoordinator.executeNow();
   }
 
   /**
    * Get all executed trades for analysis
    */
-  getExecutedTrades(): LiveTrade[] {
+  getExecutedTrades(): ExecutionTrade[] {
     return [...this.executedTrades];
   }
 
   /**
    * Get order history
    */
-  getOrderHistory(): Map<string, LiveOrderData> {
+  getOrderHistory(): Map<string, ExecutionOrderRecord> {
     return new Map(this.orders);
   }
 
@@ -1420,25 +1390,16 @@ export class LiveTradingEngine extends BaseTradingMode {
   /**
    * Get order status with detailed information
    */
-  async getOrderStatus(orderId: string): Promise<{
-    status:
-    | "pending"
-    | "filled"
-    | "cancelled"
-    | "rejected"
-    | "partially_filled";
-    filledQuantity: bigint;
-    remainingQuantity: bigint;
-    transactionHash?: string;
-    gasUsed?: bigint;
-    confirmations?: number;
-  }> {
+  async getOrderStatus(
+    orderId: string,
+  ): Promise<ExecutionOrderStatusResult> {
     const orderData = this.orders.get(orderId);
     if (!orderData) {
       throw new Error("Order not found");
     }
 
     return {
+      orderId,
       status: orderData.status,
       filledQuantity: orderData.filledQuantity,
       remainingQuantity: orderData.remainingQuantity,

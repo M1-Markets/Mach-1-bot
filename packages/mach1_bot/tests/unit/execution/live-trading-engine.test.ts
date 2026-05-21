@@ -72,6 +72,11 @@ describe("LiveTradingEngine order placement retries", () => {
     return engine;
   };
 
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
   it("does not retry non-retryable API liquidity errors", async () => {
     const engine = makeEngine();
     const placeOrder = vi
@@ -219,5 +224,85 @@ describe("LiveTradingEngine order placement retries", () => {
     await expect(engine.getBalance(token)).resolves.toBe(parseUnits("1.5", 18));
     expect(getUserBalanceByAssetId).toHaveBeenCalledWith("eth-asset-id");
     expect(getUserBalances).not.toHaveBeenCalled();
+  });
+
+  it("startLiveTrading cannot create two active loops", async () => {
+    vi.useFakeTimers();
+    const engine = makeEngine();
+    const strategyCallback = vi.fn().mockResolvedValue(undefined);
+
+    vi.spyOn(
+      engine as unknown as { enableLiveMarketData: () => Promise<void> },
+      "enableLiveMarketData",
+    ).mockResolvedValue(undefined);
+    vi.spyOn(
+      engine as unknown as { constructLiveMarketData: () => Promise<unknown> },
+      "constructLiveMarketData",
+    ).mockResolvedValue({
+      "ETH/USDC": {
+        open: 1,
+        high: 1,
+        low: 1,
+        close: 1,
+        volume: 1,
+        rsi: 50,
+        macdSignal: 0,
+        timestamp: 1,
+      },
+    });
+
+    engine.setStrategyCallback(strategyCallback, 50);
+
+    await engine.startLiveTrading();
+    await engine.startLiveTrading();
+
+    expect(strategyCallback).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(120);
+    expect(strategyCallback).toHaveBeenCalledTimes(3);
+  });
+
+  it("stopLiveTrading stops coordinator and market subscriptions", async () => {
+    vi.useFakeTimers();
+    const engine = makeEngine();
+    const strategyCallback = vi.fn().mockResolvedValue(undefined);
+    const disableLiveMarketData = vi
+      .spyOn(
+        engine as unknown as { disableLiveMarketData: () => Promise<void> },
+        "disableLiveMarketData",
+      )
+      .mockResolvedValue(undefined);
+
+    vi.spyOn(
+      engine as unknown as { enableLiveMarketData: () => Promise<void> },
+      "enableLiveMarketData",
+    ).mockResolvedValue(undefined);
+    vi.spyOn(
+      engine as unknown as { constructLiveMarketData: () => Promise<unknown> },
+      "constructLiveMarketData",
+    ).mockResolvedValue({
+      "ETH/USDC": {
+        open: 1,
+        high: 1,
+        low: 1,
+        close: 1,
+        volume: 1,
+        rsi: 50,
+        macdSignal: 0,
+        timestamp: 1,
+      },
+    });
+
+    engine.setStrategyCallback(strategyCallback, 50);
+
+    await engine.startLiveTrading();
+    expect(strategyCallback).toHaveBeenCalledTimes(1);
+
+    await engine.stopLiveTrading();
+    await vi.advanceTimersByTimeAsync(500);
+
+    expect(strategyCallback).toHaveBeenCalledTimes(1);
+    expect(disableLiveMarketData).toHaveBeenCalledTimes(1);
+    expect(engine.getStrategyExecutionStats().state).toBeUndefined();
   });
 });

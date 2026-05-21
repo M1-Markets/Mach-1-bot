@@ -42,15 +42,15 @@ export interface BotConfig {
   // Optional settings
   chainId?: number;
   logLevel?:
-    | "DEBUG"
-    | "INFO"
-    | "WARN"
-    | "ERROR"
-    | "debug"
-    | "info"
-    | "warn"
-    | "error"
-    | "none";
+  | "DEBUG"
+  | "INFO"
+  | "WARN"
+  | "ERROR"
+  | "debug"
+  | "info"
+  | "warn"
+  | "error"
+  | "none";
 
   // Enhanced features
   enableEnhancedFeatures?: boolean;
@@ -105,6 +105,7 @@ export interface BacktestOptions {
   start: string;
   end: string;
   initialCapital?: number;
+  strategyExecutionIntervalMs?: number;
 }
 
 export interface SimulationOptions {
@@ -115,6 +116,7 @@ export interface SimulationOptions {
 export interface LiveOptions {
   confirmations?: number;
   gasPrice?: string;
+  strategyExecutionIntervalMs?: number;
 }
 
 export interface MarketData {

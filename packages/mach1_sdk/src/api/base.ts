@@ -6,6 +6,8 @@ export interface RetryOptions {
   maxRetries?: number;
 }
 
+const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
+
 export abstract class BaseAPI {
   protected accessToken?: string;
   protected readonly retryOptions: Required<RetryOptions>;
@@ -28,7 +30,7 @@ export abstract class BaseAPI {
     return this.accessToken;
   }
 
-  private parseRequestBody(body: BodyInit | null | undefined): unknown {
+  private parseRequestBody(body: RequestInit["body"]): unknown {
     if (!body) {
       return undefined;
     }
@@ -108,15 +110,56 @@ export abstract class BaseAPI {
     requestBody: unknown,
   ): Promise<T> {
     let response: Response;
+    let didTimeout = false;
+    const abortController = new AbortController();
+    const forwardAbort = () => abortController.abort(options.signal?.reason);
+    const timeoutId = setTimeout(() => {
+      didTimeout = true;
+      abortController.abort(
+        new Error(`Request timed out after ${DEFAULT_REQUEST_TIMEOUT_MS}ms`),
+      );
+    }, DEFAULT_REQUEST_TIMEOUT_MS);
+
+    if (options.signal) {
+      if (options.signal.aborted) {
+        forwardAbort();
+      } else {
+        options.signal.addEventListener("abort", forwardAbort, { once: true });
+      }
+    }
 
     try {
-      response = await fetch(url, options);
+      response = await fetch(url, {
+        ...options,
+        signal: abortController.signal,
+      });
     } catch (error) {
+      clearTimeout(timeoutId);
+      if (options.signal) {
+        options.signal.removeEventListener("abort", forwardAbort);
+      }
+
+      if (didTimeout) {
+        throw new APIError(
+          `Request timed out for ${endpoint} after ${DEFAULT_REQUEST_TIMEOUT_MS}ms`,
+          {
+            cause: error instanceof Error ? error : new Error(String(error)),
+            endpoint: url,
+            requestBody,
+          },
+        );
+      }
+
       throw new APIError(`Network request failed for ${endpoint}`, {
         cause: error instanceof Error ? error : new Error(String(error)),
         endpoint: url,
         requestBody,
       });
+    }
+
+    clearTimeout(timeoutId);
+    if (options.signal) {
+      options.signal.removeEventListener("abort", forwardAbort);
     }
 
     let responseBody: unknown;

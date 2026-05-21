@@ -88,9 +88,18 @@ export type MonacoSessionContext = {
   botConfig: BotConfig;
 };
 
+export type MonacoSessionStatusHandler = (status: string) => void;
+
+export type MonacoSessionOptions = {
+  connectWebSocket?: boolean;
+  traceProfileOnInitialize?: boolean;
+};
+
 export const withMonacoSession = async (
   prepared: PreparedConfig,
   handler: (context: MonacoSessionContext) => Promise<void>,
+  onStatus?: MonacoSessionStatusHandler,
+  options?: MonacoSessionOptions,
 ): Promise<void> => {
   const { botConfig, environment, network } = prepared;
 
@@ -100,9 +109,14 @@ export const withMonacoSession = async (
     mode: "live",
     environment,
     rpcUrl: botConfig.rpcUrl,
+    onStatus,
+    connectWebSocket: options?.connectWebSocket,
+    traceProfileOnInitialize: options?.traceProfileOnInitialize,
   });
 
+  onStatus?.("Initializing Monaco SDK");
   await monacoSDK.initialize();
+  onStatus?.("Monaco session ready");
   const sdk = monacoSDK.getSDK();
   const resolver = monacoSDK.getTradingPairResolver();
   const client = createViemClient(network, botConfig.rpcUrl);

@@ -16,6 +16,13 @@ export interface TradingPair {
   symbol: string;
 }
 
+export type NormalizedOrderStatus =
+  | "pending"
+  | "partially_filled"
+  | "filled"
+  | "cancelled"
+  | "rejected";
+
 export interface OrderRequest {
   baseToken: Address;
   quoteToken: Address;
@@ -33,7 +40,7 @@ export interface OrderRequest {
 
 export interface OrderResult {
   orderId: string;
-  status: "pending" | "filled" | "cancelled" | "rejected";
+  status: NormalizedOrderStatus;
   filledQuantity: bigint;
   remainingQuantity: bigint;
   // Optional convenience fields for higher-level code (e.g., bot wrappers)

@@ -72,6 +72,7 @@ test-config.json
 !README.md
 !CONTRIBUTING.md
 !CODE_OF_CONDUCT.md
+!ISSUES.md
 
 /.npm-cache/
 build.err

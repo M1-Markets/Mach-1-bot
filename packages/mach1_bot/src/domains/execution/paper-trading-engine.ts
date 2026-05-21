@@ -1,15 +1,20 @@
 import { BaseTradingMode } from "@/domains/execution/trading-mode";
 import { MarketManager } from "@/domains/trading/market-manager";
 import { RealtimeManager } from "@/domains/trading/realtime-manager";
+import { TradingPairService } from "@/domains/trading/trading-pair-service";
 import type { PaperTradingConfig } from "@/shared/types";
 import {
   Address,
+  type ExecutionOrderRecord,
+  type ExecutionOrderStatusResult,
+  type ExecutionTrade,
   MarketData,
   OrderRequest,
   OrderResult,
   Position,
   TradingPair,
 } from "@/shared/types";
+import { StrategyExecutionCoordinator } from "@/domains/execution/strategy-execution-coordinator";
 import {
   type Clock,
   type Rng,
@@ -33,9 +38,8 @@ export interface PaperTrade {
   slippage: bigint;
 }
 
-export interface PaperOrderData {
+export interface PaperOrderData extends ExecutionOrderRecord {
   order: OrderRequest;
-  status: "pending" | "filled" | "cancelled" | "rejected";
   timestamp: number;
   filledQuantity: bigint;
   remainingQuantity: bigint;
@@ -61,8 +65,9 @@ export class PaperTradingEngine extends BaseTradingMode {
   private strategyCallback?: (data: MarketData) => Promise<void>;
   private strategyExecutionInterval = 300000; // 5 minutes default
   private lastStrategyExecution = 0;
-  private strategyExecutionTimer?: NodeJS.Timeout;
+  private strategyExecutionCoordinator?: StrategyExecutionCoordinator;
   private isRunning = false;
+  private readonly tradingPairService = new TradingPairService();
 
   private readonly rng: Rng;
   private readonly clock: Clock;
@@ -94,6 +99,7 @@ export class PaperTradingEngine extends BaseTradingMode {
     // Validate order first
     if (!this.validateOrder(order)) {
       this.orders.set(orderId, {
+        orderId,
         order,
         status: "rejected",
         timestamp: this.clock.now(),
@@ -473,17 +479,16 @@ export class PaperTradingEngine extends BaseTradingMode {
     return totalValue;
   }
 
-  async getOrderStatus(orderId: string): Promise<{
-    status: "pending" | "filled" | "cancelled" | "rejected";
-    filledQuantity: bigint;
-    remainingQuantity: bigint;
-  }> {
+  async getOrderStatus(
+    orderId: string,
+  ): Promise<ExecutionOrderStatusResult> {
     const orderData = this.orders.get(orderId);
     if (!orderData) {
       throw new Error("Order not found");
     }
 
     return {
+      orderId,
       status: orderData.status,
       filledQuantity: orderData.filledQuantity,
       remainingQuantity: orderData.remainingQuantity,
@@ -667,7 +672,7 @@ export class PaperTradingEngine extends BaseTradingMode {
   /**
    * Get all executed trades for analysis
    */
-  getExecutedTrades(): PaperTrade[] {
+  getExecutedTrades(): ExecutionTrade[] {
     return [...this.executedTrades];
   }
 
@@ -681,7 +686,7 @@ export class PaperTradingEngine extends BaseTradingMode {
   /**
    * Get order history
    */
-  getOrderHistory(): Map<string, PaperOrderData> {
+  getOrderHistory(): Map<string, ExecutionOrderRecord> {
     return new Map(this.orders);
   }
 
@@ -711,8 +716,22 @@ export class PaperTradingEngine extends BaseTradingMode {
     // Connect to live market data
     await this.enableLiveMarketData();
 
-    // Start strategy execution loop
-    this.startStrategyExecutionLoop();
+    this.strategyExecutionCoordinator = new StrategyExecutionCoordinator({
+      executor: async () => {
+        if (!this.strategyCallback) {
+          return;
+        }
+
+        const marketData = await this.constructLiveMarketData();
+        if (Object.keys(marketData).length > 0) {
+          await this.strategyCallback?.(marketData);
+          this.lastStrategyExecution = this.clock.now();
+        }
+      },
+      intervalMs: this.strategyExecutionInterval,
+    });
+
+    await this.strategyExecutionCoordinator.start();
 
     console.log(
       `📈 Strategy will execute every ${this.strategyExecutionInterval / 1000} seconds`,
@@ -731,10 +750,9 @@ export class PaperTradingEngine extends BaseTradingMode {
     console.log("🛑 Stopping paper trading...");
     this.isRunning = false;
 
-    // Stop strategy execution timer
-    if (this.strategyExecutionTimer) {
-      clearInterval(this.strategyExecutionTimer);
-      this.strategyExecutionTimer = undefined;
+    if (this.strategyExecutionCoordinator) {
+      await this.strategyExecutionCoordinator.stop();
+      this.strategyExecutionCoordinator = undefined;
     }
 
     // Disconnect from live market data
@@ -743,35 +761,6 @@ export class PaperTradingEngine extends BaseTradingMode {
     console.log("✅ Paper trading stopped");
   }
 
-  /**
-   * Start the strategy execution loop
-   */
-  private startStrategyExecutionLoop(): void {
-    if (!this.strategyCallback) {
-      logger.warn(
-        "No strategy callback set. Call setStrategyCallback() first.",
-      );
-      return;
-    }
-
-    this.strategyExecutionTimer = setInterval(async () => {
-      if (!this.isRunning) {
-        return;
-      }
-
-      try {
-        // Construct live market data for strategy
-        const marketData = await this.constructLiveMarketData();
-
-        if (Object.keys(marketData).length > 0) {
-          await this.strategyCallback?.(marketData);
-          this.lastStrategyExecution = this.clock.now();
-        }
-      } catch (error) {
-        logger.warn("Strategy execution error", {}, error as Error);
-      }
-    }, 1000);
-  }
 
   /**
    * Construct live market data for strategy execution
@@ -827,9 +816,7 @@ export class PaperTradingEngine extends BaseTradingMode {
    */
   private async getAvailableTradingPairs(): Promise<string[]> {
     try {
-      // In a real implementation, this would come from MarketManager
-      // For now, return common trading pairs
-      return ["ETH/USDC", "BTC/USDC", "SOL/USDC"];
+      return this.tradingPairService.getAllSymbols();
     } catch (error) {
       logger.warn("Failed to get available trading pairs", {}, error as Error);
       return [];
@@ -841,27 +828,7 @@ export class PaperTradingEngine extends BaseTradingMode {
    */
   private parseSymbolToPair(symbol: string): TradingPair | null {
     try {
-      const [base, quote] = symbol.split("/");
-      if (!base || !quote) return null;
-
-      // Mock addresses for common tokens (in real implementation, these would be actual contract addresses)
-      const tokenAddresses: Record<string, Address> = {
-        ETH: "0x1111111111111111111111111111111111111111" as Address,
-        BTC: "0x2222222222222222222222222222222222222222" as Address,
-        SOL: "0x3333333333333333333333333333333333333333" as Address,
-        USDC: "0x4444444444444444444444444444444444444444" as Address,
-      };
-
-      const baseAddr = tokenAddresses[base];
-      const quoteAddr = tokenAddresses[quote];
-
-      if (!baseAddr || !quoteAddr) return null;
-
-      return {
-        base: baseAddr,
-        quote: quoteAddr,
-        symbol: symbol,
-      };
+      return this.tradingPairService.resolveSymbol(symbol);
     } catch (error) {
       logger.warn(`Failed to parse symbol ${symbol}`, {}, error as Error);
       return null;
@@ -916,13 +883,18 @@ export class PaperTradingEngine extends BaseTradingMode {
     executionInterval: number;
     lastExecution: number;
     timeSinceLastExecution: number;
+    state?: string;
+    lastError?: string | null;
   } {
+    const stats = this.strategyExecutionCoordinator?.getStats();
     return {
       isRunning: this.isRunning,
       hasStrategy: !!this.strategyCallback,
       executionInterval: this.strategyExecutionInterval,
       lastExecution: this.lastStrategyExecution,
       timeSinceLastExecution: this.clock.now() - this.lastStrategyExecution,
+      state: stats?.state,
+      lastError: stats?.lastError,
     };
   }
 
@@ -930,27 +902,13 @@ export class PaperTradingEngine extends BaseTradingMode {
    * Manually trigger strategy execution (useful for testing)
    */
   async executeStrategyNow(): Promise<void> {
-    if (!this.strategyCallback) {
+    if (!this.strategyExecutionCoordinator) {
       throw new Error(
-        "No strategy callback set. Call setStrategyCallback() first.",
+        "No strategy execution coordinator available. Start paper trading first.",
       );
     }
 
-    try {
-      console.log("🔄 Manually executing strategy...");
-      const marketData = await this.constructLiveMarketData();
-
-      if (Object.keys(marketData).length > 0) {
-        await this.strategyCallback(marketData);
-        this.lastStrategyExecution = this.clock.now();
-        console.log("✅ Strategy executed successfully");
-      } else {
-        logger.warn("No market data available for strategy execution");
-      }
-    } catch (error) {
-      logger.error("Strategy execution failed", {}, error as Error);
-      throw error;
-    }
+    await this.strategyExecutionCoordinator.executeNow();
   }
 }
 

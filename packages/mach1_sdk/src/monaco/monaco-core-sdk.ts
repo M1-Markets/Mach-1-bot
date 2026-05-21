@@ -48,6 +48,9 @@ export interface MonacoCoreSDKConfig {
   environment?: MonacoEnvironment;
   rpcUrl?: string;
   logLevel?: "DEBUG" | "INFO" | "WARN" | "ERROR";
+  onStatus?: (status: string) => void;
+  connectWebSocket?: boolean;
+  traceProfileOnInitialize?: boolean;
 }
 
 export class MonacoCoreSDK {
@@ -64,6 +67,9 @@ export class MonacoCoreSDK {
       environment: config.environment,
       skipAuth: config.mode === "simulation",
       rpcUrl: config.rpcUrl,
+      onStatus: config.onStatus,
+      connectWebSocket: config.connectWebSocket,
+      traceProfileOnInitialize: config.traceProfileOnInitialize,
     };
 
     this.adapter = new MonacoSDKAdapter(adapterConfig);

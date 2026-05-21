@@ -17,6 +17,7 @@ export type WalletBalanceRow = {
 
 export type BalanceUiState = {
   stage: BalanceUiStage;
+  status?: string;
   profile?: UserProfile;
   address?: string;
   balances?: BalanceRow[];
@@ -78,6 +79,7 @@ const makeBalanceComponent = (Ink: InkModule) => {
         <Text color={state.stage === "error" ? "red" : "gray"}>
           {`Status: ${getStatusLabel(state.stage)}${progressDots}`}
         </Text>
+        {state.status ? <Text color="gray">{state.status}</Text> : null}
         {state.errorMessage ? (
           <Text color="red">{state.errorMessage}</Text>
         ) : null}
@@ -91,6 +93,8 @@ const makeBalanceComponent = (Ink: InkModule) => {
           <Text color="cyan">Account Balances</Text>
           {balanceLines.length > 0 ? (
             balanceLines.map((line) => <Text key={`row-${line}`}>{line}</Text>)
+          ) : state.stage === "loading" ? (
+            <Text color="gray">Waiting for Monaco account balances...</Text>
           ) : (
             <Text color="gray">No balances found.</Text>
           )}
@@ -101,6 +105,8 @@ const makeBalanceComponent = (Ink: InkModule) => {
             walletLines.map((line) => (
               <Text key={`wallet-${line}`}>{line}</Text>
             ))
+          ) : state.stage === "loading" ? (
+            <Text color="gray">Waiting for on-chain wallet balances...</Text>
           ) : (
             <Text color="gray">No wallet balances found.</Text>
           )}

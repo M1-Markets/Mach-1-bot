@@ -1,23 +1,25 @@
 import {
   Address,
+  ExecutionEngine,
+  ExecutionOrderRecord,
+  ExecutionOrderStatusResult,
+  ExecutionTrade,
   OrderRequest,
   OrderResult,
   Position,
   TradingPair,
 } from "@/shared/types";
 
-export interface TradingMode {
-  placeOrder(order: OrderRequest): Promise<OrderResult>;
-  cancelOrder(orderId: string): Promise<void>;
-  getPosition(pair: TradingPair): Promise<Position>;
-  getBalance(token: Address): Promise<bigint>;
-}
+export interface TradingMode extends ExecutionEngine {}
 
 export abstract class BaseTradingMode implements TradingMode {
   abstract placeOrder(order: OrderRequest): Promise<OrderResult>;
   abstract cancelOrder(orderId: string): Promise<void>;
+  abstract getOrderStatus(orderId: string): Promise<ExecutionOrderStatusResult>;
   abstract getPosition(pair: TradingPair): Promise<Position>;
   abstract getBalance(token: Address): Promise<bigint>;
+  abstract getExecutedTrades(): ExecutionTrade[];
+  abstract getOrderHistory(): Map<string, ExecutionOrderRecord>;
 
   protected validateOrder(order: OrderRequest): boolean {
     // Basic order parameter validation

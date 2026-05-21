@@ -1,6 +1,9 @@
 import { Command } from "commander";
 import { vi } from "vitest";
 import { registerLiveCommands } from "@/cli/commands/live-commands";
+import { createBalanceUi } from "@/cli/ui/balance-ui";
+import { fetchWalletBalancesForCatalog } from "@/cli/utils/live-utils";
+import { withMonacoSession } from "@/cli/utils/monaco-session";
 
 vi.mock("picocolors", () => ({
   default: {
@@ -127,7 +130,14 @@ vi.mock("@/cli/utils/monaco-session", () => ({
     environment: "staging",
   })),
   withMonacoSession: vi.fn(
-    async (_prepared: unknown, fn: (value: unknown) => Promise<void>) => {
+    async (
+      _prepared: unknown,
+      fn: (value: unknown) => Promise<void>,
+      onStatus?: (status: string) => void,
+      _options?: unknown,
+    ) => {
+      onStatus?.("Authenticating with Monaco");
+      onStatus?.("Loading trading pairs");
       const sdk = {
         getAuthState: () => ({ accessToken: "token" }),
         getAccountAddress: () => "0xabc",
@@ -216,8 +226,11 @@ const runCommand = async (command: Command, args: string[]) => {
 };
 
 describe("live subcommands", () => {
+  let logSpy: ReturnType<typeof vi.spyOn>;
+
   beforeEach(() => {
     vi.clearAllMocks();
+    logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
     globalThis.fetch = vi.fn(async () => ({
       ok: true,
       status: 200,
@@ -226,11 +239,149 @@ describe("live subcommands", () => {
     })) as unknown as typeof fetch;
   });
 
+  afterEach(() => {
+    logSpy.mockRestore();
+  });
+
   it("runs live balance", async () => {
     const program = new Command("live");
     registerLiveCommands(program);
     const code = await runCommand(program, ["balance"]);
     expect(code).toBe(0);
+    const balanceController =
+      await vi.mocked(createBalanceUi).mock.results[0].value;
+    expect(fetchWalletBalancesForCatalog).toHaveBeenCalled();
+    expect(balanceController.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stage: "loading",
+        status: "Connecting to Monaco",
+      }),
+    );
+    expect(balanceController.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stage: "loading",
+        status: "Authenticating with Monaco",
+      }),
+    );
+    expect(balanceController.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stage: "loading",
+        status: "Fetching Monaco account balances",
+      }),
+    );
+    expect(balanceController.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stage: "done",
+        status: "Loaded 2 account balances and 2 wallet balances",
+        balances: [
+          {
+            symbol: "USDC",
+            available: "10",
+            locked: "0",
+            total: "10",
+          },
+          {
+            symbol: "ETH",
+            available: "5",
+            locked: "0",
+            total: "5",
+          },
+        ],
+        walletBalances: [
+          {
+            label: "0x1111111111111111111111111111111111111111 (USDC)",
+            balance: "100",
+          },
+          {
+            label: "0x2222222222222222222222222222222222222222 (ETH)",
+            balance: "50",
+          },
+        ],
+      }),
+    );
+  });
+
+  it("runs live balance with --no-ui", async () => {
+    const program = new Command("live");
+    registerLiveCommands(program);
+    const code = await runCommand(program, ["balance", "--no-ui"]);
+    expect(code).toBe(0);
+    expect(createBalanceUi).not.toHaveBeenCalled();
+    expect(withMonacoSession).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.any(Function),
+      expect.any(Function),
+      {
+        connectWebSocket: false,
+        traceProfileOnInitialize: false,
+      },
+    );
+    expect(logSpy).toHaveBeenCalledWith("[balance] Connecting to Monaco");
+    expect(logSpy).toHaveBeenCalledWith("Live account balances");
+    expect(logSpy).toHaveBeenCalledWith(
+      JSON.stringify({
+        address: "0xabc",
+        profileId: "1",
+      }),
+    );
+    expect(logSpy).toHaveBeenCalledWith("Account Balances");
+    expect(logSpy).toHaveBeenCalledWith(
+      JSON.stringify({
+        symbol: "USDC",
+        total: "10",
+        available: "10",
+        locked: "0",
+      }),
+    );
+    expect(logSpy).toHaveBeenCalledWith("Wallet Balances (On-chain)");
+  });
+
+  it("fails live balance on malformed Monaco balance payload", async () => {
+    vi.mocked(withMonacoSession).mockImplementationOnce(
+      async (
+        _prepared: unknown,
+        fn: (value: unknown) => Promise<void>,
+        onStatus?: (status: string) => void,
+        _options?: unknown,
+      ) => {
+        onStatus?.("Authenticating with Monaco");
+        const sdk = {
+          getAccountAddress: () => "0xabc",
+          profile: {
+            getProfile: async () => ({ id: "1", address: "0xabc" }),
+            getUserBalances: async () => ({
+              balances: [{ wrong: "shape" }],
+            }),
+          },
+        };
+        const resolver = {
+          getAllPairs: () => [],
+        };
+        const client = {};
+        await fn({ sdk, resolver, client, network: "testnet" });
+      },
+    );
+
+    const errorSpy = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    const program = new Command("live");
+    registerLiveCommands(program);
+    const code = await runCommand(program, ["balance"]);
+    expect(code).toBe(1);
+
+    const balanceController =
+      await vi.mocked(createBalanceUi).mock.results[0].value;
+    expect(balanceController.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stage: "error",
+        status: "Balance fetch failed",
+        errorMessage:
+          "Profile balances response structure did not match expected Monaco fields.",
+      }),
+    );
+
+    errorSpy.mockRestore();
   });
 
   it("runs live faucet", async () => {

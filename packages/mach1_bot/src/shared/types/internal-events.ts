@@ -5,10 +5,12 @@
  * They are not part of the official Monaco SDK but are used internally for consistency.
  */
 
-import type { OrderStatus as MonacoOrderStatus, Order } from "mach1_sdk";
+import { OrderStatus as MonacoOrderStatus } from "mach1_sdk";
+import type { Order } from "mach1_sdk";
 import type { Address } from "./common";
 
-export type InternalOrderStatus = MonacoOrderStatus | "PENDING";
+export type InternalOrderStatus =
+  (typeof MonacoOrderStatus)[keyof typeof MonacoOrderStatus];
 export type InternalOrderType =
   | "LIMIT"
   | "MARKET"

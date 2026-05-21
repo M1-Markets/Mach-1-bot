@@ -2,6 +2,7 @@ import type { Interval, TradingPairResolver } from "mach1_sdk";
 import { tradingPairResolver } from "mach1_sdk";
 import type { BacktestEngine } from "@/domains/execution/backtest-engine";
 import type { LiveTradingEngine } from "@/domains/execution/live-trading-engine";
+import type { PaperTradingEngine } from "@/domains/execution/paper-trading-engine";
 import { EXAMPLE_STRATEGIES } from "@/domains/strategies/examples/example-strategies";
 import type { StrategyPerformanceReport } from "@/domains/strategies/management/strategy-manager";
 // Enhanced strategy system imports (optional dependencies)
@@ -23,6 +24,8 @@ import { OrderManager } from "@/domains/trading/order-manager";
 import { PositionTracker } from "@/domains/trading/position-tracker";
 import { RealtimeManager } from "@/domains/trading/realtime-manager";
 import { RiskBreach, RiskManager } from "@/domains/trading/risk-manager";
+import { TradingPairService } from "@/domains/trading/trading-pair-service";
+import { StrategyExecutionCoordinator } from "@/domains/execution/strategy-execution-coordinator";
 import { EnvironmentConfig, MACH1_PIT_PASS, NETWORK_PRESETS } from "@/shared";
 import { InvalidConfigError, MissingConfigError } from "@/shared/errors";
 import { CompletedTrade } from "@/shared/types/analytics";
@@ -48,10 +51,10 @@ import type {
   OrderRequest,
   TradingPair,
 } from "@/shared/types/common";
+import type { ExecutionEngine } from "@/shared/types/execution";
 import { LiveTradingConfig } from "@/shared/types/execution";
 import type {
   OrderBookEvent,
-  InternalOrder,
   TradeEvent,
 } from "@/shared/types/internal-events";
 import { RiskLimits as TradingRiskLimits } from "@/shared/types/trading";
@@ -155,6 +158,7 @@ export class Mach1Bot {
   private strategyCallback?: (data: MarketData) => Promise<void>;
   private eventHandlers = new Map<string, Array<(data: unknown) => void>>();
   private activeIntervals: Set<NodeJS.Timeout> = new Set();
+  private strategyExecutionCoordinator?: StrategyExecutionCoordinator;
   private config: BotConfig;
 
   // Core managers
@@ -164,7 +168,9 @@ export class Mach1Bot {
   private realtimeManager: RealtimeManager;
   private riskManager: RiskManager;
   private liveEngine?: LiveTradingEngine;
+  private paperEngine?: PaperTradingEngine;
   private tradingPairResolver?: TradingPairResolver;
+  private readonly tradingPairService: TradingPairService;
 
   // Enhanced strategy system (optional)
   public strategyManager?: StrategyManager;
@@ -202,6 +208,9 @@ export class Mach1Bot {
       this.marketManager,
       this.orderManager,
     );
+    this.tradingPairService = new TradingPairService(
+      () => this.tradingPairResolver,
+    );
 
     // Initialize enhanced features if requested or if strategy-related methods are called
     if (config.enableEnhancedFeatures !== false) {
@@ -229,6 +238,7 @@ export class Mach1Bot {
         this.realtimeManager,
         this.riskManager,
         this.config.aiHelper,
+        () => this.tradingPairResolver,
       );
 
       this.strategyOptimizer = new StrategyOptimizer(
@@ -336,7 +346,7 @@ export class Mach1Bot {
         env.MACH1_MODE === "paper"
           ? ("simulation" as BotConfig["mode"]) // normalize 'paper' to 'simulation'
           : (env.MACH1_MODE as BotConfig["mode"]) ||
-            ("simulation" as BotConfig["mode"]),
+          ("simulation" as BotConfig["mode"]),
       chainId: env.MACH1_CHAIN_ID ? parseInt(env.MACH1_CHAIN_ID) : undefined,
       logLevel: env.MACH1_LOG_LEVEL || "info",
     };
@@ -413,69 +423,8 @@ export class Mach1Bot {
       quantity,
     };
 
-    // Route live trading directly through Monaco
-    if (this.config.mode === "live") {
-      const liveEngine = await this.getOrCreateLiveEngine();
-      const riskCheck = await this.riskManager.validateOrder(orderRequest);
-      if (!riskCheck.approved) {
-        throw new Error(
-          `Order rejected: ${riskCheck.rejectionReasons.join(", ")}`,
-        );
-      }
-
-      const result = await liveEngine.placeOrder(orderRequest);
-
-      return {
-        id: result.orderId,
-        symbol,
-        side: "buy",
-        type: orderType,
-        price: Number(currentPrice) / 100,
-        size: Number(quantity),
-        status: result.status,
-      };
-    }
-
-    // Route order through appropriate engine
-    if (this.isBacktesting && this.backtestEngine) {
-      // Execute order through backtest engine
-      const result = await this.backtestEngine.placeOrder(orderRequest);
-
-      return {
-        id: result.orderId,
-        symbol,
-        side: "buy",
-        type: orderType,
-        price: Number(currentPrice) / 100,
-        size: Number(quantity),
-        status: result.status,
-      };
-    } else {
-      // Execute order through normal trading
-      const riskCheck = await this.riskManager.validateOrder(orderRequest);
-      if (!riskCheck.approved) {
-        throw new Error(
-          `Order rejected: ${riskCheck.rejectionReasons.join(", ")}`,
-        );
-      }
-
-      const result =
-        orderType === "limit"
-          ? await this.orderManager.placeLimitOrder(orderRequest)
-          : await this.orderManager.placeMarketOrder(orderRequest);
-
-      await this.recordFilledSimulationOrder(orderRequest, result);
-
-      return {
-        id: result.orderId,
-        symbol,
-        side: "buy",
-        type: orderType,
-        price: Number(currentPrice) / 100,
-        size: Number(quantity),
-        status: result.status,
-      };
-    }
+    const result = await this.placeBotOrder(orderRequest);
+    return this.toBotOrder(result, symbol, "buy", orderType, currentPrice, quantity);
   }
 
   async sell(symbol: string, options: TradeOptions): Promise<BotOrder> {
@@ -498,100 +447,42 @@ export class Mach1Bot {
       quantity,
     };
 
-    // Route live trading directly through Monaco
-    if (this.config.mode === "live") {
-      const liveEngine = await this.getOrCreateLiveEngine();
-      const riskCheck = await this.riskManager.validateOrder(orderRequest);
-      if (!riskCheck.approved) {
-        throw new Error(
-          `Order rejected: ${riskCheck.rejectionReasons.join(", ")}`,
-        );
-      }
-
-      const result = await liveEngine.placeOrder(orderRequest);
-
-      return {
-        id: result.orderId,
-        symbol,
-        side: "sell",
-        type: orderType,
-        price: Number(currentPrice) / 100,
-        size: Number(quantity),
-        status: result.status,
-      };
-    }
-
-    // Route order through appropriate engine
-    if (this.isBacktesting && this.backtestEngine) {
-      // Execute order through backtest engine
-      const result = await this.backtestEngine.placeOrder(orderRequest);
-
-      return {
-        id: result.orderId,
-        symbol,
-        side: "sell",
-        type: orderType,
-        price: Number(currentPrice) / 100,
-        size: Number(quantity),
-        status: result.status,
-      };
-    } else {
-      // Execute order through normal trading
-      const riskCheck = await this.riskManager.validateOrder(orderRequest);
-      if (!riskCheck.approved) {
-        throw new Error(
-          `Order rejected: ${riskCheck.rejectionReasons.join(", ")}`,
-        );
-      }
-
-      const result =
-        orderType === "limit"
-          ? await this.orderManager.placeLimitOrder(orderRequest)
-          : await this.orderManager.placeMarketOrder(orderRequest);
-
-      await this.recordFilledSimulationOrder(orderRequest, result);
-
-      return {
-        id: result.orderId,
-        symbol,
-        side: "sell",
-        type: orderType,
-        price: Number(currentPrice) / 100,
-        size: Number(quantity),
-        status: result.status,
-      };
-    }
+    const result = await this.placeBotOrder(orderRequest);
+    return this.toBotOrder(result, symbol, "sell", orderType, currentPrice, quantity);
   }
 
-  private async recordFilledSimulationOrder(
-    orderRequest: OrderRequest,
-    result: { orderId: string; status: string },
-  ): Promise<void> {
-    if (result.status !== "filled") {
-      return;
+  private async placeBotOrder(orderRequest: OrderRequest) {
+    const executionEngine = await this.getActiveExecutionEngine();
+
+    if (!this.isBacktesting || !this.backtestEngine) {
+      const riskCheck = await this.riskManager.validateOrder(orderRequest);
+      if (!riskCheck.approved) {
+        throw new Error(
+          `Order rejected: ${riskCheck.rejectionReasons.join(", ")}`,
+        );
+      }
     }
 
-    const internalOrder: InternalOrder = {
-      id: result.orderId,
-      trader: "0x0000000000000000000000000000000000000000",
-      baseToken: orderRequest.baseToken,
-      quoteToken: orderRequest.quoteToken,
-      price: orderRequest.price,
-      quantity: orderRequest.quantity,
-      filledQuantity: orderRequest.quantity,
-      remainingQuantity: 0n,
-      orderType:
-        orderRequest.orderType === "limit" ? "LIMIT" : "MARKET",
-      status: "FILLED",
-      isBuy: orderRequest.isBuy,
-      timestamp: Date.now(),
-    };
+    return executionEngine.placeOrder(orderRequest);
+  }
 
-    await this.positionTracker.recordTrade(
-      internalOrder,
-      orderRequest.price,
-      orderRequest.quantity,
-    );
+  private toBotOrder(
+    result: { orderId: string; status: string },
+    symbol: string,
+    side: "buy" | "sell",
+    orderType: string,
+    currentPrice: bigint,
+    quantity: bigint,
+  ): BotOrder {
+    return {
+      id: result.orderId,
+      symbol,
+      side,
+      type: orderType,
+      price: Number(currentPrice) / 100,
+      size: Number(quantity),
+      status: result.status,
+    };
   }
 
   private calculateOrderQuantity(
@@ -612,61 +503,13 @@ export class Mach1Bot {
 
   private parseSymbol(symbol: string): TradingPair {
     if (this.config.mode === "live") {
-      const resolver = this.tradingPairResolver;
-      if (!resolver) {
+      if (!this.tradingPairResolver) {
         throw new Error(
           "Trading pair resolver not ready for live trading. Initialize the live engine first.",
         );
       }
-
-      const lookupSymbol = symbol.includes("/")
-        ? symbol
-        : symbol.replace("-", "/");
-      const symbols = resolver.getAllSymbols();
-      const matchedSymbol =
-        symbols.find((s) => s.toUpperCase() === lookupSymbol.toUpperCase()) ||
-        lookupSymbol;
-      const pairDetails = resolver.getPairBySymbol(matchedSymbol);
-
-      if (!pairDetails) {
-        const preview = symbols.slice(0, 5).join(", ");
-        throw new Error(
-          `Unsupported trading pair: ${symbol}. Available symbols include: ${preview}${symbols.length > 5 ? ", ..." : ""}`,
-        );
-      }
-
-      const normalizedSymbol = resolver.normalizeSymbol(pairDetails.symbol);
-
-      return {
-        base: pairDetails.base_token_contract as Address,
-        quote: pairDetails.quote_token_contract as Address,
-        symbol: normalizedSymbol, // use normalized format for websocket/market data subscriptions
-      };
     }
-
-    const pairs = {
-      "BTC/USDC": {
-        base: "0x1234567890123456789012345678901234567890" as Address,
-        quote: "0x0987654321098765432109876543210987654321" as Address,
-        symbol: "BTC/USDC",
-      },
-      "ETH/USDC": {
-        base: "0x1111111111111111111111111111111111111111" as Address,
-        quote: "0x0987654321098765432109876543210987654321" as Address,
-        symbol: "ETH/USDC",
-      },
-      "SOL/USDC": {
-        base: "0x2222222222222222222222222222222222222222" as Address,
-        quote: "0x0987654321098765432109876543210987654321" as Address,
-        symbol: "SOL/USDC",
-      },
-    };
-
-    const pair = pairs[symbol as keyof typeof pairs];
-    if (!pair) {
-      throw new Error(`Unsupported trading pair: ${symbol}`);
-    }
-    return pair;
+    return this.tradingPairService.resolveSymbol(symbol);
   }
 
   /**
@@ -861,8 +704,8 @@ export class Mach1Bot {
           orderType: limitPrice ? "limit" : "market",
           ...(limitPrice
             ? {
-                amountUsd: Number((position.balance * limitPrice) / 100n) / 100,
-              }
+              amountUsd: Number((position.balance * limitPrice) / 100n) / 100,
+            }
             : {}),
         });
       },
@@ -889,8 +732,8 @@ export class Mach1Bot {
         const amountToSell =
           options.amountPercent && options.amountPercent > 0
             ? (position.balance *
-                BigInt(Math.floor(options.amountPercent * 100))) /
-              BigInt(10000)
+              BigInt(Math.floor(options.amountPercent * 100))) /
+            BigInt(10000)
             : position.balance;
 
         return this.sell(symbol, {
@@ -1081,7 +924,10 @@ export class Mach1Bot {
         };
 
         // Pass the strategy callback to the backtest engine
-        backtestEngine.setStrategyCallback(strategyWrapper, 300000); // Execute every 5 minutes
+        backtestEngine.setStrategyCallback(
+          strategyWrapper,
+          options.strategyExecutionIntervalMs ?? 300_000,
+        );
       } else {
         console.log(
           "⚠️  No strategy defined - running backtest without strategy execution",
@@ -1181,11 +1027,12 @@ export class Mach1Bot {
     };
 
     // Initialize PaperTradingEngine
-    const _paperEngine = new PaperTradingEngine(
+    const paperEngine = new PaperTradingEngine(
       paperConfig,
       this.marketManager,
       this.realtimeManager,
     );
+    this.paperEngine = paperEngine;
 
     console.log("✅ Paper trading simulation started");
     console.log(`💰 Initial capital: $${options.initialCapital || 10000}`);
@@ -1193,6 +1040,7 @@ export class Mach1Bot {
 
     if (this.strategyCallback) {
       console.log("🔄 Executing strategy in simulation mode...");
+      const strategyExecutionIntervalMs = 60_000;
 
       // Set up strategy execution loop
       const executeStrategy = async () => {
@@ -1204,8 +1052,14 @@ export class Mach1Bot {
             // Execute strategy callback
             await this.strategyCallback?.(marketData);
 
-            // Wait before next execution (e.g., 1 minute)
-            await new Promise((resolve) => setTimeout(resolve, 60000));
+            if (Date.now() >= endTime) {
+              break;
+            }
+
+            // Wait before next execution.
+            await new Promise((resolve) =>
+              setTimeout(resolve, strategyExecutionIntervalMs),
+            );
           } catch (error) {
             console.error("❌ Strategy execution error:", error);
           }
@@ -1214,8 +1068,8 @@ export class Mach1Bot {
         console.log("✅ Simulation completed");
       };
 
-      // Start strategy execution
-      executeStrategy();
+      // Keep simulation alive until strategy loop completes.
+      await executeStrategy();
     } else {
       console.log(
         "⚠️ No strategy defined. Use bot.strategy() to set a trading strategy.",
@@ -1273,8 +1127,52 @@ export class Mach1Bot {
     return liveEngine;
   }
 
+  private async getOrCreatePaperEngine(): Promise<PaperTradingEngine> {
+    if (this.paperEngine) {
+      return this.paperEngine;
+    }
+
+    const { PaperTradingEngine } = await import(
+      "@/domains/execution/paper-trading-engine.js"
+    );
+
+    this.paperEngine = new PaperTradingEngine(
+      {
+        initialCapital: 10000n * 100n,
+        commission: 0.001,
+        slippage: 0.0005,
+        latencyMs: 100,
+      },
+      this.marketManager,
+      this.realtimeManager,
+    );
+
+    return this.paperEngine;
+  }
+
+  private async getActiveExecutionEngine(): Promise<ExecutionEngine> {
+    if (this.config.mode === "live") {
+      return this.getOrCreateLiveEngine();
+    }
+
+    if (this.isBacktesting && this.backtestEngine) {
+      return this.backtestEngine;
+    }
+
+    return this.getOrCreatePaperEngine();
+  }
+
   async goLive(options?: LiveOptions): Promise<void> {
     await this.ensureInitialized();
+
+    if (
+      this.strategyExecutionCoordinator &&
+      this.strategyExecutionCoordinator.getStats().state !== "stopped" &&
+      this.strategyExecutionCoordinator.getStats().state !== "idle"
+    ) {
+      console.log("⚠️ Strategy execution is already running");
+      return;
+    }
 
     // Initialize LiveTradingEngine and keep it for order routing
     const _liveEngine = await this.getOrCreateLiveEngine(options);
@@ -1306,12 +1204,15 @@ export class Mach1Bot {
         }
       };
 
-      // Execute strategy every minute (can be configured)
-      const strategyInterval = setInterval(executeStrategy, 60000);
-      this.activeIntervals.add(strategyInterval);
+      const strategyIntervalMs =
+        options?.strategyExecutionIntervalMs ?? 60_000;
 
-      // Execute strategy immediately
-      await executeStrategy();
+      this.strategyExecutionCoordinator = new StrategyExecutionCoordinator({
+        executor: executeStrategy,
+        intervalMs: strategyIntervalMs,
+      });
+
+      await this.strategyExecutionCoordinator.start();
     } else {
       console.log(
         "⚠️ No strategy defined. Use bot.strategy() to set a trading strategy.",
@@ -1754,8 +1655,8 @@ export class Mach1Bot {
         spread:
           event.orderBook.asks.length > 0 && event.orderBook.bids.length > 0
             ? Number(
-                event.orderBook.asks[0].price - event.orderBook.bids[0].price,
-              ) / 100
+              event.orderBook.asks[0].price - event.orderBook.bids[0].price,
+            ) / 100
             : 0,
       };
       handler(book);
@@ -2050,7 +1951,7 @@ export class Mach1Bot {
     const endDate = new Date();
     const startDate = new Date(
       endDate.getTime() -
-        (options.totalPeriodDays || 365) * 24 * 60 * 60 * 1000,
+      (options.totalPeriodDays || 365) * 24 * 60 * 60 * 1000,
     );
 
     return await this.requireStrategyOptimizer().walkForwardAnalysis(
@@ -2260,6 +2161,12 @@ export class Mach1Bot {
           console.warn(`Failed to stop strategy ${strategy.id}:`, error);
         }
       }
+    }
+
+    // Stop the strategy execution coordinator if running
+    if (this.strategyExecutionCoordinator) {
+      await this.strategyExecutionCoordinator.stop();
+      this.strategyExecutionCoordinator = undefined;
     }
 
     // Clear all active intervals

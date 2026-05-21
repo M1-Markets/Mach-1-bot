@@ -1,5 +1,6 @@
 import { Mach1Bot } from "@/domains/bot/mach1-bot";
 import { BotConfig } from "@/shared/types/bot";
+import type { Address, TradingPair } from "@/shared/types";
 
 describe("Mach1Bot", () => {
   let bot: Mach1Bot;
@@ -54,6 +55,105 @@ describe("Mach1Bot", () => {
     it("should initialize bot with config", () => {
       expect(bot).toBeDefined();
       expect(bot).toBeInstanceOf(Mach1Bot);
+    });
+  });
+
+  describe("symbol resolution", () => {
+    it("uses canonical simulation table in simulation mode", () => {
+      expect(
+        (
+          bot as unknown as {
+            parseSymbol: (symbol: string) => TradingPair;
+          }
+        ).parseSymbol("SOL-USDC"),
+      ).toEqual({
+        base: "0x3333333333333333333333333333333333333333",
+        quote: "0x4444444444444444444444444444444444444444",
+        symbol: "SOL/USDC",
+      });
+    });
+
+    it("uses Monaco resolver contract addresses in live mode", () => {
+      const liveBot = new Mach1Bot({
+        ...mockConfig,
+        mode: "live",
+        enableEnhancedFeatures: false,
+      });
+
+      (
+        liveBot as unknown as {
+          tradingPairResolver: {
+            normalizeSymbol: (symbol: string) => string;
+            getAllSymbols: () => string[];
+            getPairBySymbol: (symbol: string) => {
+              symbol: string;
+              base_token_contract: Address;
+              quote_token_contract: Address;
+            } | undefined;
+          };
+          parseSymbol: (symbol: string) => TradingPair;
+        }
+      ).tradingPairResolver = {
+        normalizeSymbol: (symbol: string) =>
+          symbol.replace("WETH", "ETH").replace("-", "/"),
+        getAllSymbols: () => ["WETH-USDC"],
+        getPairBySymbol: (symbol: string) =>
+          symbol === "WETH-USDC"
+            ? {
+                symbol: "WETH-USDC",
+                base_token_contract:
+                  "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                quote_token_contract:
+                  "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              }
+            : undefined,
+      };
+
+      expect(
+        (
+          liveBot as unknown as {
+            parseSymbol: (symbol: string) => TradingPair;
+          }
+        ).parseSymbol("ETH-USDC"),
+      ).toEqual({
+        base: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        quote: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        symbol: "ETH/USDC",
+      });
+    });
+
+    it("preserves live resolver preview message for unknown pairs", () => {
+      const liveBot = new Mach1Bot({
+        ...mockConfig,
+        mode: "live",
+        enableEnhancedFeatures: false,
+      });
+
+      (
+        liveBot as unknown as {
+          tradingPairResolver: {
+            normalizeSymbol: (symbol: string) => string;
+            getAllSymbols: () => string[];
+            getPairBySymbol: (symbol: string) => undefined;
+          };
+          parseSymbol: (symbol: string) => TradingPair;
+        }
+      ).tradingPairResolver = {
+        normalizeSymbol: (symbol: string) => symbol.replace("-", "/"),
+        getAllSymbols: () => ["ETH/USDC", "BTC/USDC", "SOL/USDC"],
+        getPairBySymbol: () => undefined,
+      };
+
+      expect(
+        () =>
+          (
+            liveBot as unknown as {
+              parseSymbol: (symbol: string) => TradingPair;
+            }
+          ).parseSymbol("DOGE/USDC"),
+      ).toThrow(
+        "Unsupported trading pair: DOGE/USDC. Available symbols include: ETH/USDC, BTC/USDC, SOL/USDC",
+      );
     });
   });
 
@@ -161,6 +261,73 @@ describe("Mach1Bot", () => {
           await expect(
             testBot.buy("ETH/USDC", { amountUsd: 5000 }),
           ).rejects.toThrow(/Order rejected/);
+        } finally {
+          await testBot.emergencyStop();
+        }
+      });
+
+      it("uses active execution engine once per order in simulation mode", async () => {
+        const testBot = new Mach1Bot({
+          ...mockConfig,
+          enableEnhancedFeatures: false,
+        });
+        const placeOrder = vi.fn().mockResolvedValue({
+          orderId: "paper-1",
+          status: "pending",
+          filledQuantity: 0n,
+          remainingQuantity: 100n,
+        });
+
+        (
+          testBot as unknown as {
+            getActiveExecutionEngine: () => Promise<{
+              placeOrder: typeof placeOrder;
+            }>;
+          }
+        ).getActiveExecutionEngine = vi.fn().mockResolvedValue({ placeOrder });
+
+        try {
+          await testBot.buy("ETH/USDC", { amountUsd: 100 });
+          expect(placeOrder).toHaveBeenCalledTimes(1);
+        } finally {
+          await testBot.emergencyStop();
+        }
+      });
+
+      it("stops before engine call when risk rejects order", async () => {
+        const testBot = new Mach1Bot({
+          ...mockConfig,
+          enableEnhancedFeatures: false,
+        });
+        const placeOrder = vi.fn();
+        (
+          testBot as unknown as {
+            getActiveExecutionEngine: () => Promise<{
+              placeOrder: typeof placeOrder;
+            }>;
+            riskManager: {
+              validateOrder: (...args: unknown[]) => Promise<unknown>;
+            };
+          }
+        ).getActiveExecutionEngine = vi.fn().mockResolvedValue({ placeOrder });
+        (
+          testBot as unknown as {
+            riskManager: {
+              validateOrder: (...args: unknown[]) => Promise<unknown>;
+            };
+          }
+        ).riskManager.validateOrder = vi.fn().mockResolvedValue({
+          approved: false,
+          warnings: [],
+          rejectionReasons: ["blocked"],
+          riskScore: 1,
+        });
+
+        try {
+          await expect(
+            testBot.buy("ETH/USDC", { amountUsd: 100 }),
+          ).rejects.toThrow(/Order rejected: blocked/);
+          expect(placeOrder).not.toHaveBeenCalled();
         } finally {
           await testBot.emergencyStop();
         }
@@ -315,11 +482,118 @@ describe("Mach1Bot", () => {
         expect(typeof results.plotDrawdown).toBe("function");
         expect(typeof results.exportTrades).toBe("function");
       });
+
+      it("should pass configured strategy interval to backtest engine", async () => {
+        const strategyCallback = vi.fn().mockResolvedValue(undefined);
+        bot.strategy(strategyCallback);
+
+        const setStrategyCallback = vi.fn();
+        const generateReport = vi.fn().mockResolvedValue({
+          summary: {
+            totalReturn: 0,
+            sharpeRatio: 0,
+            maxDrawdown: 0,
+            winRate: 0,
+            totalTrades: 0,
+            trades: [],
+          },
+        });
+
+        vi.doMock("@/domains/execution/backtest-engine.js", () => ({
+          BacktestEngine: vi.fn().mockImplementation(() => ({
+            setStrategyCallback,
+            generateReport,
+          })),
+        }));
+
+        const isolatedBot = new Mach1Bot({
+          ...mockConfig,
+          enableEnhancedFeatures: false,
+        });
+        isolatedBot.strategy(strategyCallback);
+
+        try {
+          await isolatedBot.backtest({
+            start: "2024-01-01",
+            end: "2024-01-02",
+            strategyExecutionIntervalMs: 45_000,
+          });
+
+          expect(setStrategyCallback).toHaveBeenCalledTimes(1);
+          expect(setStrategyCallback.mock.calls[0]?.[1]).toBe(45_000);
+          expect(generateReport).toHaveBeenCalledTimes(1);
+        } finally {
+          vi.doUnmock("@/domains/execution/backtest-engine.js");
+          await isolatedBot.emergencyStop();
+        }
+      });
     });
 
     describe("simulate", () => {
+      afterEach(() => {
+        vi.useRealTimers();
+      });
+
       it("should start simulation successfully", async () => {
-        await expect(bot.simulate({ duration: "1W" })).resolves.toBeUndefined();
+        const testBot = new Mach1Bot({
+          ...mockConfig,
+          enableEnhancedFeatures: false,
+        });
+
+        try {
+          await expect(
+            testBot.simulate({ duration: "1W" }),
+          ).resolves.toBeUndefined();
+        } finally {
+          await testBot.emergencyStop();
+        }
+      });
+
+      it("should keep simulation running until strategy loop duration ends", async () => {
+        vi.useFakeTimers();
+        const strategyCallback = vi.fn().mockResolvedValue(undefined);
+        const testBot = new Mach1Bot({
+          ...mockConfig,
+          enableEnhancedFeatures: false,
+        });
+
+        testBot.strategy(strategyCallback);
+        vi.spyOn(
+          testBot as unknown as { parseDuration: (duration: string) => number },
+          "parseDuration",
+        ).mockReturnValue(60_000);
+        vi.spyOn(
+          testBot as unknown as { generateMockMarketData: () => Promise<unknown> },
+          "generateMockMarketData",
+        ).mockResolvedValue({
+          "ETH/USDC": {
+            open: 1,
+            high: 1,
+            low: 1,
+            close: 1,
+            volume: 1,
+            rsi: 50,
+            macdSignal: 0,
+            timestamp: 1,
+          },
+        });
+
+        try {
+          const simulatePromise = testBot.simulate({ duration: "1h" });
+          const settled = vi.fn();
+          simulatePromise.then(settled);
+
+          await vi.advanceTimersByTimeAsync(0);
+          expect(strategyCallback).toHaveBeenCalledTimes(1);
+          expect(settled).not.toHaveBeenCalled();
+
+          await vi.advanceTimersByTimeAsync(60_000);
+          await simulatePromise;
+
+          expect(settled).toHaveBeenCalledTimes(1);
+        } finally {
+          await testBot.emergencyStop();
+        }
       });
     });
 
@@ -336,6 +610,77 @@ describe("Mach1Bot", () => {
         (
           bot as unknown as { getOrCreateLiveEngine: () => Promise<unknown> }
         ).getOrCreateLiveEngine = original;
+      });
+
+      it("should not create duplicate loops when called repeatedly", async () => {
+        const original = (
+          bot as unknown as { getOrCreateLiveEngine: () => Promise<unknown> }
+        ).getOrCreateLiveEngine;
+        const getRealMarketData = vi
+          .spyOn(bot as unknown as { getRealMarketData: () => Promise<unknown> },
+            "getRealMarketData")
+          .mockResolvedValue({});
+
+        (
+          bot as unknown as { getOrCreateLiveEngine: () => Promise<unknown> }
+        ).getOrCreateLiveEngine = vi.fn().mockResolvedValue({});
+
+        bot.strategy(async () => undefined);
+
+        await expect(bot.goLive()).resolves.toBeUndefined();
+        await expect(bot.goLive()).resolves.toBeUndefined();
+
+        expect(
+          (bot as unknown as { strategyExecutionCoordinator?: { getStats: () => unknown } })
+            .strategyExecutionCoordinator,
+        ).toBeDefined();
+
+        getRealMarketData.mockRestore();
+        (
+          bot as unknown as { getOrCreateLiveEngine: () => Promise<unknown> }
+        ).getOrCreateLiveEngine = original;
+      });
+
+      it("should start exactly one coordinator loop", async () => {
+        vi.useFakeTimers();
+        const testBot = new Mach1Bot({
+          ...mockConfig,
+          enableEnhancedFeatures: false,
+        });
+        const strategyCallback = vi.fn().mockResolvedValue(undefined);
+
+        testBot.strategy(strategyCallback);
+        (
+          testBot as unknown as {
+            getOrCreateLiveEngine: () => Promise<unknown>;
+          }
+        ).getOrCreateLiveEngine = vi.fn().mockResolvedValue({});
+        vi.spyOn(
+          testBot as unknown as { getRealMarketData: () => Promise<unknown> },
+          "getRealMarketData",
+        ).mockResolvedValue({
+          "ETH/USDC": {
+            open: 1,
+            high: 1,
+            low: 1,
+            close: 1,
+            volume: 1,
+            rsi: 50,
+            macdSignal: 0,
+            timestamp: 1,
+          },
+        });
+
+        try {
+          await testBot.goLive({ strategyExecutionIntervalMs: 50 });
+          expect(strategyCallback).toHaveBeenCalledTimes(1);
+
+          await vi.advanceTimersByTimeAsync(120);
+          expect(strategyCallback).toHaveBeenCalledTimes(3);
+        } finally {
+          await testBot.emergencyStop();
+          vi.useRealTimers();
+        }
       });
     });
   });

@@ -25,6 +25,8 @@ import { OrderManager } from "@/domains/trading/order-manager";
 import { PositionTracker } from "@/domains/trading/position-tracker";
 import { RealtimeManager } from "@/domains/trading/realtime-manager";
 import { RiskManager } from "@/domains/trading/risk-manager";
+import { TradingPairService } from "@/domains/trading/trading-pair-service";
+import { StrategyExecutionCoordinator } from "@/domains/execution/strategy-execution-coordinator";
 import {
   Address,
   MarketData,
@@ -41,6 +43,7 @@ import type {
   AiStrategySnapshot,
 } from "@/shared/types/ai";
 import type { BotConfig } from "@/shared/types/bot";
+import type { TradingPairResolver } from "mach1_sdk";
 import { RegisteredStrategy, StrategyRegistry } from "./strategy-registry";
 
 export interface StrategyInstance {
@@ -114,11 +117,14 @@ export interface StrategyPerformanceReport {
  */
 export class StrategyManager extends EventEmitter {
   private instances: Map<string, StrategyInstance> = new Map();
-  private executionIntervals: Map<string, NodeJS.Timeout> = new Map();
+  private executionCoordinators: Map<string, StrategyExecutionCoordinator> =
+    new Map();
+  private executionOptions: Map<string, StrategyExecutionOptions> = new Map();
   private performanceTrackers: Map<string, PerformanceTracker> = new Map();
   private orderExecutor?: (order: OrderRequest) => Promise<OrderResult>;
   private aiHelper?: AIAgent;
   private aiHelperConfig?: BotConfig["aiHelper"];
+  private readonly tradingPairService: TradingPairService;
 
   constructor(
     private registry: StrategyRegistry,
@@ -128,8 +134,10 @@ export class StrategyManager extends EventEmitter {
     private realtimeManager: RealtimeManager,
     private riskManager: RiskManager,
     aiHelperConfig?: BotConfig["aiHelper"],
+    resolverProvider?: () => TradingPairResolver | undefined,
   ) {
     super();
+    this.tradingPairService = new TradingPairService(resolverProvider);
     this.setupEventHandlers();
     if (aiHelperConfig) {
       this.setAiHelper(aiHelperConfig);
@@ -190,9 +198,8 @@ export class StrategyManager extends EventEmitter {
       await this.setupMarketDataSubscriptions(instance, registeredStrategy);
 
       // Start execution
-      await this.startStrategyExecution(instance, options);
-
       instance.status = "running";
+      await this.startStrategyExecution(instance, options);
       this.emit("strategyStarted", instance);
 
       console.log(`✅ Strategy instance '${instanceId}' started successfully`);
@@ -218,10 +225,10 @@ export class StrategyManager extends EventEmitter {
 
     try {
       // Stop execution interval
-      const interval = this.executionIntervals.get(instanceId);
-      if (interval) {
-        clearInterval(interval);
-        this.executionIntervals.delete(instanceId);
+      const coordinator = this.executionCoordinators.get(instanceId);
+      if (coordinator) {
+        await coordinator.stop();
+        this.executionCoordinators.delete(instanceId);
       }
 
       // Unsubscribe from market data
@@ -236,6 +243,7 @@ export class StrategyManager extends EventEmitter {
 
       // Cleanup tracking
       this.performanceTrackers.delete(instanceId);
+      this.executionOptions.delete(instanceId);
       this.instances.delete(instanceId);
 
       this.emit("strategyStopped", instanceId);
@@ -283,10 +291,10 @@ export class StrategyManager extends EventEmitter {
     }
 
     // Stop execution but keep subscriptions
-    const interval = this.executionIntervals.get(instanceId);
-    if (interval) {
-      clearInterval(interval);
-      this.executionIntervals.delete(instanceId);
+    const coordinator = this.executionCoordinators.get(instanceId);
+    if (coordinator) {
+      await coordinator.stop();
+      this.executionCoordinators.delete(instanceId);
     }
 
     instance.status = "paused";
@@ -312,9 +320,13 @@ export class StrategyManager extends EventEmitter {
 
     try {
       // Restart execution
-      await this.startStrategyExecution(instance, options);
-
+      const nextOptions = {
+        ...(this.executionOptions.get(instanceId) ?? {}),
+        ...options,
+      };
       instance.status = "running";
+      await this.startStrategyExecution(instance, nextOptions);
+
       this.emit("strategyResumed", instance);
       console.log(`▶️ Strategy instance '${instanceId}' resumed`);
     } catch (error) {
@@ -797,38 +809,54 @@ export class StrategyManager extends EventEmitter {
     const executeInterval = options.executeInterval || 5000; // 5 seconds default
     const maxExecutionsPerMinute = options.maxExecutionsPerMinute || 12;
 
+    const existingCoordinator = this.executionCoordinators.get(instance.id);
+    if (existingCoordinator) {
+      await existingCoordinator.stop();
+      this.executionCoordinators.delete(instance.id);
+    }
+
+    this.executionOptions.set(instance.id, {
+      ...options,
+      executeInterval,
+      maxExecutionsPerMinute,
+    });
+
     let executionCount = 0;
     let lastMinute = Math.floor(Date.now() / 60000);
 
-    const intervalId = setInterval(async () => {
-      const currentMinute = Math.floor(Date.now() / 60000);
+    const coordinator = new StrategyExecutionCoordinator({
+      executor: async () => {
+        const currentMinute = Math.floor(Date.now() / 60000);
 
-      // Reset execution count every minute
-      if (currentMinute > lastMinute) {
-        executionCount = 0;
-        lastMinute = currentMinute;
-      }
+        // Reset execution count every minute
+        if (currentMinute > lastMinute) {
+          executionCount = 0;
+          lastMinute = currentMinute;
+        }
 
-      // Check execution rate limit
-      if (executionCount >= maxExecutionsPerMinute) {
-        return;
-      }
+        // Check execution rate limit
+        if (executionCount >= maxExecutionsPerMinute) {
+          return;
+        }
 
-      // Skip if strategy is not running
-      if (instance.status !== "running") {
-        return;
-      }
+        // Skip if strategy is not running
+        if (instance.status !== "running") {
+          return;
+        }
 
-      try {
-        await this.performStrategyExecution(instance);
-        executionCount++;
-      } catch (error) {
-        this.addError(instance, error as Error, "error");
-        this.emit("strategyExecutionError", instance, error);
-      }
-    }, executeInterval);
+        try {
+          await this.performStrategyExecution(instance);
+          executionCount++;
+        } catch (error) {
+          this.addError(instance, error as Error, "error");
+          this.emit("strategyExecutionError", instance, error);
+        }
+      },
+      intervalMs: executeInterval,
+    });
 
-    this.executionIntervals.set(instance.id, intervalId);
+    this.executionCoordinators.set(instance.id, coordinator);
+    await coordinator.start();
   }
 
   private async performStrategyExecution(
@@ -985,30 +1013,7 @@ export class StrategyManager extends EventEmitter {
    * Resolve a strategy signal symbol to a TradingPair, preferring live/SDK-derived pairs.
    */
   private async resolveTradingPair(symbol: string): Promise<TradingPair> {
-    try {
-      const pairs = await this.marketManager.getAllTradingPairs();
-      const match = pairs.find(
-        (p: MonacoTradingPair) =>
-          p.symbol === symbol || `${p.base_token}/${p.quote_token}` === symbol,
-      );
-
-      if (match) {
-        return {
-          base: match.base_token as Address,
-          quote: match.quote_token as Address,
-          symbol: match.symbol || symbol,
-        };
-      }
-    } catch {
-      // ignore and fallback
-    }
-
-    const [base, quote] = symbol.split("/");
-    return {
-      base: base as Address,
-      quote: quote as Address,
-      symbol,
-    };
+    return this.tradingPairService.resolveSymbol(symbol);
   }
 
   private async setupMarketDataSubscriptions(

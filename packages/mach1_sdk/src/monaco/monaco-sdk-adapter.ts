@@ -1,14 +1,14 @@
-import { createMach1SDK, type Mach1SDK } from "../sdk";
 import { type Chain, createWalletClient, http } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { sei, seiTestnet } from "viem/chains";
+import { createMach1SDK, type Mach1SDK } from "../sdk";
 import {
   DEFAULT_ENVIRONMENT,
   DEFAULT_RATE_LIMIT,
-  NETWORK_RPC_URLS,
-  TOKEN_REFRESH_CONFIG,
   type MonacoEnvironment,
+  NETWORK_RPC_URLS,
   resolveMonacoApiUrl,
+  TOKEN_REFRESH_CONFIG,
 } from "./constants";
 import type {
   AuthState,
@@ -17,13 +17,13 @@ import type {
   MonacoCoreOrderResult,
 } from "./monaco-core-sdk";
 import {
-  TokenBucketRateLimiter,
   createLogger,
   getNumberProp,
   getRecord,
   isRecord,
   normalizePrivateKey,
   retryWithBackoff,
+  TokenBucketRateLimiter,
 } from "./runtime-utils";
 import { tradingPairResolver } from "./trading-pair-resolver";
 
@@ -36,6 +36,9 @@ export interface MonacoSDKAdapterConfig {
   skipAuth?: boolean;
   rpcUrl?: string;
   rateLimiter?: TokenBucketRateLimiter;
+  onStatus?: (status: string) => void;
+  connectWebSocket?: boolean;
+  traceProfileOnInitialize?: boolean;
 }
 
 const NETWORK_MAPPING: Record<
@@ -142,6 +145,10 @@ export class MonacoSDKAdapter {
       );
   }
 
+  private emitStatus(status: string): void {
+    this.config.onStatus?.(status);
+  }
+
   async initialize(): Promise<void> {
     const {
       network,
@@ -149,6 +156,8 @@ export class MonacoSDKAdapter {
       environment = DEFAULT_ENVIRONMENT,
       skipAuth = false,
       rpcUrl,
+      connectWebSocket = true,
+      traceProfileOnInitialize = true,
     } = this.config;
     const networkConfig = NETWORK_MAPPING[network];
     const selectedRpcUrl = rpcUrl || networkConfig.defaultRpcUrl;
@@ -173,8 +182,9 @@ export class MonacoSDKAdapter {
       return;
     }
 
+    this.emitStatus("Authenticating with Monaco");
     this.authState = await this.sdk.login({
-      connectWebSocket: true,
+      connectWebSocket,
     });
 
     if (this.authState) {
@@ -183,8 +193,12 @@ export class MonacoSDKAdapter {
 
     this.syncAuthAccessToken();
     this.scheduleTokenRefresh();
+    this.emitStatus("Loading trading pairs");
     await tradingPairResolver.initialize(this.sdk);
-    await this.logUserProfileBalances();
+    if (traceProfileOnInitialize) {
+      this.emitStatus("Tracing Monaco profile");
+      await this.logUserProfileBalances();
+    }
   }
 
   async refreshAuthToken(): Promise<void> {
@@ -323,7 +337,8 @@ export class MonacoSDKAdapter {
           this.syncAuthAccessToken();
           await this.sdk.logout();
         } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
+          const message =
+            error instanceof Error ? error.message : String(error);
           if (!message.includes("Access token not set")) {
             logger.warn("Logout failed, continuing shutdown", { message });
           }
@@ -443,7 +458,7 @@ export class MonacoSDKAdapter {
     }
 
     this.authState = await this.sdk.login({
-      connectWebSocket: true,
+      connectWebSocket: this.config.connectWebSocket ?? true,
     });
 
     if (this.authState) {

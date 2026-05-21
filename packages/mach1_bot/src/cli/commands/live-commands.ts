@@ -1,5 +1,5 @@
 import type { Command } from "commander";
-import type { GetUserBalancesResponse, Mach1SDK, UserProfile } from "mach1_sdk";
+import type { GetUserBalancesResponse, UserProfile } from "mach1_sdk";
 import pc from "picocolors";
 import { formatUnits, parseUnits } from "viem";
 import {
@@ -38,11 +38,9 @@ import {
 import {
   assertPositiveAmountInput,
   buildTokenCatalog,
-  erc20Abi,
   fetchWalletBalance,
   fetchWalletBalancesForCatalog,
   findSwapRoute,
-  findTokenInfoByAddress,
   formatDecimalAmount,
   formatEstimatedAmount,
   formatFaucetResponse,
@@ -59,42 +57,12 @@ import {
   loadBotConfigWithEnv,
   withMonacoSession,
 } from "@/cli/utils/monaco-session";
-import {
-  getNumberProp,
-  getStringProp,
-  isRecord,
-  type UnknownRecord,
-} from "@/shared/utils/record-utils";
+import { getStringProp, isRecord } from "@/shared/utils/record-utils";
 
 const SEISCAN_TESTNET_TX_BASE_URL = "https://seiscan.com/testnet/tx";
 
 const buildSeiscanTxUrl = (hash: string): string =>
   `${SEISCAN_TESTNET_TX_BASE_URL}/${hash}`;
-
-type MonacoVault = Mach1SDK["vault"];
-type TokenCatalog = ReturnType<typeof buildTokenCatalog>;
-
-const _fetchVaultBalancesForCatalog = async (
-  catalog: TokenCatalog,
-  pairs: TokenLikePair[],
-  vault: MonacoVault,
-): Promise<Map<string, string>> => {
-  const entries = await Promise.all(
-    catalog.map(async (entry) => {
-      const assetId = resolveAssetIdFromPairs(entry.address, pairs);
-      if (!assetId) {
-        return [entry.address.toLowerCase(), "0"] as const;
-      }
-      const balance = await vault.getBalance(assetId);
-      return [
-        entry.address.toLowerCase(),
-        formatUnits(balance.amount, entry.decimals),
-      ] as const;
-    }),
-  );
-
-  return new Map(entries);
-};
 
 type ProfileBalanceEntry = {
   assetId: string;
@@ -104,14 +72,88 @@ type ProfileBalanceEntry = {
   symbol: string | undefined;
 };
 
+type LiveBalanceResult = {
+  profile: UserProfile;
+  address: string;
+  accountRows: BalanceRow[];
+  walletRows: WalletBalanceRow[];
+};
+
+const shouldTraceMonacoApi = (): boolean =>
+  process.env.MACH1_TRACE_MONACO === "1" ||
+  process.env.MACH1_TRACE_MONACO === "true";
+
+const getCliViewport = () => ({
+  width: Math.max(40, process.stdout.columns ?? 80),
+  height: Math.max(12, process.stdout.rows ?? 24),
+});
+
+const summarizeRecord = (
+  value: unknown,
+): Record<string, unknown> | undefined => {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  const entries = Object.entries(value).slice(0, 8);
+  return Object.fromEntries(
+    entries.map(([key, entryValue]) => {
+      if (Array.isArray(entryValue)) {
+        return [key, `[array:${entryValue.length}]`];
+      }
+      if (isRecord(entryValue)) {
+        return [key, `[object keys:${Object.keys(entryValue).join(",")}]`];
+      }
+      return [key, entryValue];
+    }),
+  );
+};
+
+const traceMonacoApi = (label: string, value: unknown): void => {
+  if (!shouldTraceMonacoApi()) {
+    return;
+  }
+
+  const summary = Array.isArray(value)
+    ? { type: "array", length: value.length, first: summarizeRecord(value[0]) }
+    : (summarizeRecord(value) ?? { type: typeof value, value });
+  console.log(pc.gray(`[trace] ${label}: ${JSON.stringify(summary)}`));
+};
+
+const traceMonacoApiPayload = (label: string, value: unknown): void => {
+  if (!shouldTraceMonacoApi()) {
+    return;
+  }
+
+  console.log(
+    pc.gray(`[trace] ${label} payload:\n${JSON.stringify(value, null, 2)}`),
+  );
+};
+
+const parseUserProfile = (profile: UserProfile): UserProfile => {
+  traceMonacoApi("profile.getProfile", profile);
+  if (!isRecord(profile)) {
+    throw new Error("Profile response is not an object.");
+  }
+
+  const id = getStringProp(profile, "id");
+  const address = getStringProp(profile, "address");
+  if (!id || !address) {
+    throw new Error("Profile response missing required id or address.");
+  }
+
+  return profile;
+};
+
 const parseProfileBalances = (
   balances: GetUserBalancesResponse,
 ): ProfileBalanceEntry[] => {
+  traceMonacoApi("profile.getUserBalances", balances);
   if (!Array.isArray(balances?.balances)) {
     throw new Error("Profile balances response missing balances array.");
   }
   const entries = balances.balances;
-  return entries
+  const parsed = entries
     .map((entry) => {
       if (!isRecord(entry)) {
         return undefined;
@@ -127,6 +169,97 @@ const parseProfileBalances = (
       return { assetId, available, total, locked, symbol };
     })
     .filter((entry): entry is ProfileBalanceEntry => entry !== undefined);
+
+  if (entries.length > 0 && parsed.length === 0) {
+    throw new Error(
+      "Profile balances response structure did not match expected Monaco fields.",
+    );
+  }
+
+  return parsed;
+};
+
+const fetchLiveBalanceResult = async (
+  sdk: {
+    profile: {
+      getProfile: () => Promise<UserProfile>;
+      getUserBalances: () => Promise<GetUserBalancesResponse>;
+    };
+    getAccountAddress: () => string;
+  },
+  resolver: { getAllPairs: () => unknown },
+  client: Parameters<typeof fetchWalletBalancesForCatalog>[0],
+  onStatus: (status: string) => void,
+): Promise<LiveBalanceResult> => {
+  onStatus("Reading trading pairs");
+  const resolverPairs = resolver.getAllPairs();
+  if (!Array.isArray(resolverPairs)) {
+    throw new Error(
+      "Trading pair resolver returned an invalid response shape.",
+    );
+  }
+
+  const pairs = resolverPairs as TokenLikePair[];
+  traceMonacoApi("resolver.getAllPairs", pairs);
+  const catalog = buildTokenCatalog(pairs);
+
+  onStatus("Fetching profile");
+  const profile: UserProfile = parseUserProfile(await sdk.profile.getProfile());
+
+  onStatus("Fetching Monaco account balances");
+  const rawProfileBalances = await sdk.profile.getUserBalances();
+  traceMonacoApiPayload("profile.getUserBalances", rawProfileBalances);
+  const profileBalances = parseProfileBalances(rawProfileBalances);
+
+  onStatus("Resolving wallet address");
+  const address: string = sdk.getAccountAddress();
+
+  const accountRows: BalanceRow[] = profileBalances.map((balance) => {
+    return {
+      symbol: balance.symbol ?? balance.assetId,
+      available: balance.available,
+      locked: balance.locked,
+      total: balance.total,
+    };
+  });
+
+  onStatus("Fetching on-chain wallet balances");
+  const walletBalances = await fetchWalletBalancesForCatalog(
+    client,
+    catalog,
+    address,
+  );
+  const walletRows: WalletBalanceRow[] = catalog.map((entry) => ({
+    label: `${entry.address} (${entry.symbol})`,
+    balance: walletBalances.get(entry.address.toLowerCase()) ?? "0",
+  }));
+  traceMonacoApi("walletBalances", walletRows);
+
+  return {
+    profile,
+    address,
+    accountRows,
+    walletRows,
+  };
+};
+
+const logBalanceStatus = (status: string): void => {
+  console.log(pc.gray(`[balance] ${status}`));
+};
+
+const logBalanceRows = (
+  title: string,
+  rows: Array<Record<string, string>>,
+): void => {
+  console.log(pc.cyan(title));
+  if (rows.length === 0) {
+    console.log(pc.gray("  none"));
+    return;
+  }
+
+  for (const row of rows) {
+    console.log(JSON.stringify(row));
+  }
 };
 
 export const registerLiveCommands = (liveCommand: Command): void => {
@@ -134,6 +267,7 @@ export const registerLiveCommands = (liveCommand: Command): void => {
     .command("balance")
     .alias("balances")
     .description("Show live Monaco account balances")
+    .option("--no-ui", "Disable terminal UI and print logs only")
     .option(
       "-c, --config <file>",
       "Configuration file path",
@@ -146,6 +280,7 @@ export const registerLiveCommands = (liveCommand: Command): void => {
     .action(async (options) => {
       let exitCode = 0;
       let balanceUi: BalanceUiController | undefined;
+      const useUi = options.ui !== false;
       try {
         const prepared = await loadBotConfigWithEnv(
           options.config,
@@ -153,142 +288,95 @@ export const registerLiveCommands = (liveCommand: Command): void => {
           "staging",
         );
 
-        balanceUi = await createBalanceUi({
-          stage: "loading",
-          viewport: {
-            width: Math.max(40, process.stdout.columns ?? 80),
-            height: Math.max(12, process.stdout.rows ?? 24),
-          },
-        });
-        const ui = balanceUi;
-        if (!ui) {
-          throw new Error("Balance UI not initialized.");
+        if (useUi) {
+          balanceUi = await createBalanceUi({
+            stage: "loading",
+            status: "Preparing balance check",
+            viewport: getCliViewport(),
+          });
         }
 
-        await withMonacoSession(prepared, async ({ sdk, resolver, client }) => {
-          const pairs = resolver.getAllPairs() as TokenLikePair[];
-          const profile: UserProfile = await sdk.profile.getProfile();
-          const balances: GetUserBalancesResponse =
-            await sdk.profile.getUserBalances();
-          const walletAddress: string = sdk.getAccountAddress();
-
-          const detailedBalances = Array.isArray(balances?.balances)
-            ? balances.balances
-            : [];
-
-          const accountRows: BalanceRow[] = detailedBalances.map((balance) => {
-            const balanceRecord = isRecord(balance) ? balance : {};
-            const symbol =
-              getStringProp(balanceRecord, "symbol") ||
-              getStringProp(balanceRecord, "token") ||
-              "UNKNOWN";
-            const available =
-              getNumberProp(balanceRecord, "available_balance") ??
-              getNumberProp(balanceRecord, "available") ??
-              0;
-            const locked =
-              getNumberProp(balanceRecord, "locked_balance") ??
-              getNumberProp(balanceRecord, "locked") ??
-              0;
-            const total =
-              getNumberProp(balanceRecord, "total_balance") ??
-              getNumberProp(balanceRecord, "total") ??
-              0;
-            return {
-              symbol,
-              available: String(available),
-              locked: String(locked),
-              total: String(total),
-            };
-          });
-
-          const tokenAddresses = Array.from(
-            new Set(
-              pairs.flatMap((pair) => {
-                const pairRecord = pair as unknown as UnknownRecord;
-                const base =
-                  pair.base_token_contract ||
-                  getStringProp(pairRecord, "baseToken") ||
-                  pair.base_token;
-                const quote =
-                  pair.quote_token_contract ||
-                  getStringProp(pairRecord, "quoteToken") ||
-                  pair.quote_token;
-                return [base, quote].filter(Boolean);
-              }),
-            ),
-          );
-
-          const walletRows: WalletBalanceRow[] = [];
-          for (const tokenAddress of tokenAddresses) {
-            if (!tokenAddress) continue;
-            if (tokenAddress === "0x0000000000000000000000000000000000000000") {
-              continue;
-            }
-
-            try {
-              const tokenInfo = findTokenInfoByAddress(tokenAddress, pairs);
-              const symbol = tokenInfo?.symbol || "UNKNOWN";
-              const decimalsPromise =
-                tokenInfo?.decimals !== undefined
-                  ? Promise.resolve(tokenInfo.decimals)
-                  : (client.readContract({
-                      address: tokenAddress as `0x${string}`,
-                      abi: erc20Abi,
-                      functionName: "decimals",
-                    }) as Promise<number>);
-
-              const [decimals, rawBalance] = await Promise.all([
-                decimalsPromise,
-                client.readContract({
-                  address: tokenAddress as `0x${string}`,
-                  abi: erc20Abi,
-                  functionName: "balanceOf",
-                  args: [walletAddress as `0x${string}`],
-                }) as Promise<bigint>,
-              ]);
-
-              const formatted = Number(rawBalance) / Math.pow(10, decimals);
-              walletRows.push({
-                label: `${tokenAddress} (${symbol})`,
-                balance: String(formatted),
-              });
-            } catch (walletError) {
-              const message =
-                walletError instanceof Error
-                  ? walletError.message
-                  : String(walletError);
-              walletRows.push({
-                label: `${tokenAddress} (error)`,
-                balance: message,
-              });
-            }
+        const updateLoadingState = (status: string) => {
+          if (useUi) {
+            balanceUi?.update({
+              stage: "loading",
+              status,
+              viewport: getCliViewport(),
+            });
+            return;
           }
 
-          ui.update({
-            stage: "done",
-            profile,
-            address: walletAddress,
-            balances: accountRows,
-            walletBalances: walletRows,
-            viewport: {
-              width: Math.max(40, process.stdout.columns ?? 80),
-              height: Math.max(12, process.stdout.rows ?? 24),
-            },
-          });
-        });
+          logBalanceStatus(status);
+        };
+
+        updateLoadingState("Connecting to Monaco");
+
+        await withMonacoSession(
+          prepared,
+          async ({ sdk, resolver, client }) => {
+            const result = await fetchLiveBalanceResult(
+              sdk,
+              resolver,
+              client,
+              updateLoadingState,
+            );
+
+            if (useUi) {
+              balanceUi?.update({
+                stage: "done",
+                status: `Loaded ${result.accountRows.length} account balances and ${result.walletRows.length} wallet balances`,
+                profile: result.profile,
+                address: result.address,
+                balances: result.accountRows,
+                walletBalances: result.walletRows,
+                viewport: getCliViewport(),
+              });
+              return;
+            }
+
+            console.log(pc.cyan("Live account balances"));
+            console.log(
+              JSON.stringify({
+                address: result.address,
+                profileId: result.profile.id,
+              }),
+            );
+            logBalanceRows(
+              "Account Balances",
+              result.accountRows.map((row) => ({
+                symbol: row.symbol,
+                total: row.total,
+                available: row.available,
+                locked: row.locked,
+              })),
+            );
+            logBalanceRows(
+              "Wallet Balances (On-chain)",
+              result.walletRows.map((row) => ({
+                token: row.label,
+                balance: row.balance,
+              })),
+            );
+          },
+          updateLoadingState,
+          {
+            connectWebSocket: false,
+            traceProfileOnInitialize: false,
+          },
+        );
       } catch (error) {
         exitCode = 1;
         if (balanceUi) {
           balanceUi.update({
             stage: "error",
+            status: "Balance fetch failed",
             errorMessage:
               error instanceof Error ? error.message : String(error),
-            viewport: {
-              width: Math.max(40, process.stdout.columns ?? 80),
-              height: Math.max(12, process.stdout.rows ?? 24),
-            },
+            viewport: getCliViewport(),
           });
+        }
+        if (!useUi) {
+          logBalanceStatus("Balance fetch failed");
         }
         console.error(
           pc.red(
