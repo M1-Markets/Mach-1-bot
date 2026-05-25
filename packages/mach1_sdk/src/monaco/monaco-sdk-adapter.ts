@@ -163,8 +163,10 @@ export class MonacoSDKAdapter {
     const selectedRpcUrl = rpcUrl || networkConfig.defaultRpcUrl;
     const account = privateKeyToAccount(normalizePrivateKey(privateKey));
     const apiUrl = resolveMonacoApiUrl(environment);
+    const wsUrl = `${apiUrl.replace(/^http/i, "ws").replace(/\/$/, "")}/ws`;
 
     requireValidUrl(apiUrl, "Monaco API URL");
+    requireValidUrl(wsUrl.replace(/^ws/i, "http"), "Monaco WebSocket URL");
 
     const walletClient = createWalletClient({
       account,
@@ -173,9 +175,11 @@ export class MonacoSDKAdapter {
     });
 
     this.sdk = createMach1SDK({
+      apiUrl,
       walletClient,
       network: network === "mainnet" ? "sei-mainnet" : "sei-testnet",
       seiRpcUrl: selectedRpcUrl,
+      wsUrl,
     });
 
     if (skipAuth || !this.sdk) {

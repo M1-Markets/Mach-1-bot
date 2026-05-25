@@ -1,7 +1,16 @@
 import { MarketManager } from "@/domains/trading/market-manager";
+import { OrderEventEmitter } from "@/domains/execution/order-event-emitter";
 import { OrderManager } from "@/domains/trading/order-manager";
-import { Address, Portfolio, Position, TradingPair } from "@/shared/types";
+import {
+  Address,
+  type OrderLifecycleEvent,
+  type OrderLifecycleRecord,
+  Portfolio,
+  Position,
+  TradingPair,
+} from "@/shared/types";
 import type { InternalOrder } from "@/shared/types/internal-events";
+import { calculateScaledNotionalValue } from "@/shared/utils";
 
 export interface PositionData {
   token: Address;
@@ -22,6 +31,8 @@ export interface TradeRecord {
   price: bigint;
   quantity: bigint;
   fees: bigint;
+  slippage: bigint;
+  realizedPnL: bigint;
   timestamp: number;
   blockNumber?: number;
   transactionHash?: string;
@@ -34,6 +45,10 @@ export class PositionTracker {
   private marketManager: MarketManager;
   private orderManager: OrderManager;
   private startTime: number;
+  private appliedOrderFills: Map<
+    string,
+    { filledQuantity: bigint; fees: bigint; slippage: bigint }
+  > = new Map();
 
   constructor(marketManager: MarketManager, orderManager: OrderManager) {
     this.marketManager = marketManager;
@@ -62,52 +77,114 @@ export class PositionTracker {
     fillPrice: bigint,
     fillQuantity: bigint,
   ): Promise<void> {
-    const fees = (fillPrice * fillQuantity) / BigInt(10000);
-    const pair: TradingPair = {
-      base: order.baseToken,
-      quote: order.quoteToken,
-      symbol: `${order.baseToken}/${order.quoteToken}`,
-    };
-
-    const tradeRecord: TradeRecord = {
-      orderId: order.id,
-      pair,
+    const syntheticOrder: OrderLifecycleRecord = {
+      localId: order.id,
+      pair: {
+        base: order.baseToken,
+        quote: order.quoteToken,
+        symbol: `${order.baseToken}/${order.quoteToken}`,
+      },
       side: order.isBuy ? "buy" : "sell",
-      price: fillPrice,
-      quantity: fillQuantity,
-      fees,
-      timestamp: Date.now(),
-      blockNumber: order.blockNumber,
-      transactionHash: order.transactionHash,
+      type: order.orderType === "LIMIT" ? "limit" : "market",
+      requestedQuantity: order.quantity,
+      filledQuantity: fillQuantity,
+      remainingQuantity: order.quantity - fillQuantity,
+      averageFillPrice: fillPrice,
+      fees: (fillPrice * fillQuantity) / BigInt(10000),
+      slippage: 0n,
+      status: "filled",
+      submittedAt: order.timestamp,
+      updatedAt: Date.now(),
     };
+    this.applyOrderFill(
+      syntheticOrder,
+      fillQuantity,
+      syntheticOrder.fees,
+      syntheticOrder.slippage,
+    );
+  }
 
-    this.tradeHistory.push(tradeRecord);
-    this.updatePosition(
-      order.baseToken,
-      order.quoteToken,
-      order.isBuy,
+  attachOrderEventEmitter(orderEventEmitter: OrderEventEmitter): () => void {
+    return orderEventEmitter.on((event) => {
+      void this.handleOrderLifecycleEvent(event);
+    });
+  }
+
+  async handleOrderLifecycleEvent(event: OrderLifecycleEvent): Promise<void> {
+    if (event.type !== "partially_filled" && event.type !== "filled") {
+      return;
+    }
+
+    const applied = this.appliedOrderFills.get(event.order.localId) ?? {
+      filledQuantity: 0n,
+      fees: 0n,
+      slippage: 0n,
+    };
+    const deltaQuantity = event.order.filledQuantity - applied.filledQuantity;
+    if (deltaQuantity <= 0n) {
+      return;
+    }
+
+    const deltaFees = event.order.fees - applied.fees;
+    const deltaSlippage = event.order.slippage - applied.slippage;
+    this.applyOrderFill(
+      event.order,
+      deltaQuantity,
+      deltaFees > 0n ? deltaFees : 0n,
+      deltaSlippage > 0n ? deltaSlippage : 0n,
+    );
+    this.appliedOrderFills.set(event.order.localId, {
+      filledQuantity: event.order.filledQuantity,
+      fees: event.order.fees,
+      slippage: event.order.slippage,
+    });
+  }
+
+  private applyOrderFill(
+    order: OrderLifecycleRecord,
+    fillQuantity: bigint,
+    fees: bigint,
+    slippage: bigint,
+  ): void {
+    const fillPrice = order.averageFillPrice ?? 0n;
+    const realizedPnL = this.updatePosition(
+      order.pair.base,
+      order.side === "buy",
       fillPrice,
       fillQuantity,
       fees,
     );
+
+    const tradeRecord: TradeRecord = {
+      orderId: order.localId,
+      pair: order.pair,
+      side: order.side,
+      price: fillPrice,
+      quantity: fillQuantity,
+      fees,
+      slippage,
+      realizedPnL,
+      timestamp: Date.now(),
+    };
+
+    this.tradeHistory.push(tradeRecord);
     this.updateBalances(order, fillPrice, fillQuantity, fees);
   }
 
   private updatePosition(
     baseToken: Address,
-    quoteToken: Address,
     isBuy: boolean,
     price: bigint,
     quantity: bigint,
     fees: bigint,
-  ): void {
-    const token = isBuy ? baseToken : quoteToken;
+  ): bigint {
+    const token = baseToken;
     let position = this.positions.get(token);
 
     if (!position) {
       position = {
         token,
-        symbol: token === baseToken ? "BASE" : "QUOTE",
+        symbol: "BASE",
         balance: 0n,
         value: 0n,
         averagePrice: 0n,
@@ -128,35 +205,46 @@ export class PositionTracker {
         position.averagePrice = (oldValue + newValue) / totalQuantity;
       }
       position.balance += quantity;
+      position.value = (position.balance * position.averagePrice) / 100n;
+      position.totalFees += fees;
+      position.lastUpdated = Date.now();
+      return 0n;
     } else {
-      if (position.balance >= quantity) {
-        const realizedPnL = (price - position.averagePrice) * quantity;
-        position.realizedPnL += realizedPnL;
-        position.balance -= quantity;
-      }
+      const soldQuantity =
+        quantity > position.balance ? position.balance : quantity;
+      const realizedPnL =
+        ((price - position.averagePrice) * soldQuantity) / 100n;
+      position.realizedPnL += realizedPnL;
+      position.balance -= soldQuantity;
+      position.value = (position.balance * position.averagePrice) / 100n;
+      position.totalFees += fees;
+      position.lastUpdated = Date.now();
+      return realizedPnL;
     }
-
-    position.totalFees += fees;
-    position.lastUpdated = Date.now();
   }
 
   private updateBalances(
-    order: InternalOrder,
+    order: Pick<OrderLifecycleRecord, "pair" | "side" | "localId"> & {
+      baseToken?: Address;
+      quoteToken?: Address;
+    },
     fillPrice: bigint,
     fillQuantity: bigint,
     fees: bigint,
   ): void {
-    const baseBalance = this.balances.get(order.baseToken) || 0n;
-    const quoteBalance = this.balances.get(order.quoteToken) || 0n;
+    const baseToken = order.baseToken ?? order.pair.base;
+    const quoteToken = order.quoteToken ?? order.pair.quote;
+    const baseBalance = this.balances.get(baseToken) || 0n;
+    const quoteBalance = this.balances.get(quoteToken) || 0n;
 
-    if (order.isBuy) {
+    if (order.side === "buy") {
       const cost = (fillPrice * fillQuantity) / BigInt(100) + fees;
-      this.balances.set(order.baseToken, baseBalance + fillQuantity);
-      this.balances.set(order.quoteToken, quoteBalance - cost);
+      this.balances.set(baseToken, baseBalance + fillQuantity);
+      this.balances.set(quoteToken, quoteBalance - cost);
     } else {
       const proceeds = (fillPrice * fillQuantity) / BigInt(100) - fees;
-      this.balances.set(order.baseToken, baseBalance - fillQuantity);
-      this.balances.set(order.quoteToken, quoteBalance + proceeds);
+      this.balances.set(baseToken, baseBalance - fillQuantity);
+      this.balances.set(quoteToken, quoteBalance + proceeds);
     }
   }
 
@@ -349,7 +437,8 @@ export class PositionTracker {
     const totalInvested = relevantTrades
       .filter((trade) => trade.side === "buy")
       .reduce(
-        (sum, trade) => sum + (trade.price * trade.quantity) / BigInt(100),
+        (sum, trade) =>
+          sum + calculateScaledNotionalValue(trade.price, trade.quantity),
         0n,
       );
 
@@ -388,12 +477,7 @@ export class PositionTracker {
       (trade) => trade.timestamp >= dayStart,
     );
     const dailyPnL = dailyTrades.reduce((sum, trade) => {
-      return (
-        sum +
-        (trade.side === "sell"
-          ? (trade.price * trade.quantity) / BigInt(100)
-          : 0n)
-      );
+      return sum + trade.realizedPnL - trade.fees;
     }, 0n);
 
     return {
@@ -443,30 +527,18 @@ export class PositionTracker {
     }
 
     const wins = sellTrades.filter((trade) => {
-      const position = this.positions.get(trade.pair.base);
-      return position && trade.price > position.averagePrice;
+      return trade.realizedPnL > 0n;
     });
 
     const losses = sellTrades.filter((trade) => {
-      const position = this.positions.get(trade.pair.base);
-      return position && trade.price <= position.averagePrice;
+      return trade.realizedPnL <= 0n;
     });
 
-    const totalWins = wins.reduce((sum, trade) => {
-      const position = this.positions.get(trade.pair.base);
-      if (position) {
-        return sum + (trade.price - position.averagePrice) * trade.quantity;
-      }
-      return sum;
-    }, 0n);
-
-    const totalLosses = losses.reduce((sum, trade) => {
-      const position = this.positions.get(trade.pair.base);
-      if (position) {
-        return sum + (position.averagePrice - trade.price) * trade.quantity;
-      }
-      return sum;
-    }, 0n);
+    const totalWins = wins.reduce((sum, trade) => sum + trade.realizedPnL, 0n);
+    const totalLosses = losses.reduce(
+      (sum, trade) => sum + (trade.realizedPnL < 0n ? -trade.realizedPnL : 0n),
+      0n,
+    );
 
     const winRate = wins.length / sellTrades.length;
     const averageWin = wins.length > 0 ? totalWins / BigInt(wins.length) : 0n;
@@ -476,14 +548,8 @@ export class PositionTracker {
       totalLosses > 0n ? Number(totalWins) / Number(totalLosses) : 0;
 
     const returns = sellTrades.map((trade) => {
-      const position = this.positions.get(trade.pair.base);
-      if (position) {
-        return (
-          Number(trade.price - position.averagePrice) /
-          Number(position.averagePrice)
-        );
-      }
-      return 0;
+      const invested = Number((trade.price * trade.quantity) / 100n);
+      return invested > 0 ? Number(trade.realizedPnL) / invested : 0;
     });
 
     const avgReturn =
@@ -506,6 +572,7 @@ export class PositionTracker {
   reset(): void {
     this.positions.clear();
     this.tradeHistory = [];
+    this.appliedOrderFills.clear();
     this.initializeMockBalances();
   }
 }

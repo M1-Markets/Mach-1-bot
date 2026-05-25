@@ -6,10 +6,13 @@ const logger = createLogger("BacktestEngine");
 import * as path from "path";
 import { StrategyExecutionCoordinator } from "@/domains/execution/strategy-execution-coordinator";
 import { BaseTradingMode } from "@/domains/execution/trading-mode";
+import { OrderLifecycleStore } from "@/domains/execution/order-lifecycle-store";
+import { MarketDataService } from "@/domains/trading/market-data-service";
 import {
   Address,
   type BacktestConfig,
   type BacktestResult,
+  type CancellationResult,
   type DataFileInfo,
   type ExecutionOrderRecord,
   type ExecutionOrderStatusResult,
@@ -24,6 +27,15 @@ import {
   type TradeData,
   TradingPair,
 } from "@/shared/types";
+import {
+  createIdGenerator,
+  type Clock,
+  createSeededRng,
+  type IdGenerator,
+  type Rng,
+  realClock,
+  realRng,
+} from "@/shared/utils/determinism";
 
 interface MemoryStats {
   tradeDataPoints: number;
@@ -90,10 +102,32 @@ export class BacktestEngine extends BaseTradingMode {
 
   // Cancellation support
   private isCancelled = false;
+  private readonly marketDataService = new MarketDataService();
+  private readonly orderLifecycleStore: OrderLifecycleStore;
+  private readonly rng: Rng;
+  private readonly clock: Clock;
+  private readonly orderIdGenerator: IdGenerator;
 
-  constructor(config: BacktestConfig) {
+  constructor(
+    config: BacktestConfig,
+    options?: {
+      orderLifecycleStore?: OrderLifecycleStore;
+      rng?: Rng;
+      clock?: Clock;
+    },
+  ) {
     super();
     this.config = config;
+    this.rng =
+      options?.rng ??
+      (config.seed !== undefined ? createSeededRng(config.seed) : realRng);
+    this.clock = options?.clock ?? realClock;
+    this.orderLifecycleStore =
+      options?.orderLifecycleStore ?? new OrderLifecycleStore();
+    this.orderIdGenerator = createIdGenerator("backtest", {
+      clock: this.clock,
+      rng: this.rng,
+    });
     this.cash = config.initialCapital;
 
     // Enable memory optimization for large datasets
@@ -735,70 +769,51 @@ export class BacktestEngine extends BaseTradingMode {
     const tradingPairs = this.getAvailableTradingPairs();
 
     for (const pair of tradingPairs) {
-      // Get recent trade data around this timestamp
       const recentTrades = this.getTradeDataInRange(
         timestamp - 3600000,
         timestamp,
-      ); // Last hour
+      );
       const pairTrades = recentTrades.filter(
         (trade) => trade.tradingPair?.toUpperCase() === pair.toUpperCase(),
       );
+      const formattedPair = this.formatTradingPair(pair);
+      const candleWindow = this.getHistoricalCandlesForPair(pair).filter(
+        (candle) => candle.timestamp <= timestamp,
+      );
+      const recentCandles = candleWindow.slice(-50);
 
-      if (pairTrades.length === 0) {
-        // Try to get any trade from this pair
-        const anyPairTrades = this.getTradeDataByPair(pair);
-        if (anyPairTrades.length > 0) {
-          // Use the closest trade to this timestamp
-          const closestTrade = anyPairTrades.reduce((closest, trade) =>
-            Math.abs(trade.timestamp - timestamp) <
-            Math.abs(closest.timestamp - timestamp)
-              ? trade
-              : closest,
-          );
-
-          // Convert pair format to match expected format
-          const formattedPair = this.formatTradingPair(pair);
-
-          marketData[formattedPair] = {
-            open: closestTrade.price,
-            high: closestTrade.price * 1.001, // Mock high/low with small spread
-            low: closestTrade.price * 0.999,
-            close: closestTrade.price,
-            volume: closestTrade.volume,
-            rsi: 50, // Neutral RSI
-            macdSignal: 0, // Neutral MACD
-            timestamp: timestamp,
-          };
-        }
+      if (pairTrades.length === 0 && recentCandles.length === 0) {
         continue;
       }
 
-      // Calculate OHLC from recent trades
-      const prices = pairTrades.map((t) => t.price);
-      const volumes = pairTrades.map((t) => t.volume);
+      const tick = this.marketDataService.buildBacktestTick({
+        symbol: formattedPair,
+        timestamp,
+        candles: recentCandles,
+        trades: pairTrades.map((trade) => ({
+          price: trade.price,
+          volume: trade.volume,
+          timestamp: trade.timestamp,
+        })),
+      });
 
-      const open = pairTrades[0].price;
-      const close = pairTrades[pairTrades.length - 1].price;
-      const high = Math.max(...prices);
-      const low = Math.min(...prices);
-      const volume = volumes.reduce((sum, v) => sum + v, 0);
-
-      // Convert pair format to match expected format (e.g., SOLUSDT -> SOL/USDC)
-      const formattedPair = this.formatTradingPair(pair);
-
-      marketData[formattedPair] = {
-        open,
-        high,
-        low,
-        close,
-        volume,
-        rsi: 50, // Simple neutral RSI for now
-        macdSignal: 0, // Simple neutral MACD for now
-        timestamp: timestamp,
-      };
+      if (tick) {
+        marketData[formattedPair] = tick;
+      }
     }
 
     return marketData;
+  }
+
+  private getHistoricalCandlesForPair(pair: string): OHLCV[] {
+    const pairKey = `${pair}_1m`;
+    const candles = this.historicalData.get(pairKey);
+    if (candles) {
+      return candles;
+    }
+
+    const fallbackKey = `${pair}_5m`;
+    return this.historicalData.get(fallbackKey) ?? [];
   }
 
   /**
@@ -971,7 +986,19 @@ export class BacktestEngine extends BaseTradingMode {
   }
 
   async placeOrder(order: OrderRequest): Promise<OrderResult> {
-    const orderId = `backtest_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const orderId = this.orderIdGenerator.next();
+    const pair: TradingPair = {
+      base: order.baseToken,
+      quote: order.quoteToken,
+      symbol: `${order.baseToken}/${order.quoteToken}`,
+    };
+    this.orderLifecycleStore.createSubmittedOrder({
+      localId: orderId,
+      strategyId: order.strategyId,
+      pair,
+      order,
+      timestamp: Date.now(),
+    });
 
     // Validate order against available balance
     if (!this.validateOrder(order)) {
@@ -985,6 +1012,12 @@ export class BacktestEngine extends BaseTradingMode {
         order,
         timestamp: Date.now(),
         ...result,
+      });
+      this.orderLifecycleStore.applyUpdate({
+        localId: orderId,
+        type: "rejected",
+        reason: "validation_failed",
+        timestamp: Date.now(),
       });
       return result;
     }
@@ -1007,6 +1040,12 @@ export class BacktestEngine extends BaseTradingMode {
         order,
         timestamp: Date.now(),
         ...result,
+      });
+      this.orderLifecycleStore.applyUpdate({
+        localId: orderId,
+        type: "rejected",
+        reason: "price_unavailable",
+        timestamp: Date.now(),
       });
       return result;
     }
@@ -1037,8 +1076,21 @@ export class BacktestEngine extends BaseTradingMode {
         timestamp: Date.now(),
         ...result,
       });
+      this.orderLifecycleStore.applyUpdate({
+        localId: orderId,
+        type: "rejected",
+        reason: "insufficient_balance",
+        timestamp: Date.now(),
+      });
       return result;
     }
+
+    this.orderLifecycleStore.applyUpdate({
+      localId: orderId,
+      type: "accepted",
+      status: "pending",
+      timestamp: Date.now(),
+    });
 
     // Execute the trade
     this.executeTrade(order, executionPrice, commission, slippage);
@@ -1054,6 +1106,17 @@ export class BacktestEngine extends BaseTradingMode {
       order,
       timestamp: Date.now(),
       ...result,
+    });
+    this.orderLifecycleStore.applyUpdate({
+      localId: orderId,
+      type: "filled",
+      status: "filled",
+      filledQuantity: order.quantity,
+      remainingQuantity: 0n,
+      averageFillPrice: executionPrice,
+      fees: commission,
+      slippage,
+      timestamp: Date.now(),
     });
     this.logTrade(order, result);
 
@@ -1209,12 +1272,29 @@ export class BacktestEngine extends BaseTradingMode {
     };
   }
 
-  async cancelOrder(orderId: string): Promise<void> {
-    // In backtest mode, orders are executed immediately
-    // This is a placeholder for more complex order management
-    logger.info(
-      `⚠️  Order cancellation not applicable in backtest mode: ${orderId}`,
-    );
+  async cancelOrder(orderId: string): Promise<CancellationResult> {
+    const orderData = this.orders.get(orderId);
+    if (!orderData) {
+      throw new Error("Order not found");
+    }
+
+    logger.info(`⚠️  Backtest order already terminal; cannot cancel ${orderId}`);
+
+    return {
+      orderId,
+      status: orderData.status,
+      filledQuantity: orderData.filledQuantity,
+      remainingQuantity: orderData.remainingQuantity,
+      cancellationApplied: false,
+      reason:
+        orderData.status === "filled"
+          ? "already_filled"
+          : `already_${orderData.status}`,
+    };
+  }
+
+  getOrderLifecycleStore(): OrderLifecycleStore {
+    return this.orderLifecycleStore;
   }
 
   async getOrderStatus(orderId: string): Promise<ExecutionOrderStatusResult> {

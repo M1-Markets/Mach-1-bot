@@ -30,6 +30,8 @@ export type SDKConfig = {
   network: "sei-testnet" | "sei-mainnet";
   seiRpcUrl: string;
   walletClient?: WalletClient;
+  apiUrl?: string;
+  wsUrl?: string;
 };
 
 type AuthState = Awaited<ReturnType<AuthAPIImpl["authenticate"]>>;
@@ -136,8 +138,8 @@ export class Mach1SDKImpl implements Mach1SDK {
       transport: http(config.seiRpcUrl),
     });
 
-    const apiUrl = resolveApiUrl(this.network);
-    const wsUrl = resolveWsUrl(this.network);
+    const apiUrl = config.apiUrl || resolveApiUrl(this.network);
+    const wsUrl = config.wsUrl || resolveWsUrl(this.network);
 
     this.applications = new ApplicationsAPIImpl(apiUrl);
     this.market = new MarketAPIImpl(apiUrl);

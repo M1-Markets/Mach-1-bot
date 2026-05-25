@@ -7,6 +7,7 @@
 
 import type { OrderResult } from "@/shared/types";
 import type { BotOrder } from "@/shared/types/bot";
+import type { OrderLifecycleRecord } from "@/shared/types";
 import {
   IStrategy,
   IStrategyFactory,
@@ -322,10 +323,18 @@ export class DCAStrategy implements IStrategy {
 
       // Estimate filled value based on order size and price
       const getOrderNumber = (
-        order: OrderResult | BotOrder | undefined,
+        order: OrderLifecycleRecord | OrderResult | BotOrder | undefined,
         key: "price" | "size",
       ): number => {
         if (!order || typeof order !== "object") return 0;
+        if ("averageFillPrice" in order && key === "price") {
+          return order.averageFillPrice
+            ? Number(order.averageFillPrice) / 100
+            : 0;
+        }
+        if ("filledQuantity" in order && key === "size") {
+          return Number(order.filledQuantity) / 100;
+        }
         const o = order as unknown as Record<string, unknown>;
         const v = o[key];
         if (typeof v === "number") return v;

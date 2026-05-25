@@ -1,5 +1,6 @@
 import {
   Address,
+  CancellationResult,
   ExecutionEngine,
   ExecutionOrderRecord,
   ExecutionOrderStatusResult,
@@ -14,7 +15,7 @@ export interface TradingMode extends ExecutionEngine {}
 
 export abstract class BaseTradingMode implements TradingMode {
   abstract placeOrder(order: OrderRequest): Promise<OrderResult>;
-  abstract cancelOrder(orderId: string): Promise<void>;
+  abstract cancelOrder(orderId: string): Promise<CancellationResult>;
   abstract getOrderStatus(orderId: string): Promise<ExecutionOrderStatusResult>;
   abstract getPosition(pair: TradingPair): Promise<Position>;
   abstract getBalance(token: Address): Promise<bigint>;

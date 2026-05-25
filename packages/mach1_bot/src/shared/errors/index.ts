@@ -130,6 +130,17 @@ export class MarketClosedError extends MachOneError {
   }
 }
 
+export class PriceUnavailableError extends MachOneError {
+  constructor(symbol: string, details?: unknown) {
+    super(
+      "PRICE_UNAVAILABLE",
+      "TRADING",
+      `Live price unavailable for ${symbol}`,
+      details,
+    );
+  }
+}
+
 // Network Errors
 export class NetworkError extends MachOneError {
   constructor(message: string, details?: unknown) {

@@ -85,11 +85,13 @@ describe("Mach1Bot", () => {
           tradingPairResolver: {
             normalizeSymbol: (symbol: string) => string;
             getAllSymbols: () => string[];
-            getPairBySymbol: (symbol: string) => {
-              symbol: string;
-              base_token_contract: Address;
-              quote_token_contract: Address;
-            } | undefined;
+            getPairBySymbol: (symbol: string) =>
+              | {
+                  symbol: string;
+                  base_token_contract: Address;
+                  quote_token_contract: Address;
+                }
+              | undefined;
           };
           parseSymbol: (symbol: string) => TradingPair;
         }
@@ -144,13 +146,12 @@ describe("Mach1Bot", () => {
         getPairBySymbol: () => undefined,
       };
 
-      expect(
-        () =>
-          (
-            liveBot as unknown as {
-              parseSymbol: (symbol: string) => TradingPair;
-            }
-          ).parseSymbol("DOGE/USDC"),
+      expect(() =>
+        (
+          liveBot as unknown as {
+            parseSymbol: (symbol: string) => TradingPair;
+          }
+        ).parseSymbol("DOGE/USDC"),
       ).toThrow(
         "Unsupported trading pair: DOGE/USDC. Available symbols include: ETH/USDC, BTC/USDC, SOL/USDC",
       );
@@ -563,7 +564,9 @@ describe("Mach1Bot", () => {
           "parseDuration",
         ).mockReturnValue(60_000);
         vi.spyOn(
-          testBot as unknown as { generateMockMarketData: () => Promise<unknown> },
+          testBot as unknown as {
+            generateMockMarketData: () => Promise<unknown>;
+          },
           "generateMockMarketData",
         ).mockResolvedValue({
           "ETH/USDC": {
@@ -617,8 +620,10 @@ describe("Mach1Bot", () => {
           bot as unknown as { getOrCreateLiveEngine: () => Promise<unknown> }
         ).getOrCreateLiveEngine;
         const getRealMarketData = vi
-          .spyOn(bot as unknown as { getRealMarketData: () => Promise<unknown> },
-            "getRealMarketData")
+          .spyOn(
+            bot as unknown as { getRealMarketData: () => Promise<unknown> },
+            "getRealMarketData",
+          )
           .mockResolvedValue({});
 
         (
@@ -631,8 +636,11 @@ describe("Mach1Bot", () => {
         await expect(bot.goLive()).resolves.toBeUndefined();
 
         expect(
-          (bot as unknown as { strategyExecutionCoordinator?: { getStats: () => unknown } })
-            .strategyExecutionCoordinator,
+          (
+            bot as unknown as {
+              strategyExecutionCoordinator?: { getStats: () => unknown };
+            }
+          ).strategyExecutionCoordinator,
         ).toBeDefined();
 
         getRealMarketData.mockRestore();

@@ -249,7 +249,9 @@ describe("CLI Bot Utilities", () => {
           enum: ["backtest", "simulation", "live"],
         }),
       );
-      expect(tomlConfigSchema.properties?.strategy?.properties?.risk_level).toEqual(
+      expect(
+        tomlConfigSchema.properties?.strategy?.properties?.risk_level,
+      ).toEqual(
         expect.objectContaining({
           enum: ["low", "medium", "high"],
         }),

@@ -133,221 +133,221 @@
 
 ## Phase 4: Real Market Data For Strategy Context
 
-- [ ] Create one `MarketDataService`.
-  - [ ] Place under `packages/mach1_bot/src/domains/trading/`.
-  - [ ] Build `MarketData` from live OHLCV snapshots when available.
-  - [ ] Build `MarketData` from live orderbook snapshots when available.
-  - [ ] Build `MarketData` from backtest historical candles/trades in backtest mode.
-  - [ ] Build deterministic simulated `MarketData` in paper/simulation mode.
-  - [ ] Calculate spread and order-book depth consistently.
-  - [ ] Return empty data when live data unavailable instead of fake prices.
-  - [ ] Test live OHLCV path.
-  - [ ] Test orderbook depth path.
-  - [ ] Test backtest data path.
-  - [ ] Test simulation deterministic path.
+- [x] Create one `MarketDataService`.
+  - [x] Place under `packages/mach1_bot/src/domains/trading/`.
+  - [x] Build `MarketData` from live OHLCV snapshots when available.
+  - [x] Build `MarketData` from live orderbook snapshots when available.
+  - [x] Build `MarketData` from backtest historical candles/trades in backtest mode.
+  - [x] Build deterministic simulated `MarketData` in paper/simulation mode.
+  - [x] Calculate spread and order-book depth consistently.
+  - [x] Return empty data when live data unavailable instead of fake prices.
+  - [x] Test live OHLCV path.
+  - [x] Test orderbook depth path.
+  - [x] Test backtest data path.
+  - [x] Test simulation deterministic path.
 
-- [ ] Replace `StrategyManager.createStrategyContext()` fake OHLCV data.
-  - [ ] Remove zero `open`, `high`, `low`, `close`, and `volume` placeholders.
-  - [ ] Use `MarketDataService` for each subscribed pair.
-  - [ ] Skip strategy execution when required subscribed pair data missing.
-  - [ ] Add warning to strategy errors when market data missing.
-  - [ ] Test managed strategy receives non-placeholder data.
-  - [ ] Test managed strategy skips tick when live data unavailable.
+- [x] Replace `StrategyManager.createStrategyContext()` fake OHLCV data.
+  - [x] Remove zero `open`, `high`, `low`, `close`, and `volume` placeholders.
+  - [x] Use `MarketDataService` for each subscribed pair.
+  - [x] Skip strategy execution when required subscribed pair data missing.
+  - [x] Add warning to strategy errors when market data missing.
+  - [x] Test managed strategy receives non-placeholder data.
+  - [x] Test managed strategy skips tick when live data unavailable.
 
-- [ ] Replace `Mach1Bot.generateMockMarketData()` direct `Math.random()` usage.
-  - [ ] Move simulation generation into `MarketDataService`.
-  - [ ] Inject deterministic RNG.
-  - [ ] Preserve ETH/USDC and BTC/USDC default output.
-  - [ ] Test same seed returns same market data.
+- [x] Replace `Mach1Bot.generateMockMarketData()` direct `Math.random()` usage.
+  - [x] Move simulation generation into `MarketDataService`.
+  - [x] Inject deterministic RNG.
+  - [x] Preserve ETH/USDC and BTC/USDC default output.
+  - [x] Test same seed returns same market data.
 
-- [ ] Replace `LiveTradingEngine.constructLiveMarketData()` placeholder indicators.
-  - [ ] Use shared indicator helpers.
-  - [ ] Use real candle history when available.
-  - [ ] Keep neutral indicator only when insufficient candle history exists.
-  - [ ] Mark insufficient-history condition in metadata or warning.
-  - [ ] Test RSI/MACD generated from candles.
+- [x] Replace `LiveTradingEngine.constructLiveMarketData()` placeholder indicators.
+  - [x] Use shared indicator helpers.
+  - [x] Use real candle history when available.
+  - [x] Keep neutral indicator only when insufficient candle history exists.
+  - [x] Mark insufficient-history condition in metadata or warning.
+  - [x] Test RSI/MACD generated from candles.
 
-- [ ] Replace `BacktestEngine` neutral RSI/MACD placeholders.
-  - [ ] Compute indicators from historical candle window.
-  - [ ] Keep neutral only when insufficient historical window exists.
-  - [ ] Test indicator output changes with historical data.
+- [x] Replace `BacktestEngine` neutral RSI/MACD placeholders.
+  - [x] Compute indicators from historical candle window.
+  - [x] Keep neutral only when insufficient historical window exists.
+  - [x] Test indicator output changes with historical data.
 
 ## Phase 5: Order Lifecycle And Fill-Based Accounting
 
-- [ ] Add order lifecycle store.
-  - [ ] Define order record with local id, engine id, exchange id, strategy id, pair, side, type, requested quantity, filled quantity, remaining quantity, average fill price, fees, slippage, timestamps, and status.
-  - [ ] Store every order submission.
-  - [ ] Update records only from engine result or fill event.
-  - [ ] Keep rejected order reason.
-  - [ ] Keep cancelled order reason.
-  - [ ] Test submitted-to-filled transition.
-  - [ ] Test submitted-to-rejected transition.
-  - [ ] Test partial fill transition.
-  - [ ] Test cancel transition.
+- [x] Add order lifecycle store.
+  - [x] Define order record with local id, engine id, exchange id, strategy id, pair, side, type, requested quantity, filled quantity, remaining quantity, average fill price, fees, slippage, timestamps, and status.
+  - [x] Store every order submission.
+  - [x] Update records only from engine result or fill event.
+  - [x] Keep rejected order reason.
+  - [x] Keep cancelled order reason.
+  - [x] Test submitted-to-filled transition.
+  - [x] Test submitted-to-rejected transition.
+  - [x] Test partial fill transition.
+  - [x] Test cancel transition.
 
-- [ ] Emit order events from execution engines.
-  - [ ] Add typed `OrderEventEmitter` or use existing EventEmitter pattern.
-  - [ ] Emit `submitted`, `accepted`, `partially_filled`, `filled`, `cancelled`, and `rejected`.
-  - [ ] Include normalized order record in event payload.
-  - [ ] Test live engine emits rejected event on pre-trade failure.
-  - [ ] Test paper engine emits fill event after scheduled fill.
-  - [ ] Test backtest engine emits filled event on immediate fill.
+- [x] Emit order events from execution engines.
+  - [x] Add typed `OrderEventEmitter` or use existing EventEmitter pattern.
+  - [x] Emit `submitted`, `accepted`, `partially_filled`, `filled`, `cancelled`, and `rejected`.
+  - [x] Include normalized order record in event payload.
+  - [x] Test live engine emits rejected event on pre-trade failure.
+  - [x] Test paper engine emits fill event after scheduled fill.
+  - [x] Test backtest engine emits filled event on immediate fill.
 
-- [ ] Wire `StrategyManager.onOrderEvent`.
-  - [ ] Subscribe strategy instances to order events.
-  - [ ] Call strategy `onOrderEvent` only for orders belonging to that strategy or subscribed pair.
-  - [ ] Preserve warning capture on handler failures.
-  - [ ] Test strategy receives fill event.
-  - [ ] Test unrelated strategy does not receive event.
+- [x] Wire `StrategyManager.onOrderEvent`.
+  - [x] Subscribe strategy instances to order events.
+  - [x] Call strategy `onOrderEvent` only for orders belonging to that strategy or subscribed pair.
+  - [x] Preserve warning capture on handler failures.
+  - [x] Test strategy receives fill event.
+  - [x] Test unrelated strategy does not receive event.
 
-- [ ] Record strategy performance from fills only.
-  - [ ] Remove trade recording immediately after order submission.
-  - [ ] Record quantity, fill price, fee, slippage, and realized PnL from order lifecycle data.
-  - [ ] Update `totalTrades`, `winRate`, `profitFactor`, and drawdown only from closed/realized trades.
-  - [ ] Test rejected order does not count as trade.
-  - [ ] Test pending order does not count as trade.
-  - [ ] Test fill updates performance metrics.
+- [x] Record strategy performance from fills only.
+  - [x] Remove trade recording immediately after order submission.
+  - [x] Record quantity, fill price, fee, slippage, and realized PnL from order lifecycle data.
+  - [x] Update `totalTrades`, `winRate`, `profitFactor`, and drawdown only from closed/realized trades.
+  - [x] Test rejected order does not count as trade.
+  - [x] Test pending order does not count as trade.
+  - [x] Test fill updates performance metrics.
 
-- [ ] Update live position/PnL accounting.
-  - [ ] Track average entry price from fills.
-  - [ ] Compute unrealized PnL from current market price and average entry.
-  - [ ] Remove live hardcoded `0n` unrealized PnL.
-  - [ ] Test buy fill creates entry price.
-  - [ ] Test current price above entry yields positive unrealized PnL.
+- [x] Update live position/PnL accounting.
+  - [x] Track average entry price from fills.
+  - [x] Compute unrealized PnL from current market price and average entry.
+  - [x] Remove live hardcoded `0n` unrealized PnL.
+  - [x] Test buy fill creates entry price.
+  - [x] Test current price above entry yields positive unrealized PnL.
 
 ## Phase 6: Live Safety Fixes
 
-- [ ] Remove live fake price fallback.
-  - [ ] Delete `$100` fallback from `LiveTradingEngine.getCurrentPrice()`.
-  - [ ] Throw typed price-unavailable error when live price cannot be derived.
-  - [ ] Ensure live order placement fails closed on missing orderbook/OHLCV/ticker data.
-  - [ ] Test live price failure rejects order before Monaco call.
+- [x] Remove live fake price fallback.
+  - [x] Delete `$100` fallback from `LiveTradingEngine.getCurrentPrice()`.
+  - [x] Throw typed price-unavailable error when live price cannot be derived.
+  - [x] Ensure live order placement fails closed on missing orderbook/OHLCV/ticker data.
+  - [x] Test live price failure rejects order before Monaco call.
 
-- [ ] Fix live order id mapping.
-  - [ ] Store local order id and SDK/exchange order id separately.
-  - [ ] Use SDK/exchange order id for Monaco `cancelOrder()`.
-  - [ ] Return public order id consistently.
-  - [ ] Test cancellation calls Monaco with SDK returned id.
+- [x] Fix live order id mapping.
+  - [x] Store local order id and SDK/exchange order id separately.
+  - [x] Use SDK/exchange order id for Monaco `cancelOrder()`.
+  - [x] Return public order id consistently.
+  - [x] Test cancellation calls Monaco with SDK returned id.
 
-- [ ] Normalize live orderbook units.
-  - [ ] Parse orderbook price and quantity using resolver token decimals.
-  - [ ] Avoid direct `BigInt(bestAsk.price)` on decimal strings.
-  - [ ] Keep all internal order price/quantity units explicit.
-  - [ ] Test decimal orderbook price parsing.
-  - [ ] Test integer orderbook price parsing.
+- [x] Normalize live orderbook units.
+  - [x] Parse orderbook price and quantity using resolver token decimals.
+  - [x] Avoid direct `BigInt(bestAsk.price)` on decimal strings.
+  - [x] Keep all internal order price/quantity units explicit.
+  - [x] Test decimal orderbook price parsing.
+  - [x] Test integer orderbook price parsing.
 
-- [ ] Add live tick fail-closed behavior.
-  - [ ] Skip strategy tick when any required live symbol lacks valid market data.
-  - [ ] Log one warning per skipped tick with missing symbols.
-  - [ ] Do not call strategy callback with partial data unless strategy explicitly subscribes to subset.
-  - [ ] Test missing live data prevents strategy callback.
+- [x] Add live tick fail-closed behavior.
+  - [x] Skip strategy tick when any required live symbol lacks valid market data.
+  - [x] Log one warning per skipped tick with missing symbols.
+  - [x] Do not call strategy callback with partial data unless strategy explicitly subscribes to subset.
+  - [x] Test missing live data prevents strategy callback.
 
 ## Phase 7: Risk Manager Corrections
 
-- [ ] Fix max-loss zero-balance division.
-  - [ ] If sell order position balance is `0n`, reject sell for insufficient position before dividing.
-  - [ ] Keep fail-open option only for tracking errors, not zero-balance state.
-  - [ ] Test zero-balance sell does not throw divide-by-zero.
-  - [ ] Test zero-balance sell rejects.
+- [x] Fix max-loss zero-balance division.
+  - [x] If sell order position balance is `0n`, reject sell for insufficient position before dividing.
+  - [x] Keep fail-open option only for tracking errors, not zero-balance state.
+  - [x] Test zero-balance sell does not throw divide-by-zero.
+  - [x] Test zero-balance sell rejects.
 
-- [ ] Replace random correlation check.
-  - [ ] Remove RNG-based correlation pass/fail.
-  - [ ] Use historical returns from market data service when enough data exists.
-  - [ ] Return warning-only unavailable result when not enough data exists.
-  - [ ] Test deterministic correlation result.
-  - [ ] Test insufficient data creates warning and does not randomize approval.
+- [x] Replace random correlation check.
+  - [x] Remove RNG-based correlation pass/fail.
+  - [x] Use historical returns from market data service when enough data exists.
+  - [x] Return warning-only unavailable result when not enough data exists.
+  - [x] Test deterministic correlation result.
+  - [x] Test insufficient data creates warning and does not randomize approval.
 
-- [ ] Emit risk events.
-  - [ ] Emit event on risk rejection.
-  - [ ] Emit event on risk warning above threshold.
-  - [ ] Include order id, pair, current value, limit value, and reason.
-  - [ ] Wire events to `StrategyManager.onRiskEvent`.
-  - [ ] Test strategy receives risk event.
+- [x] Emit risk events.
+  - [x] Emit event on risk rejection.
+  - [x] Emit event on risk warning above threshold.
+  - [x] Include order id, pair, current value, limit value, and reason.
+  - [x] Wire events to `StrategyManager.onRiskEvent`.
+  - [x] Test strategy receives risk event.
 
-- [ ] Make risk units explicit.
-  - [ ] Document expected price and quantity scaling in type comments.
-  - [ ] Add helpers for notional value calculation.
-  - [ ] Replace repeated `(price * quantity) / 100n` with helper.
-  - [ ] Test helper with cents-style price and strategy quantity scale.
+- [x] Make risk units explicit.
+  - [x] Document expected price and quantity scaling in type comments.
+  - [x] Add helpers for notional value calculation.
+  - [x] Replace repeated `(price * quantity) / 100n` with helper.
+  - [x] Test helper with cents-style price and strategy quantity scale.
 
 ## Phase 8: Strategy Signal Validation
 
-- [ ] Add strategy signal validator.
-  - [ ] Validate action is supported.
-  - [ ] Validate pair exists in `TradingPairService`.
-  - [ ] Validate confidence is between `0` and `1`.
-  - [ ] Validate quantity is positive when action is `buy` or `sell`.
-  - [ ] Validate price is positive when order type requires price.
-  - [ ] Reject unsupported `stop`, `stop_limit`, `close_position`, and `reduce_position` until implemented.
-  - [ ] Return structured validation errors.
-  - [ ] Test invalid confidence.
-  - [ ] Test missing quantity.
-  - [ ] Test unsupported action.
-  - [ ] Test unknown pair.
+- [x] Add strategy signal validator.
+  - [x] Validate action is supported.
+  - [x] Validate pair exists in `TradingPairService`.
+  - [x] Validate confidence is between `0` and `1`.
+  - [x] Validate quantity is positive when action is `buy` or `sell`.
+  - [x] Validate price is positive when order type requires price.
+  - [x] Reject unsupported `stop`, `stop_limit`, `close_position`, and `reduce_position` until implemented.
+  - [x] Return structured validation errors.
+  - [x] Test invalid confidence.
+  - [x] Test missing quantity.
+  - [x] Test unsupported action.
+  - [x] Test unknown pair.
 
-- [ ] Remove default strategy order quantity.
-  - [ ] Delete `BigInt(100000)` default quantity.
-  - [ ] Require explicit quantity or explicit sizing rule.
-  - [ ] For missing quantity, record strategy warning and skip signal.
-  - [ ] Test missing quantity does not place order.
+- [x] Remove default strategy order quantity.
+  - [x] Delete `BigInt(100000)` default quantity.
+  - [x] Require explicit quantity or explicit sizing rule.
+  - [x] For missing quantity, record strategy warning and skip signal.
+  - [x] Test missing quantity does not place order.
 
-- [ ] Add explicit order type mapping.
-  - [ ] Map `market` to market execution.
-  - [ ] Map `limit` to limit execution.
-  - [ ] Reject `stop` and `stop_limit` until stop-order engine exists.
-  - [ ] Test each supported mapping.
-  - [ ] Test unsupported order type skips signal.
+- [x] Add explicit order type mapping.
+  - [x] Map `market` to market execution.
+  - [x] Map `limit` to limit execution.
+  - [x] Reject `stop` and `stop_limit` until stop-order engine exists.
+  - [x] Test each supported mapping.
+  - [x] Test unsupported order type skips signal.
 
 ## Phase 9: Determinism And IDs
 
-- [ ] Replace `Math.random()` in order ids.
-  - [ ] Use injected RNG or UUID helper already available in repo.
-  - [ ] Apply to live, paper, and backtest engines.
-  - [ ] Preserve uniqueness.
-  - [ ] Test deterministic ids when seeded RNG supplied.
+- [x] Replace `Math.random()` in order ids.
+  - [x] Use injected RNG or UUID helper already available in repo.
+  - [x] Apply to live, paper, and backtest engines.
+  - [x] Preserve uniqueness.
+  - [x] Test deterministic ids when seeded RNG supplied.
 
-- [ ] Replace `Math.random()` in simulation market data.
-  - [ ] Use injected RNG from deterministic utilities.
-  - [ ] Preserve existing realistic ranges.
-  - [ ] Test repeatability.
+- [x] Replace `Math.random()` in simulation market data.
+  - [x] Use injected RNG from deterministic utilities.
+  - [x] Preserve existing realistic ranges.
+  - [x] Test repeatability.
 
-- [ ] Replace random strategy optimizer metrics.
-  - [ ] Use backtest engine evaluation for parameter scoring.
-  - [ ] Remove mock metric return path.
-  - [ ] Keep random search candidate generation seeded.
-  - [ ] Test same seed returns same best parameters.
+- [x] Replace random strategy optimizer metrics.
+  - [x] Use backtest engine evaluation for parameter scoring.
+  - [x] Remove mock metric return path.
+  - [x] Keep random search candidate generation seeded.
+  - [x] Test same seed returns same best parameters.
 
-- [ ] Replace random stress-test strategy generation or seed it.
-  - [ ] Inject RNG through strategy parameters or context.
-  - [ ] Preserve random stress behavior when no seed supplied.
-  - [ ] Test seeded stress strategy emits repeatable signals.
+- [x] Replace random stress-test strategy generation or seed it.
+  - [x] Inject RNG through strategy parameters or context.
+  - [x] Preserve random stress behavior when no seed supplied.
+  - [x] Test seeded stress strategy emits repeatable signals.
 
 ## Phase 10: Paper And Backtest Accuracy
 
-- [ ] Fix paper slippage threshold order.
-  - [ ] Check `$100,000` threshold before `$10,000`.
-  - [ ] Add test for `$150,000` order using `2.0x` multiplier.
-  - [ ] Add test for `$50,000` order using `1.5x` multiplier.
+- [x] Fix paper slippage threshold order.
+  - [x] Check `$100,000` threshold before `$10,000`.
+  - [x] Add test for `$150,000` order using `2.0x` multiplier.
+  - [x] Add test for `$50,000` order using `1.5x` multiplier.
 
-- [ ] Remove paper fake price fallback.
-  - [ ] Reject paper order when market manager has no price.
-  - [ ] Mark order rejected with reason `price_unavailable`.
-  - [ ] Test unavailable price rejects order.
+- [x] Remove paper fake price fallback.
+  - [x] Reject paper order when market manager has no price.
+  - [x] Mark order rejected with reason `price_unavailable`.
+  - [x] Test unavailable price rejects order.
 
-- [ ] Replace paper hardcoded available pairs.
-  - [ ] Fetch available pairs from `TradingPairService` or `MarketManager`.
-  - [ ] Keep ETH/USDC, BTC/USDC, and SOL/USDC defaults only in one canonical table.
-  - [ ] Test configured pair list changes generated market data.
+- [x] Replace paper hardcoded available pairs.
+  - [x] Fetch available pairs from `TradingPairService` or `MarketManager`.
+  - [x] Keep ETH/USDC, BTC/USDC, and SOL/USDC defaults only in one canonical table.
+  - [x] Test configured pair list changes generated market data.
 
-- [ ] Improve backtest order cancellation behavior.
-  - [ ] Keep immediate-fill orders uncancellable.
-  - [ ] Return explicit status/reason for cancellation request.
-  - [ ] Test cancelling filled backtest order returns no-op/filled state.
+- [x] Improve backtest order cancellation behavior.
+  - [x] Keep immediate-fill orders uncancellable.
+  - [x] Return explicit status/reason for cancellation request.
+  - [x] Test cancelling filled backtest order returns no-op/filled state.
 
-- [ ] Replace backtest neutral indicators.
-  - [ ] Use shared indicator helpers with historical windows.
-  - [ ] Keep neutral only before enough candle history exists.
-  - [ ] Test RSI changes after enough data.
+- [x] Replace backtest neutral indicators.
+  - [x] Use shared indicator helpers with historical windows.
+  - [x] Keep neutral only before enough candle history exists.
+  - [x] Test RSI changes after enough data.
 
 ## Phase 11: Public API Stubs And Analytics
 

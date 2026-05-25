@@ -1,7 +1,10 @@
+import { EventEmitter } from "events";
 import { MarketManager } from "@/domains/trading/market-manager";
 import { OrderManager } from "@/domains/trading/order-manager";
 import { PositionTracker } from "@/domains/trading/position-tracker";
+import type { RiskEvent as StrategyRiskEvent } from "@/domains/strategies/core/i-strategy";
 import { Address, OrderRequest, Portfolio, TradingPair } from "@/shared/types";
+import { calculateScaledNotionalValue } from "@/shared/utils";
 import { Rng, realRng } from "@/shared/utils/determinism";
 import { createLogger } from "@/shared/utils/logger";
 
@@ -39,7 +42,25 @@ export interface RiskBreach {
   timestamp: number;
 }
 
-export class RiskManager {
+type CorrelationCheckResult =
+  | { status: "within_limit"; correlation: number | null }
+  | { status: "above_limit"; correlation: number }
+  | { status: "unavailable"; reason: string };
+
+export interface EmittedRiskEventDetails {
+  orderId: string;
+  strategyId?: string;
+  pair: string;
+  currentValue: number;
+  limitValue: number;
+  reason: string;
+}
+
+const DEFAULT_WARNING_RISK_SCORE_THRESHOLD = 15;
+const CORRELATION_LOOKBACK_DAYS = 30;
+const MIN_CORRELATION_RETURNS = 20;
+
+export class RiskManager extends EventEmitter {
   private riskLimits: RiskLimits = {
     maxPositionSize: BigInt(1000000000), // 10,000 USDC
     maxDailyLoss: BigInt(500000000), // 5,000 USDC
@@ -66,6 +87,7 @@ export class RiskManager {
     orderManager: OrderManager,
     options?: { failOpen?: boolean; rng?: Rng },
   ) {
+    super();
     this.positionTracker = positionTracker;
     this.marketManager = marketManager;
     this.orderManager = orderManager;
@@ -94,7 +116,10 @@ export class RiskManager {
     const rejectionReasons: string[] = [];
     let riskScore = 0;
 
-    const orderValue = (order.price * order.quantity) / BigInt(100);
+    const orderValue = calculateScaledNotionalValue(
+      order.price,
+      order.quantity,
+    );
 
     const positionLimitCheck = await this.checkPositionLimit(order);
     if (!positionLimitCheck) {
@@ -118,10 +143,14 @@ export class RiskManager {
       riskScore += 25;
     }
 
-    const correlationCheck = await this.checkCorrelation(order);
-    if (!correlationCheck) {
-      warnings.push(`High correlation risk detected for this position`);
+    const correlationCheck = await this.evaluateCorrelation(order);
+    if (correlationCheck.status === "above_limit") {
+      warnings.push(
+        `High correlation risk detected for this position (${correlationCheck.correlation.toFixed(2)} > ${this.riskLimits.maxCorrelation.toFixed(2)})`,
+      );
       riskScore += 15;
+    } else if (correlationCheck.status === "unavailable") {
+      warnings.push(correlationCheck.reason);
     }
 
     if (orderValue > this.riskLimits.maxOrderValue) {
@@ -144,12 +173,15 @@ export class RiskManager {
       }
     }
 
-    return {
+    const result = {
       approved: rejectionReasons.length === 0,
       warnings,
       rejectionReasons,
       riskScore: Math.min(riskScore, 100),
     };
+
+    this.emitValidationEvents(order, result);
+    return result;
   }
 
   async checkPositionLimit(order: OrderRequest): Promise<boolean> {
@@ -164,7 +196,10 @@ export class RiskManager {
       };
 
       const currentPosition = await this.positionTracker.getPosition(pair);
-      const orderValue = (order.price * order.quantity) / BigInt(100);
+      const orderValue = calculateScaledNotionalValue(
+        order.price,
+        order.quantity,
+      );
       const newPositionValue =
         currentPosition.value + (order.isBuy ? orderValue : -orderValue);
 
@@ -193,6 +228,10 @@ export class RiskManager {
           };
 
           const position = await this.positionTracker.getPosition(pair);
+          if (position.balance === 0n) {
+            logger.warn("checkMaxLoss: zero-balance sell rejected");
+            return false;
+          }
           if (order.price < position.value / position.balance) {
             const potentialLoss =
               ((position.value / position.balance - order.price) *
@@ -222,7 +261,10 @@ export class RiskManager {
 
   async checkExposure(order: OrderRequest): Promise<boolean> {
     try {
-      const orderValue = (order.price * order.quantity) / BigInt(100);
+      const orderValue = calculateScaledNotionalValue(
+        order.price,
+        order.quantity,
+      );
       return orderValue <= this.riskLimits.maxPositionSize;
     } catch (_error) {
       return false;
@@ -231,19 +273,221 @@ export class RiskManager {
 
   async checkCorrelation(order: OrderRequest): Promise<boolean> {
     try {
-      const portfolio = await this.positionTracker.getPortfolio();
-      const positions = Array.from(portfolio.positions.values());
-
-      if (positions.length < 2) return true;
-
-      const correlationScore = this.rng.next();
-      return correlationScore <= this.riskLimits.maxCorrelation;
+      const result = await this.evaluateCorrelation(order);
+      return result.status !== "above_limit";
     } catch (_error) {
       logger.warn("checkCorrelation: error, applying failOpen policy", {
         failOpen: this.failOpen,
       });
       return this.failOpen;
     }
+  }
+
+  private async evaluateCorrelation(
+    order: OrderRequest,
+  ): Promise<CorrelationCheckResult> {
+    try {
+      const portfolio = await this.positionTracker.getPortfolio();
+      const positions = Array.from(portfolio.positions.values()).filter(
+        (position) =>
+          position.balance > 0n && position.token !== order.baseToken,
+      );
+
+      if (positions.length === 0) {
+        return { status: "within_limit", correlation: null };
+      }
+
+      const orderPair = this.toPair(order.baseToken, order.quoteToken);
+      const orderReturns = await this.getHistoricalReturns(orderPair);
+      if (orderReturns.length < MIN_CORRELATION_RETURNS) {
+        return {
+          status: "unavailable",
+          reason:
+            "Correlation history unavailable; skipping correlation rejection.",
+        };
+      }
+
+      let maxObservedCorrelation = -1;
+      let comparedPositions = 0;
+
+      for (const position of positions) {
+        const comparisonPair = this.toPair(position.token, order.quoteToken);
+        const comparisonReturns =
+          await this.getHistoricalReturns(comparisonPair);
+        const correlation = this.calculateCorrelation(
+          orderReturns,
+          comparisonReturns,
+        );
+        if (correlation === null) {
+          continue;
+        }
+
+        comparedPositions += 1;
+        maxObservedCorrelation = Math.max(
+          maxObservedCorrelation,
+          Math.abs(correlation),
+        );
+      }
+
+      if (comparedPositions === 0) {
+        return {
+          status: "unavailable",
+          reason:
+            "Correlation history unavailable; skipping correlation rejection.",
+        };
+      }
+
+      if (maxObservedCorrelation > this.riskLimits.maxCorrelation) {
+        return {
+          status: "above_limit",
+          correlation: maxObservedCorrelation,
+        };
+      }
+
+      return {
+        status: "within_limit",
+        correlation: maxObservedCorrelation,
+      };
+    } catch (_error) {
+      logger.warn("checkCorrelation: error, applying failOpen policy", {
+        failOpen: this.failOpen,
+      });
+      return this.failOpen
+        ? { status: "within_limit", correlation: null }
+        : {
+            status: "unavailable",
+            reason: "Correlation check unavailable.",
+          };
+    }
+  }
+
+  private async getHistoricalReturns(pair: TradingPair): Promise<number[]> {
+    const end = new Date();
+    const start = new Date(
+      end.getTime() - CORRELATION_LOOKBACK_DAYS * 86400000,
+    );
+    const candles = await this.marketManager.getCandles(pair, "1h", start, end);
+    if (candles.length < MIN_CORRELATION_RETURNS + 1) {
+      return [];
+    }
+
+    const returns: number[] = [];
+    for (let index = 1; index < candles.length; index += 1) {
+      const previousClose = candles[index - 1]?.close;
+      const currentClose = candles[index]?.close;
+      if (
+        previousClose === undefined ||
+        currentClose === undefined ||
+        previousClose === 0
+      ) {
+        continue;
+      }
+      returns.push((currentClose - previousClose) / previousClose);
+    }
+
+    return returns;
+  }
+
+  private calculateCorrelation(left: number[], right: number[]): number | null {
+    const sampleLength = Math.min(left.length, right.length);
+    if (sampleLength < MIN_CORRELATION_RETURNS) {
+      return null;
+    }
+
+    const x = left.slice(-sampleLength);
+    const y = right.slice(-sampleLength);
+    const meanX = x.reduce((sum, value) => sum + value, 0) / sampleLength;
+    const meanY = y.reduce((sum, value) => sum + value, 0) / sampleLength;
+
+    let numerator = 0;
+    let sumSquaresX = 0;
+    let sumSquaresY = 0;
+
+    for (let index = 0; index < sampleLength; index += 1) {
+      const deltaX = x[index] - meanX;
+      const deltaY = y[index] - meanY;
+      numerator += deltaX * deltaY;
+      sumSquaresX += deltaX * deltaX;
+      sumSquaresY += deltaY * deltaY;
+    }
+
+    if (sumSquaresX === 0 || sumSquaresY === 0) {
+      return null;
+    }
+
+    return numerator / Math.sqrt(sumSquaresX * sumSquaresY);
+  }
+
+  private emitValidationEvents(
+    order: OrderRequest,
+    result: RiskCheckResult,
+  ): void {
+    const orderValue =
+      Number(calculateScaledNotionalValue(order.price, order.quantity)) / 100;
+    const limitValue = Number(this.riskLimits.maxOrderValue) / 100;
+
+    if (!result.approved) {
+      this.emitRiskEvent({
+        type: "exposure_limit",
+        severity: "critical",
+        message: result.rejectionReasons.join(", "),
+        data: this.buildRiskEventDetails(
+          order,
+          orderValue,
+          limitValue,
+          result.rejectionReasons.join(", "),
+        ),
+        timestamp: Date.now(),
+      });
+      return;
+    }
+
+    if (
+      result.warnings.length > 0 &&
+      result.riskScore >= DEFAULT_WARNING_RISK_SCORE_THRESHOLD
+    ) {
+      this.emitRiskEvent({
+        type: "exposure_limit",
+        severity: "warning",
+        message: result.warnings.join(", "),
+        data: this.buildRiskEventDetails(
+          order,
+          orderValue,
+          limitValue,
+          result.warnings.join(", "),
+        ),
+        timestamp: Date.now(),
+      });
+    }
+  }
+
+  private emitRiskEvent(event: StrategyRiskEvent): void {
+    this.emit("riskEvent", event);
+  }
+
+  private buildRiskEventDetails(
+    order: OrderRequest,
+    currentValue: number,
+    limitValue: number,
+    reason: string,
+  ): EmittedRiskEventDetails {
+    return {
+      orderId:
+        order.orderId ?? `risk-${order.strategyId ?? "unknown"}-${Date.now()}`,
+      strategyId: order.strategyId,
+      pair: `${order.baseToken}/${order.quoteToken}`,
+      currentValue,
+      limitValue,
+      reason,
+    };
+  }
+
+  private toPair(base: Address, quote: Address): TradingPair {
+    return {
+      base,
+      quote,
+      symbol: `${base}/${quote}`,
+    };
   }
 
   async setRiskLimits(limits: Partial<RiskLimits>): Promise<void> {

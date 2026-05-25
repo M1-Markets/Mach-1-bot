@@ -1,7 +1,11 @@
 import { MarketManager } from "@/domains/trading/market-manager";
 import { OrderManager } from "@/domains/trading/order-manager";
 import { PositionTracker } from "@/domains/trading/position-tracker";
-import { RiskLimits, RiskManager } from "@/domains/trading/risk-manager";
+import {
+  type EmittedRiskEventDetails,
+  RiskLimits,
+  RiskManager,
+} from "@/domains/trading/risk-manager";
 import { Address, OrderRequest, Portfolio, Position } from "@/shared/types";
 
 describe("RiskManager", () => {
@@ -19,7 +23,9 @@ describe("RiskManager", () => {
       getOpenOrders: vi.fn(),
     } as unknown as PositionTracker;
 
-    mockMarketManager = {} as unknown as MarketManager;
+    mockMarketManager = {
+      getCandles: vi.fn().mockResolvedValue([]),
+    } as unknown as MarketManager;
 
     mockOrderManager = {
       cancelAllOrders: vi.fn(),
@@ -133,6 +139,199 @@ describe("RiskManager", () => {
       expect(result).toBeDefined();
       expect(result.approved).toBe(false);
       expect(result.rejectionReasons.length).toBeGreaterThan(0);
+    });
+
+    it("rejects zero-balance sell without divide-by-zero", async () => {
+      vi.mocked(mockPositionTracker.getPosition).mockResolvedValue({
+        token: "0x1234567890123456789012345678901234567890" as Address,
+        balance: 0n,
+        value: 0n,
+        unrealizedPnL: 0n,
+      });
+
+      const order: OrderRequest = {
+        baseToken: "0x1234567890123456789012345678901234567890" as Address,
+        quoteToken: "0x0987654321098765432109876543210987654321" as Address,
+        isBuy: false,
+        price: 300000n,
+        quantity: 10000n,
+      };
+
+      await expect(riskManager.checkMaxLoss(order)).resolves.toBe(false);
+
+      const result = await riskManager.validateOrder(order);
+      expect(result.approved).toBe(false);
+      expect(result.rejectionReasons).toContain(
+        "Order would exceed daily loss limit of 5000000 USDC",
+      );
+    });
+
+    it("uses deterministic historical correlation result", async () => {
+      const candles = Array.from({ length: 24 }, (_, index) => ({
+        timestamp: 1_700_000_000_000 + index * 3_600_000,
+        open: 100 + index,
+        high: 101 + index,
+        low: 99 + index,
+        close: 100 + index * 2,
+        volume: 1000,
+      }));
+
+      vi.mocked(mockPositionTracker.getPortfolio).mockResolvedValue({
+        positions: new Map([
+          [
+            "0x9999999999999999999999999999999999999999" as Address,
+            {
+              token: "0x9999999999999999999999999999999999999999" as Address,
+              balance: 100n,
+              value: 500000n,
+              unrealizedPnL: 0n,
+            },
+          ],
+        ]),
+        totalValue: 100000000n,
+        unrealizedPnL: 0n,
+      });
+      vi.mocked(mockPositionTracker.getPosition).mockResolvedValue({
+        token: "0x1234567890123456789012345678901234567890" as Address,
+        balance: 0n,
+        value: 0n,
+        unrealizedPnL: 0n,
+      });
+      vi.mocked(mockMarketManager.getCandles).mockImplementation(async () => [
+        ...candles,
+      ]);
+      await riskManager.setRiskLimits({ maxCorrelation: 0.5 });
+
+      const result = await riskManager.validateOrder({
+        baseToken: "0x1234567890123456789012345678901234567890" as Address,
+        quoteToken: "0x0987654321098765432109876543210987654321" as Address,
+        isBuy: true,
+        price: 10000n,
+        quantity: 100n,
+      });
+
+      expect(result.warnings[0]).toContain("High correlation risk detected");
+    });
+
+    it("warns when correlation history unavailable without random rejection", async () => {
+      vi.mocked(mockPositionTracker.getPortfolio).mockResolvedValue({
+        positions: new Map([
+          [
+            "0x9999999999999999999999999999999999999999" as Address,
+            {
+              token: "0x9999999999999999999999999999999999999999" as Address,
+              balance: 100n,
+              value: 500000n,
+              unrealizedPnL: 0n,
+            },
+          ],
+        ]),
+        totalValue: 100000000n,
+        unrealizedPnL: 0n,
+      });
+      vi.mocked(mockPositionTracker.getPosition).mockResolvedValue({
+        token: "0x1234567890123456789012345678901234567890" as Address,
+        balance: 0n,
+        value: 0n,
+        unrealizedPnL: 0n,
+      });
+      vi.mocked(mockMarketManager.getCandles).mockResolvedValue(
+        Array.from({ length: 5 }, (_, index) => ({
+          timestamp: 1_700_000_000_000 + index * 3_600_000,
+          open: 100,
+          high: 101,
+          low: 99,
+          close: 100 + index,
+          volume: 1000,
+        })),
+      );
+
+      const result = await riskManager.validateOrder({
+        baseToken: "0x1234567890123456789012345678901234567890" as Address,
+        quoteToken: "0x0987654321098765432109876543210987654321" as Address,
+        isBuy: true,
+        price: 10000n,
+        quantity: 100n,
+      });
+
+      expect(result.approved).toBe(true);
+      expect(result.warnings).toContain(
+        "Correlation history unavailable; skipping correlation rejection.",
+      );
+    });
+
+    it("emits risk events for warning and rejection cases", async () => {
+      const received: EmittedRiskEventDetails[] = [];
+      riskManager.on("riskEvent", (event) => {
+        received.push(event.data as EmittedRiskEventDetails);
+      });
+
+      const candles = Array.from({ length: 24 }, (_, index) => ({
+        timestamp: 1_700_000_000_000 + index * 3_600_000,
+        open: 100,
+        high: 101,
+        low: 99,
+        close: 100 + index,
+        volume: 1000,
+      }));
+      vi.mocked(mockPositionTracker.getPortfolio).mockResolvedValue({
+        positions: new Map([
+          [
+            "0x9999999999999999999999999999999999999999" as Address,
+            {
+              token: "0x9999999999999999999999999999999999999999" as Address,
+              balance: 100n,
+              value: 500000n,
+              unrealizedPnL: 0n,
+            },
+          ],
+        ]),
+        totalValue: 100000000n,
+        unrealizedPnL: 0n,
+      });
+      vi.mocked(mockPositionTracker.getPosition).mockResolvedValue({
+        token: "0x1234567890123456789012345678901234567890" as Address,
+        balance: 0n,
+        value: 0n,
+        unrealizedPnL: 0n,
+      });
+      vi.mocked(mockMarketManager.getCandles).mockImplementation(async () => [
+        ...candles,
+      ]);
+      await riskManager.setRiskLimits({ maxCorrelation: 0.1 });
+
+      await riskManager.validateOrder({
+        orderId: "warn-order",
+        strategyId: "strategy-1",
+        baseToken: "0x1234567890123456789012345678901234567890" as Address,
+        quoteToken: "0x0987654321098765432109876543210987654321" as Address,
+        isBuy: true,
+        price: 10000n,
+        quantity: 100n,
+      });
+      await riskManager.validateOrder({
+        orderId: "reject-order",
+        strategyId: "strategy-1",
+        baseToken: "0x1234567890123456789012345678901234567890" as Address,
+        quoteToken: "0x0987654321098765432109876543210987654321" as Address,
+        isBuy: true,
+        price: 300000n,
+        quantity: 1000000000n,
+      });
+
+      expect(received).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            orderId: "warn-order",
+            strategyId: "strategy-1",
+            reason: expect.stringContaining("High correlation risk"),
+          }),
+          expect.objectContaining({
+            orderId: "reject-order",
+            strategyId: "strategy-1",
+          }),
+        ]),
+      );
     });
   });
 

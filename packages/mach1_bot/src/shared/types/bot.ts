@@ -42,15 +42,15 @@ export interface BotConfig {
   // Optional settings
   chainId?: number;
   logLevel?:
-  | "DEBUG"
-  | "INFO"
-  | "WARN"
-  | "ERROR"
-  | "debug"
-  | "info"
-  | "warn"
-  | "error"
-  | "none";
+    | "DEBUG"
+    | "INFO"
+    | "WARN"
+    | "ERROR"
+    | "debug"
+    | "info"
+    | "warn"
+    | "error"
+    | "none";
 
   // Enhanced features
   enableEnhancedFeatures?: boolean;
@@ -133,6 +133,7 @@ export interface MarketData {
       bids: number;
       asks: number;
     };
+    warnings?: string[];
     rsi: number;
     macdSignal: number;
     timestamp: number;

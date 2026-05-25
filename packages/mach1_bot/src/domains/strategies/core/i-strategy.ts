@@ -6,7 +6,12 @@
  */
 
 import type { SdkPortfolio } from "@/shared/types";
-import { MarketData, OrderResult, Position } from "@/shared/types";
+import {
+  MarketData,
+  type OrderLifecycleRecord,
+  OrderResult,
+  Position,
+} from "@/shared/types";
 import type { AiStrategyDecision } from "@/shared/types/ai";
 import type { BotOrder } from "@/shared/types/bot";
 
@@ -242,10 +247,16 @@ export interface MarketEvent {
 }
 
 export interface OrderEvent {
-  type: "filled" | "partially_filled" | "cancelled" | "rejected";
+  type:
+    | "submitted"
+    | "accepted"
+    | "filled"
+    | "partially_filled"
+    | "cancelled"
+    | "rejected";
   orderId: string;
   // Order can be SDK OrderResult (low-level) or bot-level BotOrder (rich fields)
-  order: OrderResult | BotOrder;
+  order: OrderLifecycleRecord | OrderResult | BotOrder;
   timestamp: number;
 }
 

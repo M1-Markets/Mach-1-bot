@@ -9,6 +9,10 @@ tmp_dir="${TMPDIR:-/tmp}/mach-one-bot-session-$(date +%Y%m%d)"
 if [[ ! -d "$tmp_dir" ]]; then
     mkdir -p "$tmp_dir"
     echo "Creating persistent temp session directory: $tmp_dir"
+    if [[ -f "$repo_root/mach-one-bot.toml" ]]; then
+        ln -s "$repo_root/mach-one-bot.toml" "$tmp_dir/mach-one-bot.toml"
+        echo "Linked mach-one-bot.toml to temp session directory."
+    fi
 else
     echo "Using existing temp session directory: $tmp_dir"
 fi

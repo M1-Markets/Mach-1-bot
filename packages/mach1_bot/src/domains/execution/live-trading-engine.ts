@@ -9,6 +9,8 @@ import type {
 import { MonacoCoreSDK } from "mach1_sdk";
 import { parseUnits } from "viem";
 import { BaseTradingMode } from "@/domains/execution/trading-mode";
+import { OrderLifecycleStore } from "@/domains/execution/order-lifecycle-store";
+import { MarketDataService } from "@/domains/trading/market-data-service";
 import { MarketManager } from "@/domains/trading/market-manager";
 import { OrderManager } from "@/domains/trading/order-manager";
 import { RealtimeManager } from "@/domains/trading/realtime-manager";
@@ -19,6 +21,7 @@ import {
 import type { LiveTradingConfig } from "@/shared/types";
 import {
   Address,
+  type CancellationResult,
   type ExecutionOrderRecord,
   type ExecutionOrderStatusResult,
   type ExecutionTrade,
@@ -33,6 +36,15 @@ import { createLogger } from "@/shared/utils/logger";
 import { retryWithBackoff } from "@/shared/utils/rate-limiter";
 import { getStringProp, isRecord } from "@/shared/utils/record-utils";
 import { StrategyExecutionCoordinator } from "@/domains/execution/strategy-execution-coordinator";
+import { PriceUnavailableError } from "@/shared/errors";
+import {
+  createIdGenerator,
+  type Clock,
+  type IdGenerator,
+  type Rng,
+  realClock,
+  realRng,
+} from "@/shared/utils/determinism";
 
 const logger = createLogger("LiveTradingEngine");
 
@@ -107,6 +119,8 @@ const isRetryableOrderPlacementError = (error: unknown): boolean => {
 };
 
 export interface LiveOrderData extends ExecutionOrderRecord {
+  engineOrderId?: string;
+  exchangeOrderId?: string;
   order: OrderRequest;
   timestamp: number;
   filledQuantity: bigint;
@@ -130,6 +144,23 @@ export interface LiveTrade {
   actualSlippage: number;
 }
 
+type LivePairMetadata = {
+  symbol: string;
+  tradingPairId?: string;
+  baseDecimals: number;
+  quoteDecimals: number;
+};
+
+type LiveMarketDataSnapshot = {
+  marketData: MarketData;
+  missingSymbols: string[];
+};
+
+type NormalizedOrderbookLevel = {
+  priceInQuoteBaseUnits: bigint;
+  quantityInBaseUnits: bigint;
+};
+
 export class LiveTradingEngine extends BaseTradingMode {
   private config: LiveTradingConfig;
   private marketManager: MarketManager;
@@ -147,6 +178,11 @@ export class LiveTradingEngine extends BaseTradingMode {
     string,
     { orderId: string; timestamp: number }
   > = new Map();
+  private readonly marketDataService = new MarketDataService();
+  private readonly orderLifecycleStore: OrderLifecycleStore;
+  private readonly rng: Rng;
+  private readonly clock: Clock;
+  private readonly orderIdGenerator: IdGenerator;
 
   // Strategy execution support
   private strategyCallback?: (data: MarketData) => Promise<void>;
@@ -168,7 +204,13 @@ export class LiveTradingEngine extends BaseTradingMode {
     baseToken: Address,
     quoteToken: Address,
   ): string {
-    const resolver = this.monacoSDK.getTradingPairResolver();
+    const resolver =
+      typeof this.monacoSDK.getTradingPairResolver === "function"
+        ? this.monacoSDK.getTradingPairResolver()
+        : undefined;
+    if (!resolver) {
+      return `${baseToken}/${quoteToken}`;
+    }
     const pair = resolver.getPairByContracts(baseToken, quoteToken);
 
     if (pair?.symbol) {
@@ -183,6 +225,8 @@ export class LiveTradingEngine extends BaseTradingMode {
     marketManager?: MarketManager,
     realtimeManager?: RealtimeManager,
     riskManager?: RiskManager,
+    orderLifecycleStore?: OrderLifecycleStore,
+    options?: { rng?: Rng; clock?: Clock },
   ) {
     super();
     this.config = {
@@ -197,6 +241,13 @@ export class LiveTradingEngine extends BaseTradingMode {
         : ["ETH/USDC", "BTC/USDC", "SOL/USDC"];
     this.ohlcvInterval = config.ohlcvInterval || "1d";
     this.riskManager = riskManager;
+    this.rng = options?.rng ?? realRng;
+    this.clock = options?.clock ?? realClock;
+    this.orderLifecycleStore = orderLifecycleStore ?? new OrderLifecycleStore();
+    this.orderIdGenerator = createIdGenerator("live", {
+      clock: this.clock,
+      rng: this.rng,
+    });
 
     logger.debug("Initializing LiveTradingEngine", {
       network: config.network,
@@ -289,7 +340,22 @@ export class LiveTradingEngine extends BaseTradingMode {
       throw new Error("Trading is paused. Cannot place orders.");
     }
 
-    const orderId = `live_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const orderId = this.orderIdGenerator.next();
+    const pair: TradingPair = {
+      base: order.baseToken,
+      quote: order.quoteToken,
+      symbol: this.resolvePairSymbolFromContracts(
+        order.baseToken,
+        order.quoteToken,
+      ),
+    };
+    this.orderLifecycleStore.createSubmittedOrder({
+      localId: orderId,
+      strategyId: order.strategyId,
+      pair,
+      order,
+      timestamp: this.clock.now(),
+    });
 
     // Validate order first
     if (!this.validateOrder(order)) {
@@ -305,9 +371,15 @@ export class LiveTradingEngine extends BaseTradingMode {
         orderId,
         order,
         status: "rejected",
-        timestamp: Date.now(),
+        timestamp: this.clock.now(),
         filledQuantity: 0n,
         remainingQuantity: order.quantity,
+      });
+      this.orderLifecycleStore.applyUpdate({
+        localId: orderId,
+        type: "rejected",
+        reason: "validation_failed",
+        timestamp: this.clock.now(),
       });
 
       return {
@@ -327,6 +399,12 @@ export class LiveTradingEngine extends BaseTradingMode {
         timestamp: Date.now(),
         filledQuantity: 0n,
         remainingQuantity: order.quantity,
+      });
+      this.orderLifecycleStore.applyUpdate({
+        localId: orderId,
+        type: "rejected",
+        reason: (riskResult.rejectionReasons || []).join("; "),
+        timestamp: Date.now(),
       });
 
       throw new Error(
@@ -358,6 +436,12 @@ export class LiveTradingEngine extends BaseTradingMode {
         filledQuantity: 0n,
         remainingQuantity: order.quantity,
       });
+      this.orderLifecycleStore.applyUpdate({
+        localId: orderId,
+        type: "rejected",
+        reason: "pre_trade_checks_failed",
+        timestamp: Date.now(),
+      });
 
       return {
         orderId,
@@ -375,6 +459,12 @@ export class LiveTradingEngine extends BaseTradingMode {
       timestamp: Date.now(),
       filledQuantity: 0n,
       remainingQuantity: order.quantity,
+    });
+    this.orderLifecycleStore.applyUpdate({
+      localId: orderId,
+      type: "accepted",
+      status: "pending",
+      timestamp: Date.now(),
     });
 
     try {
@@ -409,8 +499,16 @@ export class LiveTradingEngine extends BaseTradingMode {
         throw new Error(`Order data not found for ${orderId}`);
       }
       orderData.status = result.status;
+      orderData.engineOrderId = result.orderId;
+      orderData.exchangeOrderId = result.orderId;
       orderData.filledQuantity = result.filledQuantity;
       orderData.remainingQuantity = result.remainingQuantity;
+      this.orderLifecycleStore.applyResult(orderId, result, {
+        engineOrderId: result.orderId,
+        exchangeOrderId: result.orderId,
+        averageFillPrice: result.filledQuantity > 0n ? order.price : undefined,
+        timestamp: Date.now(),
+      });
 
       // Track statistics
       if (result.status === "filled") {
@@ -419,11 +517,15 @@ export class LiveTradingEngine extends BaseTradingMode {
       }
 
       logger.debug("Order placed successfully", {
-        orderId: result.orderId,
+        orderId,
+        exchangeOrderId: result.orderId,
         status: result.status,
       });
 
-      return result;
+      return {
+        ...result,
+        orderId,
+      };
     } catch (error) {
       logger.error("Failed to place order", { orderId }, error as Error);
 
@@ -432,6 +534,12 @@ export class LiveTradingEngine extends BaseTradingMode {
       if (orderData) {
         orderData.status = "rejected";
       }
+      this.orderLifecycleStore.applyUpdate({
+        localId: orderId,
+        type: "rejected",
+        reason: error instanceof Error ? error.message : String(error),
+        timestamp: Date.now(),
+      });
 
       this.failedTrades++;
 
@@ -439,7 +547,7 @@ export class LiveTradingEngine extends BaseTradingMode {
     }
   }
 
-  async cancelOrder(orderId: string): Promise<void> {
+  async cancelOrder(orderId: string): Promise<CancellationResult> {
     const orderData = this.orders.get(orderId);
     if (!orderData) {
       throw new Error(`Order not found: ${orderId}`);
@@ -453,10 +561,32 @@ export class LiveTradingEngine extends BaseTradingMode {
     }
 
     try {
-      logger.info("Cancelling order", { orderId });
-      await this.monacoSDK.cancelOrder(orderId);
+      const exchangeOrderId =
+        orderData.exchangeOrderId ?? orderData.engineOrderId;
+      if (!exchangeOrderId) {
+        throw new Error(`Exchange order ID missing for ${orderId}`);
+      }
+
+      logger.info("Cancelling order", { orderId, exchangeOrderId });
+      await this.monacoSDK.cancelOrder(exchangeOrderId);
       orderData.status = "cancelled";
+      this.orderLifecycleStore.applyUpdate({
+        localId: orderId,
+        type: "cancelled",
+        engineOrderId: orderData.engineOrderId,
+        exchangeOrderId: orderData.exchangeOrderId,
+        reason: "cancelled_by_user",
+        timestamp: Date.now(),
+      });
       logger.info("Order cancelled successfully", { orderId });
+      return {
+        orderId,
+        status: "cancelled",
+        filledQuantity: orderData.filledQuantity,
+        remainingQuantity: orderData.remainingQuantity,
+        cancellationApplied: true,
+        reason: "cancelled_by_user",
+      };
     } catch (error) {
       logger.error("Failed to cancel order", { orderId }, error as Error);
       throw error;
@@ -599,26 +729,31 @@ export class LiveTradingEngine extends BaseTradingMode {
     return 0n;
   }
 
-  private async calculateSlippage(order: OrderRequest): Promise<number> {
+  private async calculateSlippage(
+    order: OrderRequest,
+    pairMetadata: LivePairMetadata,
+    referencePriceInQuoteBaseUnits: bigint,
+  ): Promise<number> {
     try {
-      const pairSymbol = this.resolvePairSymbolFromContracts(
-        order.baseToken,
-        order.quoteToken,
+      const orderbook = await this.realtimeManager.getOrderbookSnapshot(
+        pairMetadata.symbol,
       );
-      const orderbook =
-        await this.realtimeManager.getOrderbookSnapshot(pairSymbol);
 
       if (!orderbook || (!orderbook.bids.length && !orderbook.asks.length)) {
         return this.config.maxSlippage;
       }
 
-      const bookSide = (order.isBuy ? orderbook.asks : orderbook.bids).map(
-        (level) => ({
-          price: parseFloat(String(level.price)),
-          quantity: parseFloat(String(level.quantity)),
-        }),
+      const bookSide = this.toNormalizedOrderbookLevels(
+        order.isBuy ? orderbook.asks : orderbook.bids,
+        pairMetadata,
+        order.isBuy ? "ask" : "bid",
       );
-      return this.calculateOrderBookSlippage(order, bookSide);
+      return this.calculateOrderBookSlippage(
+        order,
+        bookSide,
+        referencePriceInQuoteBaseUnits,
+        pairMetadata.baseDecimals,
+      );
     } catch (error) {
       logger.warn("Failed to calculate slippage", {
         error: error instanceof Error ? error.message : String(error),
@@ -629,27 +764,44 @@ export class LiveTradingEngine extends BaseTradingMode {
 
   private calculateOrderBookSlippage(
     order: OrderRequest,
-    bookSide: Array<{ price: number; quantity: number }>,
+    bookSide: NormalizedOrderbookLevel[],
+    referencePriceInQuoteBaseUnits: bigint,
+    baseDecimals: number,
   ): number {
-    let remainingQuantity = Number(order.quantity);
-    let weightedPrice = 0;
+    let remainingQuantityInBaseUnits = order.quantity;
+    let totalNotionalInQuoteBaseUnits = 0n;
+    const baseUnitScale = 10n ** BigInt(baseDecimals);
 
     for (const level of bookSide) {
-      if (remainingQuantity <= 0) break;
+      if (remainingQuantityInBaseUnits <= 0n) {
+        break;
+      }
 
-      const fillQuantity = Math.min(remainingQuantity, level.quantity);
-      weightedPrice += level.price * fillQuantity;
-      remainingQuantity -= fillQuantity;
+      const fillQuantityInBaseUnits =
+        remainingQuantityInBaseUnits < level.quantityInBaseUnits
+          ? remainingQuantityInBaseUnits
+          : level.quantityInBaseUnits;
+      totalNotionalInQuoteBaseUnits +=
+        (level.priceInQuoteBaseUnits * fillQuantityInBaseUnits) / baseUnitScale;
+      remainingQuantityInBaseUnits -= fillQuantityInBaseUnits;
     }
 
-    if (remainingQuantity > 0) {
+    if (remainingQuantityInBaseUnits > 0n || order.quantity <= 0n) {
       // Order cannot be fully filled, high slippage
       return this.config.maxSlippage;
     }
 
-    const avgExecutionPrice = weightedPrice / Number(order.quantity);
+    const avgExecutionPriceInQuoteBaseUnits =
+      (totalNotionalInQuoteBaseUnits * baseUnitScale) / order.quantity;
+    if (referencePriceInQuoteBaseUnits <= 0n) {
+      return this.config.maxSlippage;
+    }
     const slippage =
-      Math.abs(avgExecutionPrice - Number(order.price)) / Number(order.price);
+      Math.abs(
+        Number(
+          avgExecutionPriceInQuoteBaseUnits - referencePriceInQuoteBaseUnits,
+        ),
+      ) / Number(referencePriceInQuoteBaseUnits);
 
     return Math.min(slippage, this.config.maxSlippage);
   }
@@ -719,6 +871,7 @@ export class LiveTradingEngine extends BaseTradingMode {
     asks: Array<{ price: bigint; quantity: bigint }>;
   }> {
     try {
+      const metadata = this.resolveLivePairMetadata(pair);
       const snapshot = await this.realtimeManager.getOrderbookSnapshot(
         pair.symbol,
       );
@@ -729,12 +882,28 @@ export class LiveTradingEngine extends BaseTradingMode {
 
       return {
         bids: snapshot.bids.map((level) => ({
-          price: BigInt(Math.round(parseFloat(String(level.price)))),
-          quantity: BigInt(Math.round(parseFloat(String(level.quantity)))),
+          price: this.parseTokenUnits(
+            level.price,
+            metadata.quoteDecimals,
+            "orderbook bid price",
+          ),
+          quantity: this.parseTokenUnits(
+            level.quantity,
+            metadata.baseDecimals,
+            "orderbook bid quantity",
+          ),
         })),
         asks: snapshot.asks.map((level) => ({
-          price: BigInt(Math.round(parseFloat(String(level.price)))),
-          quantity: BigInt(Math.round(parseFloat(String(level.quantity)))),
+          price: this.parseTokenUnits(
+            level.price,
+            metadata.quoteDecimals,
+            "orderbook ask price",
+          ),
+          quantity: this.parseTokenUnits(
+            level.quantity,
+            metadata.baseDecimals,
+            "orderbook ask quantity",
+          ),
         })),
       };
     } catch (error) {
@@ -757,6 +926,20 @@ export class LiveTradingEngine extends BaseTradingMode {
     estimatedSlippage: number;
   }> {
     try {
+      const pair: TradingPair = {
+        base: order.baseToken,
+        quote: order.quoteToken,
+        symbol: this.resolvePairSymbolFromContracts(
+          order.baseToken,
+          order.quoteToken,
+        ),
+      };
+      const pairMetadata = this.resolveLivePairMetadata(pair);
+      const referencePrice =
+        order.orderType === "market"
+          ? await this.getLivePrice(pair)
+          : order.price;
+
       // Check if user has sufficient balance
       let balance: bigint;
       try {
@@ -775,14 +958,22 @@ export class LiveTradingEngine extends BaseTradingMode {
         }
       }
       const requiredAmount = order.isBuy
-        ? (order.quantity * order.price) / 100n
+        ? this.calculateQuoteNotional(
+            order.quantity,
+            referencePrice,
+            pairMetadata.baseDecimals,
+          )
         : order.quantity;
 
       const hasFunds = balance >= requiredAmount;
 
       // Estimate gas and slippage
       const estimatedGas = await this.estimateGas(order);
-      const estimatedSlippage = await this.calculateSlippage(order);
+      const estimatedSlippage = await this.calculateSlippage(
+        order,
+        pairMetadata,
+        referencePrice,
+      );
 
       // Check slippage limits
       const withinLimits = estimatedSlippage <= this.config.maxSlippage;
@@ -807,6 +998,9 @@ export class LiveTradingEngine extends BaseTradingMode {
         estimatedSlippage,
       };
     } catch (error) {
+      if (error instanceof PriceUnavailableError) {
+        throw error;
+      }
       logger.warn("Failed to check pre-trade conditions:", error);
       return {
         hasPermission: false,
@@ -868,7 +1062,7 @@ export class LiveTradingEngine extends BaseTradingMode {
     const averageConfirmationTime =
       this.confirmationTimes.length > 0
         ? this.confirmationTimes.reduce((sum, time) => sum + time, 0) /
-        this.confirmationTimes.length
+          this.confirmationTimes.length
         : 0;
 
     return {
@@ -881,14 +1075,68 @@ export class LiveTradingEngine extends BaseTradingMode {
 
   // Private helper methods
   private async getCurrentPrice(pair: TradingPair): Promise<bigint> {
-    try {
-      // Use MarketManager to get live market price
-      return await this.marketManager.getCurrentPrice(pair);
-    } catch (error) {
-      logger.warn(`Failed to get current price for ${pair.symbol}:`, error);
-      // Return a fallback price
-      return 100n * 100n; // Default price scaled by 100
+    return this.getLivePrice(pair);
+  }
+
+  async getLivePrice(pair: TradingPair): Promise<bigint> {
+    const metadata = this.resolveLivePairMetadata(pair);
+    const orderbook =
+      this.orderbooks.get(metadata.symbol) ??
+      (await this.realtimeManager.getOrderbookSnapshot(metadata.symbol));
+    const bestBidRaw = orderbook?.bids?.[0]?.price;
+    const bestAskRaw = orderbook?.asks?.[0]?.price;
+
+    if (bestBidRaw !== undefined && bestAskRaw !== undefined) {
+      const bestBid = this.parseTokenUnits(
+        bestBidRaw,
+        metadata.quoteDecimals,
+        "orderbook best bid",
+      );
+      const bestAsk = this.parseTokenUnits(
+        bestAskRaw,
+        metadata.quoteDecimals,
+        "orderbook best ask",
+      );
+      return (bestBid + bestAsk) / 2n;
     }
+
+    if (bestAskRaw !== undefined) {
+      return this.parseTokenUnits(
+        bestAskRaw,
+        metadata.quoteDecimals,
+        "orderbook best ask",
+      );
+    }
+
+    if (bestBidRaw !== undefined) {
+      return this.parseTokenUnits(
+        bestBidRaw,
+        metadata.quoteDecimals,
+        "orderbook best bid",
+      );
+    }
+
+    const candle =
+      this.candles.get(metadata.symbol) ??
+      (await this.realtimeManager.getOHLCVSnapshot(
+        metadata.symbol,
+        this.ohlcvInterval,
+      ));
+    const close =
+      candle?.c ?? (isRecord(candle) ? (candle.close ?? candle.c) : undefined);
+    if (
+      close !== undefined &&
+      close !== null &&
+      (typeof close === "string" ||
+        typeof close === "number" ||
+        typeof close === "bigint")
+    ) {
+      return this.parseTokenUnits(close, metadata.quoteDecimals, "OHLCV close");
+    }
+
+    throw new PriceUnavailableError(metadata.symbol, {
+      sourcesTried: ["orderbook", "ohlcv"],
+    });
   }
 
   private calculateUnrealizedPnL(
@@ -898,9 +1146,33 @@ export class LiveTradingEngine extends BaseTradingMode {
   ): bigint {
     if (balance === 0n) return 0n;
 
-    // In live trading, we'd track average entry prices from executed trades
-    // For now, return 0 as a simplified implementation
-    return 0n;
+    const buyTrades = this.executedTrades.filter(
+      (trade) => trade.pair.base === token && trade.side === "buy",
+    );
+    if (buyTrades.length === 0) {
+      return 0n;
+    }
+
+    let totalBought = 0n;
+    let totalSold = 0n;
+    let totalCost = 0n;
+    for (const trade of buyTrades) {
+      totalBought += trade.quantity;
+      totalCost += trade.price * trade.quantity;
+    }
+    for (const trade of this.executedTrades) {
+      if (trade.pair.base === token && trade.side === "sell") {
+        totalSold += trade.quantity;
+      }
+    }
+
+    const openQuantity = totalBought - totalSold;
+    if (openQuantity <= 0n) {
+      return 0n;
+    }
+
+    const averageEntryPrice = totalCost / totalBought;
+    return ((currentPrice - averageEntryPrice) * balance) / 100n;
   }
 
   // Order execution now handled by MonacoSDKAdapter.placeOrder()
@@ -971,10 +1243,26 @@ export class LiveTradingEngine extends BaseTradingMode {
           filledQuantity: orderData.filledQuantity,
           remainingQuantity: orderData.remainingQuantity,
         });
+        this.orderLifecycleStore.applyUpdate({
+          localId: orderId,
+          type: "filled",
+          status: "filled",
+          filledQuantity: orderData.filledQuantity,
+          remainingQuantity: orderData.remainingQuantity,
+          averageFillPrice: orderData.executionPrice ?? orderData.order.price,
+          fees: orderData.gasUsed ?? 0n,
+          timestamp: Date.now(),
+        });
       } else {
         // Transaction failed
         orderData.status = "rejected";
         this.failedTrades++;
+        this.orderLifecycleStore.applyUpdate({
+          localId: orderId,
+          type: "rejected",
+          reason: "transaction_failed",
+          timestamp: Date.now(),
+        });
 
         logger.error(`❌ Order ${orderId} transaction failed. TX: ${txHash}`);
       }
@@ -986,8 +1274,18 @@ export class LiveTradingEngine extends BaseTradingMode {
       if (orderData) {
         orderData.status = "rejected";
         this.failedTrades++;
+        this.orderLifecycleStore.applyUpdate({
+          localId: orderId,
+          type: "rejected",
+          reason: error instanceof Error ? error.message : String(error),
+          timestamp: Date.now(),
+        });
       }
     }
+  }
+
+  getOrderLifecycleStore(): OrderLifecycleStore {
+    return this.orderLifecycleStore;
   }
 
   /**
@@ -1028,9 +1326,21 @@ export class LiveTradingEngine extends BaseTradingMode {
             return;
           }
 
-          const marketData = await this.constructLiveMarketData();
+          const { marketData, missingSymbols } =
+            await this.buildLiveMarketDataSnapshot();
+
+          if (missingSymbols.length > 0) {
+            logger.warn(
+              "Skipping live strategy tick due to missing market data",
+              {
+                missingSymbols,
+              },
+            );
+            return;
+          }
+
           if (Object.keys(marketData).length > 0) {
-            await this.strategyCallback?.(marketData);
+            await this.strategyCallback(marketData);
             this.lastStrategyExecution = Date.now();
           }
         },
@@ -1073,82 +1383,44 @@ export class LiveTradingEngine extends BaseTradingMode {
     logger.info("✅ Live trading stopped");
   }
 
-
   /**
    * Construct live market data for strategy execution
    */
   private async constructLiveMarketData(): Promise<MarketData> {
+    const { marketData } = await this.buildLiveMarketDataSnapshot();
+    return marketData;
+  }
+
+  private async buildLiveMarketDataSnapshot(): Promise<LiveMarketDataSnapshot> {
     const marketData: MarketData = {};
+    const missingSymbols: string[] = [];
 
     try {
       for (const pairSymbol of this.tradingPairs) {
         const pair = this.parseSymbolToPair(pairSymbol);
-        if (!pair) continue;
+        if (!pair) {
+          missingSymbols.push(pairSymbol);
+          continue;
+        }
 
         try {
           const candle = this.candles.get(pairSymbol);
           const orderbook = this.orderbooks.get(pairSymbol);
+          const candleHistory = await this.fetchCandleHistory(pairSymbol, pair);
+          const tick = this.marketDataService.buildLiveTick({
+            symbol: pairSymbol,
+            ohlcv: candle,
+            orderbook,
+            candleHistory,
+          });
 
-          let close = candle ? Number(candle.c) : undefined;
-          let open = candle ? Number(candle.o) : close;
-          let high = candle ? Number(candle.h) : close;
-          let low = candle ? Number(candle.l) : close;
-          let volume = candle ? Number(candle.v) : undefined;
-
-          if (!candle) {
-            const ticker = await this.marketManager.getTicker(pair);
-            close = Number(ticker.price) / 100;
-            open = close;
-            high = Number(ticker.high24h) / 100;
-            low = Number(ticker.low24h) / 100;
-            volume = Number(ticker.volume24h);
+          if (tick) {
+            marketData[pairSymbol] = tick;
+          } else {
+            missingSymbols.push(pairSymbol);
           }
-
-          const bestBid = orderbook?.bids?.length
-            ? parseFloat(orderbook.bids[0].price)
-            : null;
-          const bestAsk = orderbook?.asks?.length
-            ? parseFloat(orderbook.asks[0].price)
-            : null;
-
-          let spread =
-            bestBid !== null && bestAsk !== null
-              ? bestAsk - bestBid
-              : undefined;
-
-          if (spread === undefined || Number.isNaN(spread)) {
-            const fallbackBook = await this.marketManager.getOrderBook(pair);
-            const fbBid = fallbackBook.bids[0]?.price
-              ? Number(fallbackBook.bids[0].price) / 100
-              : undefined;
-            const fbAsk = fallbackBook.asks[0]?.price
-              ? Number(fallbackBook.asks[0].price) / 100
-              : undefined;
-            spread =
-              fbBid !== undefined && fbAsk !== undefined ? fbAsk - fbBid : 0;
-          }
-
-          const price = close ?? 0;
-
-          marketData[pairSymbol] = {
-            open: open ?? price,
-            high: high ?? price,
-            low: low ?? price,
-            close: price,
-            volume: volume ?? 0,
-            bestBid: bestBid ?? price,
-            bestAsk: bestAsk ?? price,
-            spread: spread ?? price * 0.002,
-            orderBookDepth: {
-              bids: orderbook?.bids?.length || 0,
-              asks: orderbook?.asks?.length || 0,
-            },
-            timestamp: candle?.T || Date.now(),
-            // Simple technical placeholders until analytics module is wired for live data
-            rsi: 50,
-            macdSignal: 0,
-          };
         } catch (error) {
+          missingSymbols.push(pairSymbol);
           logger.warn(`Failed to get market data for ${pairSymbol}:`, error);
         }
       }
@@ -1156,7 +1428,40 @@ export class LiveTradingEngine extends BaseTradingMode {
       logger.warn("Failed to construct live market data:", error);
     }
 
-    return marketData;
+    return {
+      marketData,
+      missingSymbols,
+    };
+  }
+
+  private async fetchCandleHistory(
+    symbol: string,
+    pair: TradingPair,
+  ): Promise<Candlestick[]> {
+    try {
+      const sdk = this.monacoSDK.getSDK();
+      const resolver = this.monacoSDK.getTradingPairResolver();
+      const normalized = resolver.normalizeSymbol(symbol);
+      const pairByContracts = resolver.getPairByContracts(
+        pair.base,
+        pair.quote,
+      );
+      const tradingPairId =
+        pairByContracts?.id ?? resolver.resolveSymbolToId(normalized);
+      const candles = await sdk.market.getCandlesticks(
+        tradingPairId,
+        this.ohlcvInterval,
+        { endTime: Date.now(), limit: 50 },
+      );
+
+      return Array.isArray(candles) ? candles : [];
+    } catch (error) {
+      logger.warn("Failed to fetch candle history for indicators", {
+        symbol,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return [];
+    }
   }
 
   /**
@@ -1390,9 +1695,7 @@ export class LiveTradingEngine extends BaseTradingMode {
   /**
    * Get order status with detailed information
    */
-  async getOrderStatus(
-    orderId: string,
-  ): Promise<ExecutionOrderStatusResult> {
+  async getOrderStatus(orderId: string): Promise<ExecutionOrderStatusResult> {
     const orderData = this.orders.get(orderId);
     if (!orderData) {
       throw new Error("Order not found");
@@ -1425,6 +1728,79 @@ export class LiveTradingEngine extends BaseTradingMode {
 
   getOHLCVInterval(): Interval {
     return this.ohlcvInterval;
+  }
+
+  private resolveLivePairMetadata(pair: TradingPair): LivePairMetadata {
+    const resolver = this.monacoSDK.getTradingPairResolver();
+    const normalizedSymbol = resolver.normalizeSymbol(pair.symbol);
+    const pairMetadata =
+      resolver.getPairByContracts(pair.base, pair.quote) ??
+      resolver.getPairBySymbol(normalizedSymbol) ??
+      resolver.getPairBySymbol(pair.symbol);
+
+    if (!pairMetadata) {
+      throw new PriceUnavailableError(pair.symbol, {
+        reason: "pair_metadata_unavailable",
+      });
+    }
+
+    return {
+      symbol: resolver.normalizeSymbol(pairMetadata.symbol ?? pair.symbol),
+      tradingPairId: pairMetadata.id,
+      baseDecimals: pairMetadata.base_decimals,
+      quoteDecimals: pairMetadata.quote_decimals,
+    };
+  }
+
+  private parseTokenUnits(
+    value: string | number | bigint,
+    decimals: number,
+    label: string,
+  ): bigint {
+    const normalized =
+      typeof value === "string" ? value.trim() : String(value).trim();
+    if (normalized.length === 0) {
+      throw new Error(`Invalid ${label}: empty value`);
+    }
+
+    try {
+      return parseUnits(normalized, decimals);
+    } catch (error) {
+      throw new Error(
+        `Invalid ${label}: ${normalized} (${error instanceof Error ? error.message : String(error)})`,
+      );
+    }
+  }
+
+  private toNormalizedOrderbookLevels(
+    levels: Array<{
+      price: string | number | bigint;
+      quantity: string | number | bigint;
+    }>,
+    pairMetadata: LivePairMetadata,
+    side: "bid" | "ask",
+  ): NormalizedOrderbookLevel[] {
+    return levels.map((level) => ({
+      priceInQuoteBaseUnits: this.parseTokenUnits(
+        level.price,
+        pairMetadata.quoteDecimals,
+        `orderbook ${side} price`,
+      ),
+      quantityInBaseUnits: this.parseTokenUnits(
+        level.quantity,
+        pairMetadata.baseDecimals,
+        `orderbook ${side} quantity`,
+      ),
+    }));
+  }
+
+  private calculateQuoteNotional(
+    quantityInBaseUnits: bigint,
+    priceInQuoteBaseUnits: bigint,
+    baseDecimals: number,
+  ): bigint {
+    const baseUnitScale = 10n ** BigInt(baseDecimals);
+    return (quantityInBaseUnits * priceInQuoteBaseUnits) / baseUnitScale;
   }
 }
 

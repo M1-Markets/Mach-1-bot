@@ -19,6 +19,10 @@ export interface Scheduler {
   clearTimeout(id: unknown): void;
 }
 
+export interface IdGenerator {
+  next(): string;
+}
+
 // ---------------------------------------------------------------------------
 // Real (production) implementations
 // ---------------------------------------------------------------------------
@@ -67,6 +71,30 @@ export function createSteppingClock(startMs: number, stepMs = 0): Clock {
       const t = current;
       current += stepMs;
       return t;
+    },
+  };
+}
+
+/**
+ * Create deterministic, unique ids from injected clock/RNG primitives.
+ * Counter guarantees uniqueness even when clock/RNG repeat.
+ */
+export function createIdGenerator(
+  prefix: string,
+  options?: { clock?: Clock; rng?: Rng },
+): IdGenerator {
+  const clock = options?.clock ?? realClock;
+  const rng = options?.rng ?? realRng;
+  let counter = 0;
+
+  return {
+    next(): string {
+      const timestamp = clock.now().toString(36);
+      const sequence = (counter++).toString(36);
+      const entropy = Math.floor(rng.next() * 0xffffffff)
+        .toString(36)
+        .padStart(7, "0");
+      return `${prefix}_${timestamp}_${sequence}_${entropy}`;
     },
   };
 }

@@ -11,6 +11,7 @@ import {
   StrategyMetrics,
   StrategyParameters,
 } from "@/domains/strategies/core/i-strategy";
+import { createSeededRng, realRng } from "@/shared/utils/determinism";
 import { StrategyManager } from "../management/strategy-manager";
 
 export interface OptimizationConfig {
@@ -385,6 +386,7 @@ export class StrategyOptimizer {
       scenarios: number;
       backtestPeriod: { start: Date; end: Date };
       includeMarketRegimes?: boolean;
+      randomSeed?: number;
     },
   ): Promise<MonteCarloResult> {
     const scenarios: Array<{
@@ -393,8 +395,9 @@ export class StrategyOptimizer {
       randomSeed: number;
     }> = [];
 
+    const scenarioSeedRng = this.createRandomSource(config.randomSeed);
     for (let i = 0; i < config.scenarios; i++) {
-      const randomSeed = Math.floor(Math.random() * 1000000);
+      const randomSeed = Math.floor(scenarioSeedRng() * 1000000);
 
       // Generate random parameter variations
       const randomParameters = { ...baseParameters };
@@ -547,7 +550,7 @@ export class StrategyOptimizer {
     randomSeed?: number,
   ): StrategyParameters[] {
     const combinations: StrategyParameters[] = [];
-    const rng = randomSeed ? this.createSeededRandom(randomSeed) : Math.random;
+    const rng = this.createRandomSource(randomSeed);
 
     for (let i = 0; i < maxIterations; i++) {
       const combination: StrategyParameters = {};
@@ -590,6 +593,9 @@ export class StrategyOptimizer {
       populationSize,
       randomSeed,
     );
+    const rng = this.createRandomSource(
+      randomSeed !== undefined ? randomSeed + 1 : undefined,
+    );
 
     const allCombinations = [...population];
 
@@ -602,7 +608,7 @@ export class StrategyOptimizer {
       const newGeneration: StrategyParameters[] = [];
 
       for (const individual of population.slice(0, populationSize / 2)) {
-        const mutated = this.mutateParameters(individual, space, 0.1);
+        const mutated = this.mutateParameters(individual, space, 0.1, rng);
         newGeneration.push(mutated);
         allCombinations.push(mutated);
 
@@ -625,29 +631,56 @@ export class StrategyOptimizer {
   }
 
   private async evaluateParameters(
-    strategyId: string,
-    parameters: StrategyParameters,
+    _strategyId: string,
+    _parameters: StrategyParameters,
     period: { start: string | Date; end: string | Date },
-    randomSeed?: number,
+    _randomSeed?: number,
   ): Promise<StrategyMetrics> {
-    // Create temporary strategy instance
-    const _instanceId = `temp_${Date.now()}_${Math.random()}`;
+    const backtestConfig = (
+      this.backtestEngine as unknown as {
+        config: { startDate: Date; endDate: Date };
+      }
+    ).config;
+    const previousStart = backtestConfig.startDate;
+    const previousEnd = backtestConfig.endDate;
+
+    backtestConfig.startDate = new Date(period.start);
+    backtestConfig.endDate = new Date(period.end);
 
     try {
-      // This would integrate with the backtest engine
-      // For now, return mock metrics
+      const result = await this.backtestEngine.runBacktest();
+      const pnlSeries = result.trades.map((trade) => Number(trade.pnl));
+      const grossProfit = pnlSeries
+        .filter((pnl) => pnl > 0)
+        .reduce((sum, pnl) => sum + pnl, 0);
+      const grossLoss = Math.abs(
+        pnlSeries.filter((pnl) => pnl < 0).reduce((sum, pnl) => sum + pnl, 0),
+      );
+      const avgHoldingPeriod =
+        result.trades.length > 1
+          ? (result.trades[result.trades.length - 1].timestamp -
+              result.trades[0].timestamp) /
+            result.trades.length
+          : 0;
+
       return {
-        totalReturn: Math.random() * 0.5 - 0.1, // -10% to 40%
-        sharpeRatio: Math.random() * 3,
-        maxDrawdown: Math.random() * 0.3,
-        winRate: 0.4 + Math.random() * 0.4, // 40% to 80%
-        totalTrades: Math.floor(Math.random() * 1000),
-        avgHoldingPeriod: Math.random() * 7 * 24 * 60 * 60 * 1000, // 0-7 days in ms
-        profitFactor: 0.8 + Math.random() * 1.4, // 0.8 to 2.2
-        lastUpdate: Date.now(),
+        totalReturn: result.totalReturn,
+        sharpeRatio: result.sharpeRatio,
+        maxDrawdown: result.maxDrawdown,
+        winRate: result.winRate,
+        totalTrades: result.totalTrades,
+        avgHoldingPeriod,
+        profitFactor:
+          grossLoss === 0
+            ? grossProfit > 0
+              ? Infinity
+              : 0
+            : grossProfit / grossLoss,
+        lastUpdate: backtestConfig.endDate.getTime(),
       };
     } finally {
-      // Cleanup temporary instance
+      backtestConfig.startDate = previousStart;
+      backtestConfig.endDate = previousEnd;
     }
   }
 
@@ -680,11 +713,12 @@ export class StrategyOptimizer {
     parameters: StrategyParameters,
     space: OptimizationSpace,
     mutationRate: number,
+    rng: () => number = this.createRandomSource(),
   ): StrategyParameters {
     const mutated = { ...parameters };
 
     for (const [paramName, range] of Object.entries(space)) {
-      if (Math.random() < mutationRate) {
+      if (rng() < mutationRate) {
         if (range.type === "continuous") {
           if (typeof range.min !== "number" || typeof range.max !== "number") {
             continue;
@@ -693,8 +727,7 @@ export class StrategyOptimizer {
             typeof mutated[paramName] === "number"
               ? (mutated[paramName] as number)
               : range.min;
-          const mutationAmount =
-            (range.max - range.min) * 0.1 * (Math.random() - 0.5);
+          const mutationAmount = (range.max - range.min) * 0.1 * (rng() - 0.5);
           mutated[paramName] = Math.max(
             range.min,
             Math.min(range.max, currentValue + mutationAmount),
@@ -704,7 +737,7 @@ export class StrategyOptimizer {
           if (values.length === 0) {
             continue;
           }
-          const randomIndex = Math.floor(Math.random() * values.length);
+          const randomIndex = Math.floor(rng() * values.length);
           mutated[paramName] = values[randomIndex];
         }
       }
@@ -958,12 +991,9 @@ export class StrategyOptimizer {
     return sorted[lower] * (1 - weight) + sorted[upper] * weight;
   }
 
-  private createSeededRandom(seed: number): () => number {
-    let x = Math.sin(seed) * 10000;
-    return () => {
-      x = Math.sin(x) * 10000;
-      return x - Math.floor(x);
-    };
+  private createRandomSource(seed?: number): () => number {
+    const rng = seed !== undefined ? createSeededRng(seed) : realRng;
+    return () => rng.next();
   }
 
   private generateNormalRandom(
@@ -971,7 +1001,7 @@ export class StrategyOptimizer {
     std: number,
     seed: number,
   ): number {
-    const rng = this.createSeededRandom(seed);
+    const rng = this.createRandomSource(seed);
 
     // Box-Muller transform
     const u1 = rng();

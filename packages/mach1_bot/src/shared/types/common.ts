@@ -27,13 +27,21 @@ export interface OrderRequest {
   baseToken: Address;
   quoteToken: Address;
   isBuy: boolean;
+  strategyId?: string;
+  /**
+   * Optional client-side order id used before exchange acceptance. Risk and
+   * strategy event flows use this id for pre-trade rejections and warnings.
+   */
+  orderId?: string;
   /**
    * Optional order type hint. When set to "market", downstream adapters will
    * route to market-order placement even if a price is provided for sizing
    * or risk calculations.
    */
   orderType?: "market" | "limit";
+  /** Quote price scaled by 100. `12345n` means `123.45` quote units. */
   price: bigint;
+  /** Base quantity scaled by 100. `250n` means `2.50` base units. */
   quantity: bigint;
   pitpassCode?: string;
 }

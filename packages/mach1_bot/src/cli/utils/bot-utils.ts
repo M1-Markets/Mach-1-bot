@@ -98,7 +98,8 @@ export type BotRunHooks = {
 
 const isVerboseLogLevel = (
   logLevel: BotConfig["logLevel"] | undefined,
-): boolean => typeof logLevel === "string" && logLevel.toUpperCase() === "DEBUG";
+): boolean =>
+  typeof logLevel === "string" && logLevel.toUpperCase() === "DEBUG";
 
 const logIfVerbose = (
   logLevel: BotConfig["logLevel"] | undefined,
@@ -147,10 +148,10 @@ const getPairBalanceSummary = async (
       : `no ${baseSymbol} position`;
     const quoteText = quotePosition
       ? formatTokenBalance(
-        quotePosition.balance,
-        quotePosition.value,
-        quoteSymbol,
-      )
+          quotePosition.balance,
+          quotePosition.value,
+          quoteSymbol,
+        )
       : `no ${quoteSymbol} position`;
 
     return `Balances: ${baseText} | ${quoteText}`;
@@ -160,7 +161,9 @@ const getPairBalanceSummary = async (
 };
 
 type ProfileClient = {
-  getUserBalanceByAssetId: (assetId: string) => Promise<{ available_balance?: string }>;
+  getUserBalanceByAssetId: (
+    assetId: string,
+  ) => Promise<{ available_balance?: string }>;
 };
 
 function buildAiSnapshot(
@@ -281,7 +284,9 @@ function getProfileClient(value: unknown): ProfileClient | undefined {
     return undefined;
   }
   const candidate = value as ProfileClient;
-  return typeof candidate.getUserBalanceByAssetId === "function" ? candidate : undefined;
+  return typeof candidate.getUserBalanceByAssetId === "function"
+    ? candidate
+    : undefined;
 }
 
 function createEmptyMetrics(): StrategyMetrics {
@@ -297,9 +302,7 @@ function createEmptyMetrics(): StrategyMetrics {
   };
 }
 
-function createStrategyUtils(
-  logLevel?: BotConfig["logLevel"],
-): StrategyUtils {
+function createStrategyUtils(logLevel?: BotConfig["logLevel"]): StrategyUtils {
   const indicators = {
     rsi: (prices: number[], period: number) => {
       if (prices.length < period + 1) return 50;
@@ -475,7 +478,7 @@ function extractTradingPairs(
 ): string[] {
   const configuredPairs =
     Array.isArray(strategyConfig?.trading_pairs) &&
-      strategyConfig.trading_pairs.length > 0
+    strategyConfig.trading_pairs.length > 0
       ? strategyConfig.trading_pairs
       : undefined;
 
@@ -547,7 +550,8 @@ async function getAvailableTokenBalance(
     }
   } catch (error) {
     console.warn(
-      `⚠️  Unable to read profile balance for ${tokenSymbol}: ${error instanceof Error ? error.message : String(error)
+      `⚠️  Unable to read profile balance for ${tokenSymbol}: ${
+        error instanceof Error ? error.message : String(error)
       }`,
     );
   }
@@ -556,13 +560,18 @@ async function getAvailableTokenBalance(
     const profileClient = getProfileClient(profile);
     if (profileClient) {
       try {
-        const assetBalance = await profileClient.getUserBalanceByAssetId(assetId);
+        const assetBalance =
+          await profileClient.getUserBalanceByAssetId(assetId);
         if (assetBalance?.available_balance !== undefined) {
-          available = Math.max(available, parseBalance(assetBalance.available_balance));
+          available = Math.max(
+            available,
+            parseBalance(assetBalance.available_balance),
+          );
         }
       } catch (error) {
         console.warn(
-          `⚠️  Unable to read balance for ${tokenSymbol}: ${error instanceof Error ? error.message : String(error)
+          `⚠️  Unable to read balance for ${tokenSymbol}: ${
+            error instanceof Error ? error.message : String(error)
           }`,
         );
       }
@@ -630,7 +639,7 @@ async function validateStrategyBalances(
       const baseBalance = await getAvailableTokenBalance(
         pairDetails.base_token,
         pairDetails.base_asset_id ||
-        getStringProp(pairDetailsRecord, "base_asset_id"),
+          getStringProp(pairDetailsRecord, "base_asset_id"),
         pairDetails.base_decimals,
         profileBalances,
         sdk.profile,
@@ -639,7 +648,7 @@ async function validateStrategyBalances(
       const quoteBalance = await getAvailableTokenBalance(
         pairDetails.quote_token,
         pairDetails.quote_asset_id ||
-        getStringProp(pairDetailsRecord, "quote_asset_id"),
+          getStringProp(pairDetailsRecord, "quote_asset_id"),
         pairDetails.quote_decimals,
         profileBalances,
         sdk.profile,
@@ -674,7 +683,8 @@ async function validateStrategyBalances(
       await monaco.shutdown();
     } catch (error) {
       console.warn(
-        `⚠️  Failed to shut down Monaco SDK after balance validation: ${error instanceof Error ? error.message : String(error)
+        `⚠️  Failed to shut down Monaco SDK after balance validation: ${
+          error instanceof Error ? error.message : String(error)
         }`,
       );
     }
@@ -718,9 +728,7 @@ export async function parseTomlConfig(configFile: string): Promise<TomlConfig> {
  */
 export function convertToBotConfig(tomlConfig: TomlConfig): BotConfig {
   const resolvedLogLevel =
-    process.env.MONACO_LOG_LEVEL ??
-    process.env.MACH1_LOG_LEVEL ??
-    "info";
+    process.env.MONACO_LOG_LEVEL ?? process.env.MACH1_LOG_LEVEL ?? "info";
 
   // Validate required configuration
   if (!tomlConfig.wallet?.private_key) {
@@ -1018,7 +1026,10 @@ export async function setupStrategy(
               if (signal.action === "buy") {
                 // Use a fixed USD amount for consistency in testing
                 const amountUsd = 100;
-                const balanceSummary = await getPairBalanceSummary(bot, signal.pair);
+                const balanceSummary = await getPairBalanceSummary(
+                  bot,
+                  signal.pair,
+                );
                 if (balanceSummary) {
                   console.log(
                     pc.yellow(
@@ -1057,7 +1068,10 @@ export async function setupStrategy(
                 });
               } else if (signal.action === "sell") {
                 const amountUsd = 100;
-                const balanceSummary = await getPairBalanceSummary(bot, signal.pair);
+                const balanceSummary = await getPairBalanceSummary(
+                  bot,
+                  signal.pair,
+                );
                 if (balanceSummary) {
                   console.log(
                     pc.yellow(

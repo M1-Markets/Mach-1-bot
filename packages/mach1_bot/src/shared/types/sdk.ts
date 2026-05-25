@@ -15,6 +15,7 @@ export interface MarketTick {
   bestAsk?: number;
   spread?: number;
   orderBookDepth?: { bids: number; asks: number };
+  warnings?: string[];
   rsi: number;
   macdSignal: number;
   timestamp: number;

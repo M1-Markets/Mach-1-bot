@@ -8,6 +8,7 @@
 import { EventEmitter } from "events";
 import type { TradingPair as MonacoTradingPair } from "mach1_sdk";
 import { AIAgent } from "@/domains/bot/ai-agent";
+import { OrderEventEmitter } from "@/domains/execution/order-event-emitter";
 import {
   IStrategy,
   MarketEvent,
@@ -21,6 +22,7 @@ import {
   StrategyUtils,
 } from "@/domains/strategies/core/i-strategy";
 import { MarketManager } from "@/domains/trading/market-manager";
+import { MarketDataService } from "@/domains/trading/market-data-service";
 import { OrderManager } from "@/domains/trading/order-manager";
 import { PositionTracker } from "@/domains/trading/position-tracker";
 import { RealtimeManager } from "@/domains/trading/realtime-manager";
@@ -30,6 +32,8 @@ import { StrategyExecutionCoordinator } from "@/domains/execution/strategy-execu
 import {
   Address,
   MarketData,
+  type OrderLifecycleEvent,
+  type OrderLifecycleRecord,
   OrderRequest,
   OrderResult,
   Position,
@@ -112,6 +116,30 @@ export interface StrategyPerformanceReport {
   };
 }
 
+type StrategySignalAction = StrategySignal["action"];
+type SupportedExecutableOrderType = NonNullable<OrderRequest["orderType"]>;
+
+interface StrategySignalValidationError {
+  code:
+    | "unsupported_action"
+    | "unsupported_order_type"
+    | "unsupported_pair"
+    | "invalid_confidence"
+    | "missing_quantity"
+    | "invalid_quantity"
+    | "missing_price"
+    | "invalid_price";
+  field: "action" | "orderType" | "pair" | "confidence" | "quantity" | "price";
+  message: string;
+}
+
+interface StrategySignalValidationResult {
+  valid: boolean;
+  errors: StrategySignalValidationError[];
+  tradingPair?: TradingPair;
+  executionOrderType?: SupportedExecutableOrderType;
+}
+
 /**
  * Strategy Manager orchestrates strategy execution and lifecycle
  */
@@ -125,6 +153,9 @@ export class StrategyManager extends EventEmitter {
   private aiHelper?: AIAgent;
   private aiHelperConfig?: BotConfig["aiHelper"];
   private readonly tradingPairService: TradingPairService;
+  private readonly marketDataService: MarketDataService;
+  private detachOrderEventEmitter?: () => void;
+  private detachRiskEventEmitter?: () => void;
 
   constructor(
     private registry: StrategyRegistry,
@@ -138,6 +169,7 @@ export class StrategyManager extends EventEmitter {
   ) {
     super();
     this.tradingPairService = new TradingPairService(resolverProvider);
+    this.marketDataService = new MarketDataService();
     this.setupEventHandlers();
     if (aiHelperConfig) {
       this.setAiHelper(aiHelperConfig);
@@ -262,6 +294,13 @@ export class StrategyManager extends EventEmitter {
     executor: (order: OrderRequest) => Promise<OrderResult>,
   ): void {
     this.orderExecutor = executor;
+  }
+
+  attachOrderEventEmitter(orderEventEmitter: OrderEventEmitter): void {
+    this.detachOrderEventEmitter?.();
+    this.detachOrderEventEmitter = orderEventEmitter.on((event) => {
+      void this.handleOrderLifecycleEvent(event);
+    });
   }
 
   setAiHelper(aiHelperConfig: BotConfig["aiHelper"]): void {
@@ -488,19 +527,24 @@ export class StrategyManager extends EventEmitter {
     // Get market data for subscribed pairs
     const marketData = new Map<string, MarketData>();
     for (const pair of instance.subscriptions) {
-      // This would be populated by real market data
-      marketData.set(pair, {
-        [pair]: {
-          open: 0,
-          high: 0,
-          low: 0,
-          close: 0,
-          volume: 0,
-          rsi: 50,
-          macdSignal: 0,
-          timestamp: Date.now(),
-        },
-      } as MarketData);
+      const tradingPair = await this.resolveTradingPair(pair);
+      const end = new Date();
+      const start = new Date(end.getTime() - 60 * 60 * 1000);
+      const [ohlcv, orderbook, candleHistory] = await Promise.all([
+        this.realtimeManager.getOHLCVSnapshot(pair, "1m"),
+        this.realtimeManager.getOrderbookSnapshot(pair),
+        this.marketManager.getCandles(tradingPair, "1m", start, end),
+      ]);
+      const tick = this.marketDataService.buildLiveTick({
+        symbol: pair,
+        ohlcv,
+        orderbook,
+        candleHistory,
+      });
+
+      if (tick) {
+        marketData.set(pair, { [pair]: tick });
+      }
     }
 
     return {
@@ -867,6 +911,18 @@ export class StrategyManager extends EventEmitter {
     try {
       // Create context
       const context = await this.createStrategyContext(instance);
+      const missingPairs = [...instance.subscriptions].filter(
+        (pair) => !context.marketData.has(pair),
+      );
+      if (missingPairs.length > 0) {
+        const warning = `Missing market data for subscribed pairs: ${missingPairs.join(", ")}`;
+        this.addError(instance, new Error(warning), "warning");
+        return {
+          signals: [],
+          shouldContinue: true,
+          warnings: [warning],
+        };
+      }
 
       const aiDecision = await this.getAiDecision(instance, context);
       if (aiDecision) {
@@ -888,7 +944,11 @@ export class StrategyManager extends EventEmitter {
       const result = await instance.strategy.execute(context);
 
       // Process signals
-      await this.processStrategySignals(instance, result.signals, context);
+      const signalWarnings = await this.processStrategySignals(
+        instance,
+        result.signals,
+        context,
+      );
 
       // Update metrics
       instance.executionCount++;
@@ -912,6 +972,9 @@ export class StrategyManager extends EventEmitter {
         await this.pauseStrategy(instance.id);
       }
 
+      if (signalWarnings.length > 0) {
+        result.warnings = [...(result.warnings ?? []), ...signalWarnings];
+      }
       this.emit("strategyExecuted", instance, result);
       return result;
     } catch (error) {
@@ -924,9 +987,23 @@ export class StrategyManager extends EventEmitter {
     instance: StrategyInstance,
     signals: StrategySignal[],
     context: StrategyContext,
-  ): Promise<void> {
+  ): Promise<string[]> {
+    const warnings: string[] = [];
     for (const signal of signals) {
       try {
+        const validation = await this.validateStrategySignal(signal);
+        if (!validation.valid) {
+          const message = this.formatStrategySignalValidationMessage(
+            signal,
+            validation.errors,
+          );
+          this.addError(instance, new Error(message), "warning");
+          warnings.push(message);
+          continue;
+        }
+        if (signal.action === "hold") {
+          continue;
+        }
         const orderDecision = await this.getAiOrderDecision(
           instance,
           context,
@@ -941,36 +1018,43 @@ export class StrategyManager extends EventEmitter {
             continue;
           }
         }
-        await this.executeSignal(instance, signal);
+        await this.executeSignal(instance, signal, validation);
       } catch (error) {
         this.addError(instance, error as Error, "warning");
         console.warn(`Failed to execute signal for ${instance.id}:`, error);
       }
     }
+    return warnings;
   }
 
   private async executeSignal(
     instance: StrategyInstance,
     signal: StrategySignal,
+    validation: StrategySignalValidationResult,
   ): Promise<void> {
-    const tradingPair = await this.resolveTradingPair(signal.pair);
+    const tradingPair = validation.tradingPair!;
+    const executionOrderType = validation.executionOrderType ?? "market";
 
     if (signal.action === "buy" || signal.action === "sell") {
       const currentPrice =
         await this.marketManager.getCurrentPrice(tradingPair);
-      const orderPrice = signal.price
-        ? BigInt(Math.floor(signal.price * 100))
-        : currentPrice;
-      const orderQuantity = signal.quantity
-        ? BigInt(Math.floor(signal.quantity * 100))
-        : BigInt(100000); // Default quantity
+      const orderPrice =
+        executionOrderType === "limit"
+          ? BigInt(Math.floor((signal.price ?? 0) * 100))
+          : signal.price !== undefined
+            ? BigInt(Math.floor(signal.price * 100))
+            : currentPrice;
+      const orderQuantity = BigInt(Math.floor((signal.quantity ?? 0) * 100));
 
       const orderRequest: OrderRequest = {
         baseToken: tradingPair.base,
         quoteToken: tradingPair.quote,
         isBuy: signal.action === "buy",
+        strategyId: instance.id,
+        orderId: `${instance.id}-${Date.now()}`,
         price: orderPrice,
         quantity: orderQuantity,
+        orderType: executionOrderType,
       };
 
       // Risk validation
@@ -985,28 +1069,140 @@ export class StrategyManager extends EventEmitter {
       const executor = this.orderExecutor;
       const _result = executor
         ? await executor(orderRequest)
-        : signal.orderType === "limit"
+        : executionOrderType === "limit"
           ? await this.orderManager.placeLimitOrder(orderRequest)
           : await this.orderManager.placeMarketOrder(orderRequest);
-
-      // Track order
-      const tracker = this.performanceTrackers.get(instance.id);
-      if (tracker) {
-        tracker.recordTrade({
-          timestamp: Date.now(),
-          pair: signal.pair,
-          side: signal.action,
-          quantity: Number(orderQuantity) / 100,
-          price: Number(orderPrice) / 100,
-          pnl: 0, // Will be calculated when position is closed
-          commission: 0, // Will be updated with actual fees
-        });
-      }
 
       console.log(
         `📊 Strategy ${instance.id} executed ${signal.action} order for ${signal.pair}`,
       );
     }
+  }
+
+  private async validateStrategySignal(
+    signal: StrategySignal,
+  ): Promise<StrategySignalValidationResult> {
+    const errors: StrategySignalValidationError[] = [];
+    const action = signal.action;
+    const executableAction = action === "buy" || action === "sell";
+
+    if (
+      action !== "buy" &&
+      action !== "sell" &&
+      action !== "hold" &&
+      action !== "close_position" &&
+      action !== "reduce_position"
+    ) {
+      errors.push({
+        code: "unsupported_action",
+        field: "action",
+        message: `Unsupported strategy action: ${String(action)}`,
+      });
+    } else if (action === "close_position" || action === "reduce_position") {
+      errors.push({
+        code: "unsupported_action",
+        field: "action",
+        message: `Strategy action '${action}' not implemented yet`,
+      });
+    }
+
+    let tradingPair: TradingPair | undefined;
+    try {
+      tradingPair = await this.resolveTradingPair(signal.pair);
+    } catch (error) {
+      errors.push({
+        code: "unsupported_pair",
+        field: "pair",
+        message:
+          error instanceof Error
+            ? error.message
+            : `Unsupported trading pair: ${signal.pair}`,
+      });
+    }
+
+    if (
+      !Number.isFinite(signal.confidence) ||
+      signal.confidence < 0 ||
+      signal.confidence > 1
+    ) {
+      errors.push({
+        code: "invalid_confidence",
+        field: "confidence",
+        message: `Signal confidence must be between 0 and 1. Received: ${signal.confidence}`,
+      });
+    }
+
+    const executionOrderType = this.mapStrategyOrderType(signal, errors);
+
+    if (executableAction) {
+      if (signal.quantity === undefined) {
+        errors.push({
+          code: "missing_quantity",
+          field: "quantity",
+          message:
+            "Signal quantity required for buy/sell actions; skipping order",
+        });
+      } else if (!(signal.quantity > 0)) {
+        errors.push({
+          code: "invalid_quantity",
+          field: "quantity",
+          message: `Signal quantity must be positive. Received: ${signal.quantity}`,
+        });
+      }
+    }
+
+    if (executionOrderType === "limit") {
+      if (signal.price === undefined) {
+        errors.push({
+          code: "missing_price",
+          field: "price",
+          message: "Limit orders require a price",
+        });
+      } else if (!(signal.price > 0)) {
+        errors.push({
+          code: "invalid_price",
+          field: "price",
+          message: `Signal price must be positive. Received: ${signal.price}`,
+        });
+      }
+    } else if (signal.price !== undefined && !(signal.price > 0)) {
+      errors.push({
+        code: "invalid_price",
+        field: "price",
+        message: `Signal price must be positive. Received: ${signal.price}`,
+      });
+    }
+
+    return {
+      valid: errors.length === 0,
+      errors,
+      tradingPair,
+      executionOrderType,
+    };
+  }
+
+  private mapStrategyOrderType(
+    signal: StrategySignal,
+    errors: StrategySignalValidationError[],
+  ): SupportedExecutableOrderType | undefined {
+    const requestedOrderType = signal.orderType ?? "market";
+    if (requestedOrderType === "market" || requestedOrderType === "limit") {
+      return requestedOrderType;
+    }
+
+    errors.push({
+      code: "unsupported_order_type",
+      field: "orderType",
+      message: `Strategy order type '${requestedOrderType}' not implemented yet`,
+    });
+    return undefined;
+  }
+
+  private formatStrategySignalValidationMessage(
+    signal: StrategySignal,
+    errors: StrategySignalValidationError[],
+  ): string {
+    return `Strategy signal rejected for ${signal.pair}: ${errors.map((error) => `${error.field}:${error.code}:${error.message}`).join("; ")}`;
   }
 
   /**
@@ -1023,12 +1219,7 @@ export class StrategyManager extends EventEmitter {
     // Subscribe to market data for supported pairs
     for (const pairSymbol of registeredStrategy.config.supportedPairs) {
       try {
-        const [base, quote] = pairSymbol.split("/");
-        const tradingPair: TradingPair = {
-          base: base as Address,
-          quote: quote as Address,
-          symbol: pairSymbol,
-        };
+        const tradingPair = await this.resolveTradingPair(pairSymbol);
 
         // Subscribe to price updates
         const priceStream = await this.realtimeManager.subscribePrices([
@@ -1078,32 +1269,64 @@ export class StrategyManager extends EventEmitter {
   }
 
   private setupEventHandlers(): void {
-    // Note: OrderManager and RiskManager don't currently extend EventEmitter
-    // In a real implementation, these would be modified to emit events
-    // For now, we'll use a polling approach or extend these classes
-    // TODO: Extend OrderManager and RiskManager to emit events
-    // this.orderManager.on('orderFilled', (order) => {
-    //   this.handleOrderEvent({
-    //     type: 'filled',
-    //     orderId: order.orderId,
-    //     order: order,
-    //     timestamp: Date.now()
-    //   });
-    // });
-    // this.riskManager.on('riskBreach', (breach) => {
-    //   this.handleRiskEvent({
-    //     type: breach.type,
-    //     severity: breach.severity,
-    //     message: breach.message,
-    //     data: breach,
-    //     timestamp: Date.now()
-    //   });
-    // });
+    if (
+      typeof (this.riskManager as Partial<RiskManager>).on !== "function" ||
+      typeof (this.riskManager as Partial<RiskManager>).off !== "function"
+    ) {
+      return;
+    }
+    const riskListener = (event: RiskEvent) => {
+      void this.handleRiskEvent(event);
+    };
+    this.detachRiskEventEmitter?.();
+    this.detachRiskEventEmitter = () => {
+      this.riskManager.off("riskEvent", riskListener);
+    };
+    this.riskManager.on("riskEvent", riskListener);
+  }
+
+  private async handleOrderLifecycleEvent(
+    lifecycleEvent: OrderLifecycleEvent,
+  ): Promise<void> {
+    const strategyOrderEvent: OrderEvent = {
+      type: lifecycleEvent.type,
+      orderId: lifecycleEvent.order.localId,
+      order: lifecycleEvent.order,
+      timestamp: lifecycleEvent.timestamp,
+    };
+
+    const owner = lifecycleEvent.order.strategyId;
+    if (owner) {
+      const tracker = this.performanceTrackers.get(owner);
+      const instance = this.instances.get(owner);
+      if (tracker && instance) {
+        tracker.recordOrderEvent(lifecycleEvent.order);
+        instance.metrics = {
+          ...instance.metrics,
+          ...tracker.getPerformanceMetrics(),
+          totalTrades: tracker.getPerformanceMetrics().totalTrades,
+          lastUpdate: lifecycleEvent.timestamp,
+        };
+      }
+    }
+
+    await this.handleOrderEvent(strategyOrderEvent);
   }
 
   private async handleOrderEvent(event: OrderEvent): Promise<void> {
     // Notify all relevant strategy instances
     for (const instance of this.instances.values()) {
+      const orderRecord =
+        "pair" in event.order && "localId" in event.order
+          ? (event.order as OrderLifecycleRecord)
+          : undefined;
+      const isRelevant =
+        orderRecord !== undefined &&
+        (orderRecord.strategyId === instance.id ||
+          instance.subscriptions.has(orderRecord.pair.symbol));
+      if (orderRecord && !isRelevant) {
+        continue;
+      }
       if (instance.strategy.onOrderEvent) {
         try {
           const context = await this.createStrategyContext(instance);
@@ -1116,8 +1339,24 @@ export class StrategyManager extends EventEmitter {
   }
 
   private async handleRiskEvent(event: RiskEvent): Promise<void> {
-    // Notify all strategy instances
     for (const instance of this.instances.values()) {
+      const eventData =
+        event.data && typeof event.data === "object" ? event.data : undefined;
+      const strategyId =
+        eventData && "strategyId" in eventData
+          ? (eventData.strategyId as string | undefined)
+          : undefined;
+      const pair =
+        eventData && "pair" in eventData
+          ? (eventData.pair as string | undefined)
+          : undefined;
+      if (
+        strategyId !== undefined &&
+        strategyId !== instance.id &&
+        (!pair || !instance.subscriptions.has(pair))
+      ) {
+        continue;
+      }
       if (instance.strategy.onRiskEvent) {
         try {
           const context = await this.createStrategyContext(instance);
@@ -1184,21 +1423,67 @@ class PerformanceTracker {
 
   private executionTimes: number[] = [];
   private returns: number[] = [];
+  private readonly positions = new Map<
+    string,
+    { quantity: number; averagePrice: number }
+  >();
 
-  recordTrade(trade: {
-    timestamp: number;
-    pair: string;
-    side: "buy" | "sell";
-    quantity: number;
-    price: number;
-    pnl: number;
-    commission: number;
-  }): void {
-    this.trades.push(trade);
-
-    if (trade.pnl !== 0) {
-      this.returns.push(trade.pnl);
+  recordOrderEvent(order: OrderLifecycleRecord): void {
+    if (
+      order.strategyId === undefined ||
+      (order.status !== "filled" && order.status !== "partially_filled") ||
+      order.averageFillPrice === undefined ||
+      order.filledQuantity <= 0n
+    ) {
+      return;
     }
+
+    const pair = order.pair.symbol;
+    const quantity = Number(order.filledQuantity) / 100;
+    const price = Number(order.averageFillPrice) / 100;
+    const commission = Number(order.fees) / 100;
+    const slippage = Number(order.slippage) / 100;
+    const position = this.positions.get(pair) ?? {
+      quantity: 0,
+      averagePrice: 0,
+    };
+
+    if (order.side === "buy") {
+      const totalQuantity = position.quantity + quantity;
+      position.averagePrice =
+        totalQuantity > 0
+          ? (position.quantity * position.averagePrice + quantity * price) /
+            totalQuantity
+          : 0;
+      position.quantity = totalQuantity;
+      this.positions.set(pair, position);
+      return;
+    }
+
+    const realizedQuantity = Math.min(quantity, position.quantity);
+    const pnl =
+      realizedQuantity > 0
+        ? (price - position.averagePrice) * realizedQuantity -
+          commission -
+          slippage
+        : 0;
+    position.quantity = Math.max(0, position.quantity - realizedQuantity);
+    if (position.quantity === 0) {
+      position.averagePrice = 0;
+    }
+    this.positions.set(pair, position);
+
+    this.trades.push({
+      timestamp: order.updatedAt,
+      pair,
+      side: order.side,
+      quantity: realizedQuantity,
+      price,
+      pnl,
+      commission,
+    });
+
+    this.returns.push(pnl);
   }
 
   recordExecution(result: StrategyResult, executionTimeMs: number): void {
@@ -1212,6 +1497,7 @@ class PerformanceTracker {
     winRate: number;
     profitFactor: number;
     avgTradeDuration: number;
+    totalTrades: number;
   } {
     const totalReturn = this.returns.reduce((sum, ret) => sum + ret, 0);
     const winningTrades = this.returns.filter((ret) => ret > 0);
@@ -1268,6 +1554,7 @@ class PerformanceTracker {
       winRate,
       profitFactor,
       avgTradeDuration: 0, // Would need to track position open/close times
+      totalTrades: this.returns.length,
     };
   }
 

@@ -29,15 +29,65 @@ export interface ExecutionOrderStatusResult extends OrderResult {
   [key: string]: unknown;
 }
 
+export interface CancellationResult extends ExecutionOrderStatusResult {
+  cancellationApplied: boolean;
+  reason?: string;
+}
+
 export interface ExecutionOrderRecord extends ExecutionOrderStatusResult {
   order: OrderRequest;
+  timestamp: number;
+}
+
+export type OrderLifecycleStatus =
+  | "submitted"
+  | "accepted"
+  | NormalizedOrderStatus;
+
+export type OrderLifecycleEventType =
+  | "submitted"
+  | "accepted"
+  | "partially_filled"
+  | "filled"
+  | "cancelled"
+  | "rejected";
+
+export interface OrderLifecycleRecord {
+  localId: string;
+  engineOrderId?: string;
+  exchangeOrderId?: string;
+  strategyId?: string;
+  pair: TradingPair;
+  side: "buy" | "sell";
+  type: "market" | "limit";
+  requestedQuantity: bigint;
+  filledQuantity: bigint;
+  remainingQuantity: bigint;
+  averageFillPrice?: bigint;
+  fees: bigint;
+  slippage: bigint;
+  status: OrderLifecycleStatus;
+  submittedAt: number;
+  acceptedAt?: number;
+  filledAt?: number;
+  rejectedAt?: number;
+  cancelledAt?: number;
+  updatedAt: number;
+  rejectedReason?: string;
+  cancelledReason?: string;
+}
+
+export interface OrderLifecycleEvent {
+  type: OrderLifecycleEventType;
+  previousStatus?: OrderLifecycleStatus;
+  order: OrderLifecycleRecord;
   timestamp: number;
 }
 
 export interface ExecutionEngine {
   initialize?(): Promise<void>;
   placeOrder(order: OrderRequest): Promise<OrderResult>;
-  cancelOrder(orderId: string): Promise<void>;
+  cancelOrder(orderId: string): Promise<CancellationResult>;
   getOrderStatus(orderId: string): Promise<ExecutionOrderStatusResult>;
   getPosition(pair: TradingPair): Promise<Position>;
   getBalance(token: Address): Promise<bigint>;

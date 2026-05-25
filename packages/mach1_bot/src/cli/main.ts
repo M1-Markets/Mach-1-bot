@@ -529,16 +529,16 @@ export const registerCliCommands = (target: Command): Command => {
             chain_id: response.chainId,
           },
           ...(response.enableAiHelper &&
-            response.aiHelperType &&
-            response.aiHelperApiKey
+          response.aiHelperType &&
+          response.aiHelperApiKey
             ? {
-              ai_helper: {
-                enabled: true,
-                provider: response.aiHelperType,
-                api_key: response.aiHelperApiKey,
-                prompt: getDefaultAiPrompt(),
-              },
-            }
+                ai_helper: {
+                  enabled: true,
+                  provider: response.aiHelperType,
+                  api_key: response.aiHelperApiKey,
+                  prompt: getDefaultAiPrompt(),
+                },
+              }
             : {}),
         };
 
@@ -747,7 +747,12 @@ export const registerCliCommands = (target: Command): Command => {
           !process.env.MACH_ONE_SUPERVISED &&
           !instanceConfig &&
           configFiles.length > 1;
-        if (noUiEnabled && !process.env.MACH_ONE_SUPERVISED && !instanceConfig && configFiles.length > 1) {
+        if (
+          noUiEnabled &&
+          !process.env.MACH_ONE_SUPERVISED &&
+          !instanceConfig &&
+          configFiles.length > 1
+        ) {
           console.log(
             pc.cyan(
               `🧭 Starting ${configFiles.length} bot instances in non-interactive mode...`,
@@ -799,7 +804,8 @@ export const registerCliCommands = (target: Command): Command => {
             );
             child.on("exit", (code, signal) => {
               const label = pc.gray(
-                `${path.basename(file)} exited with ${signal ? `signal ${signal}` : `code ${code ?? 0}`
+                `${path.basename(file)} exited with ${
+                  signal ? `signal ${signal}` : `code ${code ?? 0}`
                 }`,
               );
               console.log(label);
@@ -889,7 +895,8 @@ export const registerCliCommands = (target: Command): Command => {
             });
             child.on("exit", (code, signal) => {
               const label = pc.gray(
-                `${path.basename(file)} exited with ${signal ? `signal ${signal}` : `code ${code ?? 0}`
+                `${path.basename(file)} exited with ${
+                  signal ? `signal ${signal}` : `code ${code ?? 0}`
                 }`,
               );
               supervisorUi?.setPaneStatus(
@@ -1168,7 +1175,12 @@ export const registerCliCommands = (target: Command): Command => {
         // default here. Mainnet/development/local exist for protocol
         // contributors.
         const rawEnv = (process.env.MONACO_ENV || "staging").toLowerCase();
-        const validEnvs = ["mainnet", "staging", "development", "local"] as const;
+        const validEnvs = [
+          "mainnet",
+          "staging",
+          "development",
+          "local",
+        ] as const;
         const monacoEnv = (
           validEnvs.includes(rawEnv as (typeof validEnvs)[number])
             ? rawEnv
@@ -1237,14 +1249,12 @@ export const registerCliCommands = (target: Command): Command => {
               "\n   Most likely cause: your wallet has no collateral in the Monaco vault.",
             ),
           );
-          console.log(
-            pc.cyan(
-              "\n   To fund a testnet wallet (easy path):",
-            ),
-          );
+          console.log(pc.cyan("\n   To fund a testnet wallet (easy path):"));
           console.log(pc.gray("     1. Go to https://app.m1.markets"));
           console.log(pc.gray("     2. Connect this wallet"));
-          console.log(pc.gray("     3. Request testnet tokens from the faucet"));
+          console.log(
+            pc.gray("     3. Request testnet tokens from the faucet"),
+          );
           console.log(pc.gray("     4. Deposit them into the Monaco vault"));
           console.log(
             pc.gray("\n   Then re-run `npx mach1 demo` with MODE=live."),
@@ -1274,8 +1284,7 @@ export const registerCliCommands = (target: Command): Command => {
         );
         process.exit(orderRejected ? 2 : 0);
       } catch (error) {
-        const message =
-          error instanceof Error ? error.message : String(error);
+        const message = error instanceof Error ? error.message : String(error);
         const isMonacoApiError =
           /\/api\/v\d+\//.test(message) ||
           /Network request failed/i.test(message);
@@ -1285,9 +1294,7 @@ export const registerCliCommands = (target: Command): Command => {
           );
 
         if (isMonacoApiError) {
-          console.error(
-            pc.red("\n❌ Monaco protocol API call failed."),
-          );
+          console.error(pc.red("\n❌ Monaco protocol API call failed."));
           console.error(pc.gray(`   Error: ${message}`));
           console.error(
             pc.yellow(
@@ -1301,7 +1308,9 @@ export const registerCliCommands = (target: Command): Command => {
           );
         } else if (isNetworkLevelError) {
           console.error(
-            pc.red("\n❌ Network error reaching the Monaco protocol or Sei RPC."),
+            pc.red(
+              "\n❌ Network error reaching the Monaco protocol or Sei RPC.",
+            ),
           );
           console.error(pc.gray(`   Error: ${message}`));
           console.error(
@@ -1310,9 +1319,7 @@ export const registerCliCommands = (target: Command): Command => {
             ),
           );
         } else if (mode === "live") {
-          console.error(
-            pc.red(`\n❌ Live demo failed: ${message}`),
-          );
+          console.error(pc.red(`\n❌ Live demo failed: ${message}`));
           console.error(
             pc.gray(
               "   If this looks like a Monaco protocol issue, check https://app.m1.markets",
@@ -1350,13 +1357,10 @@ async function runBot(configFile: string, runOptions: RunOptions = {}) {
   const disableUi = process.env.MACH_ONE_NO_UI === "1";
 
   try {
-    const disableUi =
-      runOptions.noUi ?? process.env.MACH_ONE_NO_UI === "1";
+    const disableUi = runOptions.noUi ?? process.env.MACH_ONE_NO_UI === "1";
 
     if (disableUi) {
-      console.log(
-        pc.cyan("🔧 Running without interactive UI (--no-ui)"),
-      );
+      console.log(pc.cyan("🔧 Running without interactive UI (--no-ui)"));
     }
 
     // Load and parse TOML configuration
@@ -1416,7 +1420,9 @@ async function runBot(configFile: string, runOptions: RunOptions = {}) {
       };
     }
     if (verbose) {
-      console.log(pc.cyan(`🚀 Starting mach-one-bot with config: ${configFile}`));
+      console.log(
+        pc.cyan(`🚀 Starting mach-one-bot with config: ${configFile}`),
+      );
       console.log(pc.blue("📖 Loading configuration..."));
       console.log(pc.gray(`📝 Logging to ${logFilePath}`));
     }

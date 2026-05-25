@@ -8,4 +8,5 @@ export * from "./logger";
 export * from "./rate-limiter";
 export * from "./record-utils";
 export * from "./symbol-utils";
+export * from "./trading-utils";
 export * from "./validation/config-builder";

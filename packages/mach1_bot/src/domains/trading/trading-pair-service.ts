@@ -1,7 +1,4 @@
-import type {
-  ResolvedTradingPair,
-  TradingPairResolver,
-} from "mach1_sdk";
+import type { ResolvedTradingPair, TradingPairResolver } from "mach1_sdk";
 import type { Address, TradingPair } from "@/shared/types";
 
 type TradingPairResolverLike = Pick<
@@ -47,7 +44,9 @@ function toTradingPair(pair: ResolvedTradingPair, symbol: string): TradingPair {
 
 export class TradingPairService {
   constructor(
-    private readonly resolverProvider?: () => TradingPairResolverLike | undefined,
+    private readonly resolverProvider?: () =>
+      | TradingPairResolverLike
+      | undefined,
   ) {}
 
   normalizeSymbol(symbol: string): string {
@@ -98,10 +97,7 @@ export class TradingPairService {
     return Array.from(new Set(normalizedSymbols));
   }
 
-  resolvePairFromContracts(
-    base: Address,
-    quote: Address,
-  ): TradingPair | null {
+  resolvePairFromContracts(base: Address, quote: Address): TradingPair | null {
     const resolver = this.resolverProvider?.();
     if (resolver) {
       const pair = resolver.getPairByContracts(base, quote);
@@ -130,11 +126,13 @@ export class TradingPairService {
     resolver: TradingPairResolverLike,
     normalizedSymbol: string,
   ): TradingPair | null {
-    const matchedSymbol = resolver.getAllSymbols().find(
-      (symbol) =>
-        this.normalizeSymbol(resolver.normalizeSymbol(symbol)) ===
-        normalizedSymbol,
-    );
+    const matchedSymbol = resolver
+      .getAllSymbols()
+      .find(
+        (symbol) =>
+          this.normalizeSymbol(resolver.normalizeSymbol(symbol)) ===
+          normalizedSymbol,
+      );
     const pair =
       (matchedSymbol ? resolver.getPairBySymbol(matchedSymbol) : undefined) ??
       resolver.getPairBySymbol(normalizedSymbol) ??

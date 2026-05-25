@@ -1,10 +1,12 @@
 import { BaseTradingMode } from "@/domains/execution/trading-mode";
+import { OrderLifecycleStore } from "@/domains/execution/order-lifecycle-store";
 import { MarketManager } from "@/domains/trading/market-manager";
 import { RealtimeManager } from "@/domains/trading/realtime-manager";
 import { TradingPairService } from "@/domains/trading/trading-pair-service";
 import type { PaperTradingConfig } from "@/shared/types";
 import {
   Address,
+  type CancellationResult,
   type ExecutionOrderRecord,
   type ExecutionOrderStatusResult,
   type ExecutionTrade,
@@ -16,7 +18,9 @@ import {
 } from "@/shared/types";
 import { StrategyExecutionCoordinator } from "@/domains/execution/strategy-execution-coordinator";
 import {
+  createIdGenerator,
   type Clock,
+  type IdGenerator,
   type Rng,
   realClock,
   realRng,
@@ -72,12 +76,19 @@ export class PaperTradingEngine extends BaseTradingMode {
   private readonly rng: Rng;
   private readonly clock: Clock;
   private readonly scheduler: Scheduler;
+  private readonly orderLifecycleStore: OrderLifecycleStore;
+  private readonly orderIdGenerator: IdGenerator;
 
   constructor(
     config: PaperTradingConfig,
     marketManager: MarketManager,
     realtimeManager: RealtimeManager,
-    options?: { rng?: Rng; clock?: Clock; scheduler?: Scheduler },
+    options?: {
+      rng?: Rng;
+      clock?: Clock;
+      scheduler?: Scheduler;
+      orderLifecycleStore?: OrderLifecycleStore;
+    },
   ) {
     super();
     this.config = config;
@@ -86,6 +97,12 @@ export class PaperTradingEngine extends BaseTradingMode {
     this.rng = options?.rng ?? realRng;
     this.clock = options?.clock ?? realClock;
     this.scheduler = options?.scheduler ?? realScheduler;
+    this.orderLifecycleStore =
+      options?.orderLifecycleStore ?? new OrderLifecycleStore();
+    this.orderIdGenerator = createIdGenerator("paper", {
+      clock: this.clock,
+      rng: this.rng,
+    });
     this.cash = config.initialCapital;
     this.peakValue = config.initialCapital;
 
@@ -94,7 +111,20 @@ export class PaperTradingEngine extends BaseTradingMode {
   }
 
   async placeOrder(order: OrderRequest): Promise<OrderResult> {
-    const orderId = `paper_${this.clock.now()}_${Math.floor(this.rng.next() * 0xffffffff).toString(36)}`;
+    const orderId = this.orderIdGenerator.next();
+    const pair: TradingPair = {
+      base: order.baseToken,
+      quote: order.quoteToken,
+      symbol: `${order.baseToken}/${order.quoteToken}`,
+    };
+
+    this.orderLifecycleStore.createSubmittedOrder({
+      localId: orderId,
+      strategyId: order.strategyId,
+      pair,
+      order,
+      timestamp: this.clock.now(),
+    });
 
     // Validate order first
     if (!this.validateOrder(order)) {
@@ -106,6 +136,12 @@ export class PaperTradingEngine extends BaseTradingMode {
         filledQuantity: 0n,
         remainingQuantity: order.quantity,
       });
+      this.orderLifecycleStore.applyUpdate({
+        localId: orderId,
+        type: "rejected",
+        reason: "validation_failed",
+        timestamp: this.clock.now(),
+      });
       return {
         orderId,
         status: "rejected",
@@ -113,6 +149,21 @@ export class PaperTradingEngine extends BaseTradingMode {
         remainingQuantity: order.quantity,
       };
     }
+
+    this.orders.set(orderId, {
+      orderId,
+      order,
+      status: "pending",
+      timestamp: this.clock.now(),
+      filledQuantity: 0n,
+      remainingQuantity: order.quantity,
+    });
+    this.orderLifecycleStore.applyUpdate({
+      localId: orderId,
+      type: "accepted",
+      status: "pending",
+      timestamp: this.clock.now(),
+    });
 
     this.scheduler.setTimeout(() => {
       this.simulateOrderFill(orderId);
@@ -143,6 +194,12 @@ export class PaperTradingEngine extends BaseTradingMode {
       if (currentPrice === 0n) {
         // Market price unavailable, reject order
         orderData.status = "rejected";
+        this.orderLifecycleStore.applyUpdate({
+          localId: orderId,
+          type: "rejected",
+          reason: "price_unavailable",
+          timestamp: this.clock.now(),
+        });
         return;
       }
 
@@ -151,6 +208,12 @@ export class PaperTradingEngine extends BaseTradingMode {
         !(await this.validateOrderAgainstBalance(orderData.order, currentPrice))
       ) {
         orderData.status = "rejected";
+        this.orderLifecycleStore.applyUpdate({
+          localId: orderId,
+          type: "rejected",
+          reason: "insufficient_balance",
+          timestamp: this.clock.now(),
+        });
         return;
       }
 
@@ -181,6 +244,17 @@ export class PaperTradingEngine extends BaseTradingMode {
       orderData.executionPrice = executionPrice;
       orderData.commission = commission;
       orderData.slippage = slippage;
+      this.orderLifecycleStore.applyUpdate({
+        localId: orderId,
+        type: "filled",
+        status: "filled",
+        filledQuantity: orderData.order.quantity,
+        remainingQuantity: 0n,
+        averageFillPrice: executionPrice,
+        fees: commission,
+        slippage,
+        timestamp: this.clock.now(),
+      });
 
       // Log the trade
       this.logTrade(orderData.order, {
@@ -196,6 +270,12 @@ export class PaperTradingEngine extends BaseTradingMode {
         error as Error,
       );
       orderData.status = "rejected";
+      this.orderLifecycleStore.applyUpdate({
+        localId: orderId,
+        type: "rejected",
+        reason: error instanceof Error ? error.message : String(error),
+        timestamp: this.clock.now(),
+      });
     }
   }
 
@@ -234,12 +314,12 @@ export class PaperTradingEngine extends BaseTradingMode {
     let sizeMultiplier = 100n; // Default multiplier (1.0)
 
     // Increase slippage for larger orders (simplified)
-    if (orderValue > 10000n * 100n) {
-      // Orders larger than $10,000
-      sizeMultiplier = 150n; // 1.5x slippage
-    } else if (orderValue > 100000n * 100n) {
+    if (orderValue > 100000n * 100n) {
       // Orders larger than $100,000
       sizeMultiplier = 200n; // 2.0x slippage
+    } else if (orderValue > 10000n * 100n) {
+      // Orders larger than $10,000
+      sizeMultiplier = 150n; // 1.5x slippage
     }
 
     const totalSlippage =
@@ -347,15 +427,33 @@ export class PaperTradingEngine extends BaseTradingMode {
     }
   }
 
-  async cancelOrder(orderId: string): Promise<void> {
+  async cancelOrder(orderId: string): Promise<CancellationResult> {
     const orderData = this.orders.get(orderId);
     if (orderData && orderData.status === "pending") {
       orderData.status = "cancelled";
+      this.orderLifecycleStore.applyUpdate({
+        localId: orderId,
+        type: "cancelled",
+        reason: "cancelled_by_user",
+        timestamp: this.clock.now(),
+      });
+      return {
+        orderId,
+        status: "cancelled",
+        filledQuantity: orderData.filledQuantity,
+        remainingQuantity: orderData.remainingQuantity,
+        cancellationApplied: true,
+        reason: "cancelled_by_user",
+      };
     } else if (!orderData) {
       throw new Error("Order not found");
     } else {
       throw new Error(`Cannot cancel order in status: ${orderData.status}`);
     }
+  }
+
+  getOrderLifecycleStore(): OrderLifecycleStore {
+    return this.orderLifecycleStore;
   }
 
   async getPosition(pair: TradingPair): Promise<Position> {
@@ -414,8 +512,7 @@ export class PaperTradingEngine extends BaseTradingMode {
         {},
         error as Error,
       );
-      // Return a fallback price (could be last known price or default)
-      return 100n * 100n; // Default price scaled by 100
+      return 0n;
     }
   }
 
@@ -479,9 +576,7 @@ export class PaperTradingEngine extends BaseTradingMode {
     return totalValue;
   }
 
-  async getOrderStatus(
-    orderId: string,
-  ): Promise<ExecutionOrderStatusResult> {
+  async getOrderStatus(orderId: string): Promise<ExecutionOrderStatusResult> {
     const orderData = this.orders.get(orderId);
     if (!orderData) {
       throw new Error("Order not found");
@@ -761,7 +856,6 @@ export class PaperTradingEngine extends BaseTradingMode {
     console.log("✅ Paper trading stopped");
   }
 
-
   /**
    * Construct live market data for strategy execution
    */
@@ -772,12 +866,8 @@ export class PaperTradingEngine extends BaseTradingMode {
       // Get available trading pairs from the market manager
       const availablePairs = await this.getAvailableTradingPairs();
 
-      for (const pairSymbol of availablePairs) {
+      for (const pair of availablePairs) {
         try {
-          // Convert symbol to TradingPair format
-          const pair = this.parseSymbolToPair(pairSymbol);
-          if (!pair) continue;
-
           // Get current market price
           const currentPrice = await this.getCurrentPrice(pair);
           if (currentPrice === 0n) continue;
@@ -785,7 +875,7 @@ export class PaperTradingEngine extends BaseTradingMode {
           // Get basic market data (in a real implementation, this would come from RealtimeManager)
           const price = Number(currentPrice) / 100; // Convert from scaled bigint
 
-          marketData[pairSymbol] = {
+          marketData[pair.symbol] = {
             open: price * 0.998, // Mock OHLC with small variations
             high: price * 1.002,
             low: price * 0.997,
@@ -797,7 +887,7 @@ export class PaperTradingEngine extends BaseTradingMode {
           };
         } catch (error) {
           logger.warn(
-            `Failed to get market data for ${pairSymbol}`,
+            `Failed to get market data for ${pair.symbol}`,
             {},
             error as Error,
           );
@@ -814,25 +904,44 @@ export class PaperTradingEngine extends BaseTradingMode {
   /**
    * Get available trading pairs (simplified)
    */
-  private async getAvailableTradingPairs(): Promise<string[]> {
+  private async getAvailableTradingPairs(): Promise<TradingPair[]> {
     try {
-      return this.tradingPairService.getAllSymbols();
+      if (
+        "getAllTradingPairs" in this.marketManager &&
+        typeof this.marketManager.getAllTradingPairs === "function"
+      ) {
+        const pairs = await this.marketManager.getAllTradingPairs();
+        const resolvedPairs = pairs
+          .map((pair) => {
+            try {
+              return this.tradingPairService.resolveSymbol(pair.symbol);
+            } catch {
+              if (
+                /^0x[a-fA-F0-9]{40}$/.test(pair.base_token_contract) &&
+                /^0x[a-fA-F0-9]{40}$/.test(pair.quote_token_contract)
+              ) {
+                return {
+                  base: pair.base_token_contract as Address,
+                  quote: pair.quote_token_contract as Address,
+                  symbol: this.tradingPairService.normalizeSymbol(pair.symbol),
+                };
+              }
+              return null;
+            }
+          })
+          .filter((pair): pair is TradingPair => pair !== null);
+
+        if (resolvedPairs.length > 0) {
+          return resolvedPairs;
+        }
+      }
     } catch (error) {
       logger.warn("Failed to get available trading pairs", {}, error as Error);
-      return [];
     }
-  }
 
-  /**
-   * Parse symbol string to TradingPair object
-   */
-  private parseSymbolToPair(symbol: string): TradingPair | null {
-    try {
-      return this.tradingPairService.resolveSymbol(symbol);
-    } catch (error) {
-      logger.warn(`Failed to parse symbol ${symbol}`, {}, error as Error);
-      return null;
-    }
+    return this.tradingPairService
+      .getAllSymbols()
+      .map((symbol) => this.tradingPairService.resolveSymbol(symbol));
   }
 
   /**

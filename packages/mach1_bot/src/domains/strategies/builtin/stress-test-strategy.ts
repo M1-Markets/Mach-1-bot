@@ -22,12 +22,14 @@ export interface StressTestParameters extends StrategyParameters {
   intervalMs: number;
   minOrderUsd: number;
   maxOrderUsd: number;
+  seed?: number;
 }
 
 export interface StressTestState {
   ordersSent: number;
   nextExecutionTime: number;
   isActive: boolean;
+  rngState: number;
 }
 
 const parsePair = (pair: string): { base: string; quote: string } => {
@@ -95,6 +97,13 @@ export class StressTestStrategy implements IStrategy {
         max: 1000000,
         description: "Maximum order notional (USD)",
       },
+      seed: {
+        type: "number",
+        default: 0,
+        min: 0,
+        max: 4294967295,
+        description: "Optional deterministic seed for repeatable stress runs",
+      },
     },
   };
 
@@ -103,10 +112,15 @@ export class StressTestStrategy implements IStrategy {
 
   async initialize(context: StrategyContext): Promise<void> {
     this.parameters = context.parameters as StressTestParameters;
+    const seed =
+      typeof this.parameters.seed === "number"
+        ? this.parameters.seed >>> 0
+        : Date.now() >>> 0;
     this.state = {
       ordersSent: 0,
       nextExecutionTime: Date.now(),
       isActive: true,
+      rngState: seed,
     };
     context.state.set("stressState", this.state);
     context.utils.log.warn(
@@ -120,6 +134,10 @@ export class StressTestStrategy implements IStrategy {
       ordersSent: 0,
       nextExecutionTime: now,
       isActive: true,
+      rngState:
+        typeof this.parameters.seed === "number"
+          ? this.parameters.seed >>> 0
+          : now >>> 0,
     };
 
     if (!this.state.isActive) {
@@ -176,8 +194,8 @@ export class StressTestStrategy implements IStrategy {
     const maxOrder = Math.max(minOrder, this.parameters.maxOrderUsd);
 
     for (let i = 0; i < batchCount; i++) {
-      const randomUsd = minOrder + Math.random() * (maxOrder - minOrder);
-      const side = Math.random() >= 0.5 ? "buy" : "sell";
+      const randomUsd = minOrder + this.nextRandom() * (maxOrder - minOrder);
+      const side = this.nextRandom() >= 0.5 ? "buy" : "sell";
 
       if (side === "buy") {
         if (availableQuoteUsd < minOrder) {
@@ -261,6 +279,16 @@ export class StressTestStrategy implements IStrategy {
       errors.push("maxOrderUsd must be >= minOrderUsd");
     }
     return errors;
+  }
+
+  private nextRandom(): number {
+    this.state.rngState += 0x6d2b79f5;
+    let value = Math.imul(
+      this.state.rngState ^ (this.state.rngState >>> 15),
+      1 | this.state.rngState,
+    );
+    value = (value + Math.imul(value ^ (value >>> 7), 61 | value)) >>> 0;
+    return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
   }
 
   async updateParameters(

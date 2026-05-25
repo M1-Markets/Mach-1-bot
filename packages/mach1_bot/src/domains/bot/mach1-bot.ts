@@ -1,7 +1,7 @@
-import type { Interval, TradingPairResolver } from "mach1_sdk";
-import { tradingPairResolver } from "mach1_sdk";
+import type { TradingPairResolver } from "mach1_sdk";
 import type { BacktestEngine } from "@/domains/execution/backtest-engine";
 import type { LiveTradingEngine } from "@/domains/execution/live-trading-engine";
+import { OrderEventEmitter, OrderLifecycleStore } from "@/domains/execution";
 import type { PaperTradingEngine } from "@/domains/execution/paper-trading-engine";
 import { EXAMPLE_STRATEGIES } from "@/domains/strategies/examples/example-strategies";
 import type { StrategyPerformanceReport } from "@/domains/strategies/management/strategy-manager";
@@ -20,6 +20,7 @@ import {
   StrategyOptimizer,
 } from "@/domains/strategies/optimization/strategy-optimizer";
 import { MarketManager } from "@/domains/trading/market-manager";
+import { MarketDataService } from "@/domains/trading/market-data-service";
 import { OrderManager } from "@/domains/trading/order-manager";
 import { PositionTracker } from "@/domains/trading/position-tracker";
 import { RealtimeManager } from "@/domains/trading/realtime-manager";
@@ -58,13 +59,9 @@ import type {
   TradeEvent,
 } from "@/shared/types/internal-events";
 import { RiskLimits as TradingRiskLimits } from "@/shared/types/trading";
-import { isRecord, type UnknownRecord } from "@/shared/utils/record-utils";
+import { isRecord } from "@/shared/utils/record-utils";
+import { createSeededRng } from "@/shared/utils/determinism";
 import { ConfigBuilder } from "@/shared/utils/validation/config-builder";
-
-const isBigIntInput = (
-  value: unknown,
-): value is string | number | bigint | boolean =>
-  ["string", "number", "bigint", "boolean"].includes(typeof value);
 
 const isBotTrade = (value: unknown): value is BotTrade =>
   isRecord(value) &&
@@ -125,7 +122,8 @@ const isOptimizationMethod = (
 
 const isVerboseLogLevel = (
   logLevel: BotConfig["logLevel"] | undefined,
-): boolean => typeof logLevel === "string" && logLevel.toUpperCase() === "DEBUG";
+): boolean =>
+  typeof logLevel === "string" && logLevel.toUpperCase() === "DEBUG";
 
 type StrategySummary = {
   id: string;
@@ -171,6 +169,9 @@ export class Mach1Bot {
   private paperEngine?: PaperTradingEngine;
   private tradingPairResolver?: TradingPairResolver;
   private readonly tradingPairService: TradingPairService;
+  private readonly marketDataService: MarketDataService;
+  private readonly orderEventEmitter: OrderEventEmitter;
+  private readonly orderLifecycleStore: OrderLifecycleStore;
 
   // Enhanced strategy system (optional)
   public strategyManager?: StrategyManager;
@@ -199,6 +200,9 @@ export class Mach1Bot {
       this.marketManager,
       this.orderManager,
     );
+    this.orderEventEmitter = new OrderEventEmitter();
+    this.orderLifecycleStore = new OrderLifecycleStore(this.orderEventEmitter);
+    this.positionTracker.attachOrderEventEmitter(this.orderEventEmitter);
     this.realtimeManager = new RealtimeManager(
       this.marketManager,
       this.orderManager,
@@ -211,6 +215,9 @@ export class Mach1Bot {
     this.tradingPairService = new TradingPairService(
       () => this.tradingPairResolver,
     );
+    this.marketDataService = new MarketDataService({
+      rng: createSeededRng(1337),
+    });
 
     // Initialize enhanced features if requested or if strategy-related methods are called
     if (config.enableEnhancedFeatures !== false) {
@@ -240,6 +247,7 @@ export class Mach1Bot {
         this.config.aiHelper,
         () => this.tradingPairResolver,
       );
+      this.strategyManager.attachOrderEventEmitter(this.orderEventEmitter);
 
       this.strategyOptimizer = new StrategyOptimizer(
         this.strategyManager,
@@ -346,7 +354,7 @@ export class Mach1Bot {
         env.MACH1_MODE === "paper"
           ? ("simulation" as BotConfig["mode"]) // normalize 'paper' to 'simulation'
           : (env.MACH1_MODE as BotConfig["mode"]) ||
-          ("simulation" as BotConfig["mode"]),
+            ("simulation" as BotConfig["mode"]),
       chainId: env.MACH1_CHAIN_ID ? parseInt(env.MACH1_CHAIN_ID) : undefined,
       logLevel: env.MACH1_LOG_LEVEL || "info",
     };
@@ -424,7 +432,14 @@ export class Mach1Bot {
     };
 
     const result = await this.placeBotOrder(orderRequest);
-    return this.toBotOrder(result, symbol, "buy", orderType, currentPrice, quantity);
+    return this.toBotOrder(
+      result,
+      symbol,
+      "buy",
+      orderType,
+      currentPrice,
+      quantity,
+    );
   }
 
   async sell(symbol: string, options: TradeOptions): Promise<BotOrder> {
@@ -448,7 +463,14 @@ export class Mach1Bot {
     };
 
     const result = await this.placeBotOrder(orderRequest);
-    return this.toBotOrder(result, symbol, "sell", orderType, currentPrice, quantity);
+    return this.toBotOrder(
+      result,
+      symbol,
+      "sell",
+      orderType,
+      currentPrice,
+      quantity,
+    );
   }
 
   private async placeBotOrder(orderRequest: OrderRequest) {
@@ -523,150 +545,10 @@ export class Mach1Bot {
         if (!this.liveEngine) {
           await this.getOrCreateLiveEngine();
         }
-
-        // Ensure we use the SDK-backed realtime manager
-        if (this.liveEngine) {
-          this.realtimeManager = this.liveEngine.getRealtimeManager();
+        if (!this.liveEngine) {
+          throw new Error("Live trading engine unavailable");
         }
-
-        const orderbook = await this.realtimeManager.getOrderbookSnapshot(
-          pair.symbol,
-        );
-        const bestAsk = orderbook?.asks?.[0];
-        const bestBid = orderbook?.bids?.[0];
-
-        if (bestAsk && bestBid) {
-          // Midpoint in integer cents
-          return (BigInt(bestAsk.price) + BigInt(bestBid.price)) / 2n;
-        }
-        if (bestAsk) return BigInt(bestAsk.price);
-        if (bestBid) return BigInt(bestBid.price);
-
-        // Fallback to the latest OHLCV close if the orderbook is empty
-        const ohlcvInterval: Interval =
-          this.liveEngine?.getOHLCVInterval?.() ?? "1m";
-        const candle = await this.realtimeManager.getOHLCVSnapshot(
-          pair.symbol,
-          ohlcvInterval,
-        );
-        const candleRecord = isRecord(candle) ? candle : undefined;
-        const closeRaw = candle?.c ?? candleRecord?.close;
-        if (closeRaw !== undefined && closeRaw !== null) {
-          const parsedClose = (() => {
-            try {
-              if (!isBigIntInput(closeRaw)) {
-                return null;
-              }
-              return BigInt(closeRaw);
-            } catch {
-              const asNumber = Number(closeRaw);
-              return Number.isFinite(asNumber)
-                ? BigInt(Math.floor(asNumber))
-                : null;
-            }
-          })();
-
-          if (parsedClose !== null && parsedClose > 0n) {
-            return parsedClose;
-          }
-        }
-
-        // Final fallback: try to get cached OHLCV or stored candles from market manager
-        const cachedCandle = this.realtimeManager.getCachedOHLCV(
-          pair.symbol,
-          ohlcvInterval,
-        );
-        if (cachedCandle) {
-          const cachedRecord = isRecord(cachedCandle)
-            ? cachedCandle
-            : undefined;
-          const cachedClose = cachedCandle.c ?? cachedRecord?.close;
-          if (cachedClose !== undefined && cachedClose !== null) {
-            const parsedCached = (() => {
-              try {
-                return BigInt(cachedClose);
-              } catch {
-                const asNumber = Number(cachedClose);
-                return Number.isFinite(asNumber)
-                  ? BigInt(Math.floor(asNumber))
-                  : null;
-              }
-            })();
-
-            if (parsedCached !== null && parsedCached > 0n) {
-              console.warn(`⚠️  Using cached OHLCV price for ${pair.symbol}`);
-              return parsedCached;
-            }
-          }
-        }
-
-        // Last resort: use market manager's stored candles
-        try {
-          const fallbackPrice = await this.marketManager.getCurrentPrice(pair);
-          if (fallbackPrice > 0n) {
-            console.warn(
-              `⚠️  Using market manager stored price for ${pair.symbol}: ${fallbackPrice}`,
-            );
-            return fallbackPrice;
-          }
-        } catch (marketError) {
-          console.warn(
-            `⚠️  Market manager fallback failed for ${pair.symbol}:`,
-            marketError,
-          );
-        }
-
-        // Try to fetch candlesticks directly from Monaco SDK as final fallback
-        if (this.liveEngine) {
-          try {
-            const liveEngineRecord = this
-              .liveEngine as unknown as UnknownRecord;
-            const monacoSdk = liveEngineRecord?.monacoSDK;
-            const sdk =
-              isRecord(monacoSdk) && typeof monacoSdk.getSDK === "function"
-                ? monacoSdk.getSDK()
-                : undefined;
-            if (sdk) {
-              const normalizedSymbol = tradingPairResolver.normalizeSymbol(
-                pair.symbol,
-              );
-              const pairByContracts = tradingPairResolver.getPairByContracts(
-                pair.base,
-                pair.quote,
-              );
-              const tradingPairId =
-                pairByContracts?.id ??
-                tradingPairResolver.resolveSymbolToId(normalizedSymbol);
-              const now = Date.now();
-              const candles = await sdk.market.getCandlesticks(
-                tradingPairId,
-                "1m",
-                { startTime: now - 3600000, endTime: now },
-              );
-
-              if (Array.isArray(candles) && candles.length > 0) {
-                const latest = candles[candles.length - 1];
-                const close = latest?.c;
-                if (close !== undefined) {
-                  const priceValue = BigInt(Math.round(Number(close)));
-                  console.warn(
-                    `⚠️  Using SDK candlestick price for ${pair.symbol}: ${priceValue}`,
-                  );
-                  return priceValue;
-                }
-              }
-            }
-          } catch (sdkError) {
-            console.warn(
-              `⚠️  SDK candlestick fallback failed for ${pair.symbol}:`,
-              sdkError,
-            );
-          }
-        }
-
-        throw new Error(
-          `Live orderbook unavailable for ${pair.symbol}. Cannot derive price.`,
-        );
+        return await this.liveEngine.getLivePrice(pair);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         throw new Error(
@@ -704,8 +586,8 @@ export class Mach1Bot {
           orderType: limitPrice ? "limit" : "market",
           ...(limitPrice
             ? {
-              amountUsd: Number((position.balance * limitPrice) / 100n) / 100,
-            }
+                amountUsd: Number((position.balance * limitPrice) / 100n) / 100,
+              }
             : {}),
         });
       },
@@ -732,8 +614,8 @@ export class Mach1Bot {
         const amountToSell =
           options.amountPercent && options.amountPercent > 0
             ? (position.balance *
-              BigInt(Math.floor(options.amountPercent * 100))) /
-            BigInt(10000)
+                BigInt(Math.floor(options.amountPercent * 100))) /
+              BigInt(10000)
             : position.balance;
 
         return this.sell(symbol, {
@@ -904,7 +786,9 @@ export class Mach1Bot {
     };
 
     // Initialize BacktestEngine
-    const backtestEngine = new BacktestEngine(backtestConfig);
+    const backtestEngine = new BacktestEngine(backtestConfig, {
+      orderLifecycleStore: this.orderLifecycleStore,
+    });
 
     // Set backtest mode
     this.isBacktesting = true;
@@ -1031,6 +915,7 @@ export class Mach1Bot {
       paperConfig,
       this.marketManager,
       this.realtimeManager,
+      { orderLifecycleStore: this.orderLifecycleStore },
     );
     this.paperEngine = paperEngine;
 
@@ -1110,6 +995,8 @@ export class Mach1Bot {
       liveConfig,
       this.marketManager,
       this.realtimeManager,
+      undefined,
+      this.orderLifecycleStore,
     );
     await liveEngine.initialize();
     // Replace the realtime manager with the live, SDK-backed instance
@@ -1145,6 +1032,7 @@ export class Mach1Bot {
       },
       this.marketManager,
       this.realtimeManager,
+      { orderLifecycleStore: this.orderLifecycleStore },
     );
 
     return this.paperEngine;
@@ -1204,8 +1092,7 @@ export class Mach1Bot {
         }
       };
 
-      const strategyIntervalMs =
-        options?.strategyExecutionIntervalMs ?? 60_000;
+      const strategyIntervalMs = options?.strategyExecutionIntervalMs ?? 60_000;
 
       this.strategyExecutionCoordinator = new StrategyExecutionCoordinator({
         executor: executeStrategy,
@@ -1250,32 +1137,7 @@ export class Mach1Bot {
   }
 
   private async generateMockMarketData(): Promise<MarketData> {
-    // Generate realistic mock market data for simulation
-    const basePrice = 2000 + Math.random() * 1000; // ETH price between $2000-$3000
-    const volatility = 0.02; // 2% volatility
-
-    return {
-      "ETH/USDC": {
-        open: basePrice * (1 + (Math.random() - 0.5) * volatility),
-        high: basePrice * (1 + Math.random() * volatility),
-        low: basePrice * (1 - Math.random() * volatility),
-        close: basePrice * (1 + (Math.random() - 0.5) * volatility),
-        volume: Math.random() * 1000000,
-        rsi: 30 + Math.random() * 40, // RSI between 30-70
-        macdSignal: (Math.random() - 0.5) * 2, // MACD between -1 and 1
-        timestamp: Date.now(),
-      },
-      "BTC/USDC": {
-        open: basePrice * 20 * (1 + (Math.random() - 0.5) * volatility),
-        high: basePrice * 20 * (1 + Math.random() * volatility),
-        low: basePrice * 20 * (1 - Math.random() * volatility),
-        close: basePrice * 20 * (1 + (Math.random() - 0.5) * volatility),
-        volume: Math.random() * 500000,
-        rsi: 30 + Math.random() * 40,
-        macdSignal: (Math.random() - 0.5) * 2,
-        timestamp: Date.now(),
-      },
-    };
+    return this.marketDataService.buildSimulationMarketData();
   }
 
   private async getRealMarketData(): Promise<MarketData> {
@@ -1308,41 +1170,40 @@ export class Mach1Bot {
             return pair ? resolver.normalizeSymbol(pair.symbol) : normalized;
           })();
 
-          const ohlcv = await rtManager.getOHLCVSnapshot(
-            monacoSymbol,
-            ohlcvInterval,
-          );
-          if (ohlcv) {
-            marketData[monacoSymbol] = {
-              open: Number(ohlcv.o),
-              high: Number(ohlcv.h),
-              low: Number(ohlcv.l),
-              close: Number(ohlcv.c),
-              volume: Number(ohlcv.v),
-              rsi: 50,
-              macdSignal: 0,
-              timestamp: ohlcv.T,
-            };
-            continue;
-          }
+          const [ohlcv, orderbook] = await Promise.all([
+            rtManager.getOHLCVSnapshot(monacoSymbol, ohlcvInterval),
+            rtManager.getOrderbookSnapshot(monacoSymbol),
+          ]);
 
           try {
             const pair = this.parseSymbol(monacoSymbol);
-            const price = await this.marketManager.getCurrentPrice(pair);
-            const priceUsd = Number(price) / 100;
+            const end = new Date();
+            const start = new Date(end.getTime() - 60 * 60 * 1000);
+            const candles = await this.marketManager.getCandles(
+              pair,
+              ohlcvInterval,
+              start,
+              end,
+            );
+            const tick = this.marketDataService.buildLiveTick({
+              symbol: monacoSymbol,
+              ohlcv,
+              orderbook,
+              candleHistory: candles,
+            });
 
-            marketData[monacoSymbol] = {
-              open: priceUsd,
-              high: priceUsd * 1.005,
-              low: priceUsd * 0.995,
-              close: priceUsd,
-              volume: 500000,
-              rsi: 50,
-              macdSignal: 0,
-              timestamp: Date.now(),
-            };
+            if (tick) {
+              marketData[monacoSymbol] = tick;
+            }
           } catch {
-            // Skip symbols we cannot parse/price
+            const tick = this.marketDataService.buildLiveTick({
+              symbol: monacoSymbol,
+              ohlcv,
+              orderbook,
+            });
+            if (tick) {
+              marketData[monacoSymbol] = tick;
+            }
           }
         }
 
@@ -1655,8 +1516,8 @@ export class Mach1Bot {
         spread:
           event.orderBook.asks.length > 0 && event.orderBook.bids.length > 0
             ? Number(
-              event.orderBook.asks[0].price - event.orderBook.bids[0].price,
-            ) / 100
+                event.orderBook.asks[0].price - event.orderBook.bids[0].price,
+              ) / 100
             : 0,
       };
       handler(book);
@@ -1951,7 +1812,7 @@ export class Mach1Bot {
     const endDate = new Date();
     const startDate = new Date(
       endDate.getTime() -
-      (options.totalPeriodDays || 365) * 24 * 60 * 60 * 1000,
+        (options.totalPeriodDays || 365) * 24 * 60 * 60 * 1000,
     );
 
     return await this.requireStrategyOptimizer().walkForwardAnalysis(

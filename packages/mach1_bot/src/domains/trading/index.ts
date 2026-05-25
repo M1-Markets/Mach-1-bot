@@ -1,4 +1,5 @@
 export * from "./market-manager";
+export * from "./market-data-service";
 export * from "./order-manager";
 export * from "./position-tracker";
 export * from "./realtime-manager";
