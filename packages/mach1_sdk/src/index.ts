@@ -55,6 +55,10 @@ export { resolveApiUrl, resolveWsUrl } from "./networks/index";
 export {
   createMach1SDK,
   createMonacoSDK,
+  type IsolatedMarginPerpLimitOrderRequest,
+  type IsolatedMarginPerpMarketOrderRequest,
+  type IsolatedMarginPerpPositionSide,
+  type IsolatedMarginPerpsAPI,
   type LoginOptions,
   Mach1SDK,
   type Mach1SDK as Mach1SDKInstance,

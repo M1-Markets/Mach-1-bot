@@ -1,6 +1,8 @@
 import { NETWORK_PRESETS } from "@/shared/constants/networks";
 import { BotConfig } from "@/shared/types/bot";
 import type { MonacoEnvironment } from "@/shared/types/common";
+import type { ConfigModeInput } from "@/shared/types/config";
+import { normalizeConfigMode } from "@/shared/utils/config-mode";
 
 export class ConfigBuilder {
   private config: Partial<BotConfig> = {};
@@ -32,15 +34,8 @@ export class ConfigBuilder {
     return this;
   }
 
-  withMode(mode: "backtest" | "paper" | "live" | "simulation"): ConfigBuilder {
-    // Normalize 'paper' alias to bot runtime 'simulation'
-    if (mode === "paper") {
-      this.config.mode = "simulation";
-    } else if (mode === "simulation") {
-      this.config.mode = "simulation";
-    } else {
-      this.config.mode = mode as BotConfig["mode"];
-    }
+  withMode(mode: ConfigModeInput): ConfigBuilder {
+    this.config.mode = normalizeConfigMode(mode);
 
     // Auto-set skipAuthentication for simulation mode
     if (this.config.mode === "simulation") {
@@ -90,13 +85,21 @@ export class ConfigBuilder {
   build(): BotConfig {
     const errors: string[] = [];
 
-    if (!this.config.privateKey) errors.push("Private key is required");
-    if (!this.config.rpcUrl) errors.push("RPC URL is required");
+    if (!this.config.privateKey) {
+      errors.push("Private key is required");
+    }
+    if (!this.config.rpcUrl) {
+      errors.push("RPC URL is required");
+    }
 
     if (errors.length > 0) {
       throw new Error(`Configuration validation failed:\n${errors.join("\n")}`);
     }
 
-    return this.config as BotConfig;
+    return {
+      privateKey: this.config.privateKey ?? "",
+      rpcUrl: this.config.rpcUrl ?? "",
+      ...this.config,
+    } as BotConfig;
   }
 }

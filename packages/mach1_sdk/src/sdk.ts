@@ -1,6 +1,30 @@
 import { StatusCodes } from "http-status-codes";
 import { createPublicClient, http, type WalletClient } from "viem";
 import { sei, seiTestnet } from "viem/chains";
+import type {
+  CancelOrderResponse,
+  ClosePositionRequest,
+  ClosePositionResponse,
+  CreateOrderResponse,
+  GetAvailableCollateralParams,
+  GetAvailableCollateralResponse,
+  GetPaginatedOrdersParams,
+  GetPaginatedOrdersResponse,
+  GetPositionResponse,
+  ListMarginAccountsParams,
+  ListMarginAccountsResponse,
+  ListPositionsParams,
+  ListPositionsResponse,
+  MarginAccountSummary,
+  OrderSide,
+  ParentTpSlLegParams,
+  PositionMarginResponse,
+  PositionSide,
+  ReducePositionMarginRequest,
+  SimulateOrderRiskRequest,
+  SimulateOrderRiskResponse,
+  TimeInForce,
+} from "@0xmonaco/types";
 import { ApplicationsAPIImpl } from "./api/applications/index";
 import { AuthAPIImpl } from "./api/auth/index";
 import { FeesAPIImpl } from "./api/fees/index";
@@ -40,6 +64,186 @@ export type LoginOptions = {
   connectWebSocket?: boolean;
 };
 
+export type IsolatedMarginPerpPositionSide = Exclude<PositionSide, "NONE">;
+
+export interface IsolatedMarginPerpLimitOrderRequest {
+  tradingPairId: string;
+  side: OrderSide;
+  quantity: string;
+  price: string;
+  marginAccountId: string;
+  positionSide: IsolatedMarginPerpPositionSide;
+  leverage?: string;
+  reduceOnly?: boolean;
+  timeInForce?: TimeInForce;
+  takeProfit?: ParentTpSlLegParams;
+  stopLoss?: ParentTpSlLegParams;
+}
+
+export interface IsolatedMarginPerpMarketOrderRequest {
+  tradingPairId: string;
+  side: OrderSide;
+  quantity: string;
+  marginAccountId: string;
+  positionSide: IsolatedMarginPerpPositionSide;
+  leverage?: string;
+  reduceOnly?: boolean;
+  slippageTolerance?: number;
+  takeProfit?: ParentTpSlLegParams;
+  stopLoss?: ParentTpSlLegParams;
+}
+
+export interface IsolatedMarginPerpsAPI {
+  listMarginAccounts(
+    params?: ListMarginAccountsParams,
+  ): Promise<ListMarginAccountsResponse>;
+  getMarginAccountSummary(marginAccountId: string): Promise<MarginAccountSummary>;
+  getAvailableCollateral(
+    params?: GetAvailableCollateralParams,
+  ): Promise<GetAvailableCollateralResponse>;
+  simulateOrderRisk(
+    marginAccountId: string,
+    request: SimulateOrderRiskRequest,
+  ): Promise<SimulateOrderRiskResponse>;
+  listOpenPositions(
+    params?: Omit<ListPositionsParams, "status">,
+  ): Promise<ListPositionsResponse>;
+  getPosition(positionId: string): Promise<GetPositionResponse>;
+  listOrders(
+    params?: Omit<GetPaginatedOrdersParams, "trading_mode">,
+  ): Promise<GetPaginatedOrdersResponse>;
+  placeLimitOrder(
+    request: IsolatedMarginPerpLimitOrderRequest,
+  ): Promise<CreateOrderResponse>;
+  placeMarketOrder(
+    request: IsolatedMarginPerpMarketOrderRequest,
+  ): Promise<CreateOrderResponse>;
+  cancelOrder(orderId: string): Promise<CancelOrderResponse>;
+  closePosition(
+    positionId: string,
+    request: ClosePositionRequest,
+  ): Promise<ClosePositionResponse>;
+  reducePositionMargin(
+    positionId: string,
+    request: ReducePositionMarginRequest,
+  ): Promise<PositionMarginResponse>;
+}
+
+class IsolatedMarginPerpsAPIImpl implements IsolatedMarginPerpsAPI {
+  constructor(
+    private readonly marginAccounts: MarginAccountsAPIImpl,
+    private readonly positions: PositionsAPIImpl,
+    private readonly trading: TradingAPIImpl,
+  ) {}
+
+  listMarginAccounts(
+    params?: ListMarginAccountsParams,
+  ): Promise<ListMarginAccountsResponse> {
+    return this.marginAccounts.listMarginAccounts(params);
+  }
+
+  getMarginAccountSummary(
+    marginAccountId: string,
+  ): Promise<MarginAccountSummary> {
+    return this.marginAccounts.getMarginAccountSummary(marginAccountId);
+  }
+
+  getAvailableCollateral(
+    params?: GetAvailableCollateralParams,
+  ): Promise<GetAvailableCollateralResponse> {
+    return this.marginAccounts.getAvailableCollateral(params);
+  }
+
+  simulateOrderRisk(
+    marginAccountId: string,
+    request: SimulateOrderRiskRequest,
+  ): Promise<SimulateOrderRiskResponse> {
+    return this.marginAccounts.simulateOrderRisk(marginAccountId, request);
+  }
+
+  listOpenPositions(
+    params?: Omit<ListPositionsParams, "status">,
+  ): Promise<ListPositionsResponse> {
+    return this.positions.listPositions({
+      ...params,
+      status: "OPEN",
+    });
+  }
+
+  getPosition(positionId: string): Promise<GetPositionResponse> {
+    return this.positions.getPosition(positionId);
+  }
+
+  listOrders(
+    params?: Omit<GetPaginatedOrdersParams, "trading_mode">,
+  ): Promise<GetPaginatedOrdersResponse> {
+    return this.trading.getPaginatedOrders({
+      ...params,
+      trading_mode: "MARGIN",
+    });
+  }
+
+  placeLimitOrder(
+    request: IsolatedMarginPerpLimitOrderRequest,
+  ): Promise<CreateOrderResponse> {
+    return this.trading.placeLimitOrder(
+      request.tradingPairId,
+      request.side,
+      request.quantity,
+      request.price,
+      {
+        marginAccountId: request.marginAccountId,
+        positionSide: request.positionSide,
+        leverage: request.leverage,
+        reduceOnly: request.reduceOnly,
+        stopLoss: request.stopLoss,
+        takeProfit: request.takeProfit,
+        timeInForce: request.timeInForce,
+        // Monaco perp orders require explicit MARGIN mode plus margin account.
+        tradingMode: "MARGIN",
+      },
+    );
+  }
+
+  placeMarketOrder(
+    request: IsolatedMarginPerpMarketOrderRequest,
+  ): Promise<CreateOrderResponse> {
+    return this.trading.placeMarketOrder(
+      request.tradingPairId,
+      request.side,
+      request.quantity,
+      {
+        leverage: request.leverage,
+        marginAccountId: request.marginAccountId,
+        positionSide: request.positionSide,
+        reduceOnly: request.reduceOnly,
+        slippageTolerance: request.slippageTolerance,
+        stopLoss: request.stopLoss,
+        takeProfit: request.takeProfit,
+        tradingMode: "MARGIN",
+      },
+    );
+  }
+
+  cancelOrder(orderId: string): Promise<CancelOrderResponse> {
+    return this.trading.cancelOrder(orderId);
+  }
+
+  closePosition(
+    positionId: string,
+    request: ClosePositionRequest,
+  ): Promise<ClosePositionResponse> {
+    return this.positions.closePosition(positionId, request);
+  }
+
+  reducePositionMargin(
+    positionId: string,
+    request: ReducePositionMarginRequest,
+  ): Promise<PositionMarginResponse> {
+    return this.positions.reducePositionMargin(positionId, request);
+  }
+}
+
 export type Mach1SDK = {
   applications: ApplicationsAPIImpl;
   auth: AuthAPIImpl;
@@ -52,6 +256,7 @@ export type Mach1SDK = {
   profile: ProfileAPIImpl;
   orderbook: OrderbookAPIImpl;
   trades: TradesAPIImpl;
+  perps: IsolatedMarginPerpsAPI;
   ws: MonacoWebSocket;
   walletClient: SDKConfig["walletClient"];
   publicClient: ReturnType<typeof createPublicClient>;
@@ -85,6 +290,7 @@ export class Mach1SDKImpl implements Mach1SDK {
   readonly profile;
   readonly orderbook;
   readonly trades;
+  readonly perps;
   readonly ws;
   readonly publicClient;
 
@@ -159,6 +365,11 @@ export class Mach1SDKImpl implements Mach1SDK {
     this.trading = new TradingAPIImpl(apiUrl);
     this.orderbook = new OrderbookAPIImpl(apiUrl);
     this.trades = new TradesAPIImpl(apiUrl);
+    this.perps = new IsolatedMarginPerpsAPIImpl(
+      this.marginAccounts,
+      this.positions,
+      this.trading,
+    );
     this.ws = createMonacoWebSocket(wsUrl);
   }
 

@@ -16,8 +16,5 @@
         "ms-vscode-remote.remote-containers"
       ]
     }
-  },
-  "forwardPorts": [
-    "3000:3000"
-  ]
+  }
 }

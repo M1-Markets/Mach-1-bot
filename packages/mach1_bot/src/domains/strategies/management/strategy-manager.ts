@@ -121,15 +121,28 @@ type SupportedExecutableOrderType = NonNullable<OrderRequest["orderType"]>;
 
 interface StrategySignalValidationError {
   code:
-    | "unsupported_action"
-    | "unsupported_order_type"
-    | "unsupported_pair"
-    | "invalid_confidence"
-    | "missing_quantity"
-    | "invalid_quantity"
-    | "missing_price"
-    | "invalid_price";
-  field: "action" | "orderType" | "pair" | "confidence" | "quantity" | "price";
+  | "unsupported_action"
+  | "unsupported_order_type"
+  | "unsupported_pair"
+  | "invalid_confidence"
+  | "missing_quantity"
+  | "invalid_quantity"
+  | "missing_price"
+  | "invalid_price"
+  | "invalid_direction"
+  | "invalid_leverage"
+  | "missing_perps_direction";
+  field:
+  | "action"
+  | "orderType"
+  | "pair"
+  | "confidence"
+  | "quantity"
+  | "price"
+  | "direction"
+  | "leverage"
+  | "reduceOnly"
+  | "closeOnly";
   message: string;
 }
 
@@ -643,6 +656,10 @@ export class StrategyManager extends EventEmitter {
         quantity: signal.quantity,
         price: signal.price,
         orderType: signal.orderType,
+        direction: signal.direction,
+        leverage: signal.leverage,
+        reduceOnly: signal.reduceOnly,
+        closeOnly: signal.closeOnly,
         confidence: signal.confidence,
         reason: signal.reason,
         metadata: signal.metadata,
@@ -1050,11 +1067,15 @@ export class StrategyManager extends EventEmitter {
         baseToken: tradingPair.base,
         quoteToken: tradingPair.quote,
         isBuy: signal.action === "buy",
+        direction: signal.direction,
         strategyId: instance.id,
         orderId: `${instance.id}-${Date.now()}`,
         price: orderPrice,
         quantity: orderQuantity,
         orderType: executionOrderType,
+        leverage: signal.leverage,
+        reduceOnly: signal.reduceOnly,
+        closeOnly: signal.closeOnly,
       };
 
       // Risk validation
@@ -1133,6 +1154,39 @@ export class StrategyManager extends EventEmitter {
     }
 
     const executionOrderType = this.mapStrategyOrderType(signal, errors);
+    const usesPerpsCloseSemantics =
+      signal.reduceOnly === true || signal.closeOnly === true;
+
+    if (
+      signal.direction !== undefined &&
+      signal.direction !== "long" &&
+      signal.direction !== "short"
+    ) {
+      errors.push({
+        code: "invalid_direction",
+        field: "direction",
+        message: `Signal direction must be 'long' or 'short'. Received: ${String(signal.direction)}`,
+      });
+    }
+
+    if (signal.leverage !== undefined) {
+      if (!Number.isFinite(signal.leverage) || signal.leverage <= 0) {
+        errors.push({
+          code: "invalid_leverage",
+          field: "leverage",
+          message: `Signal leverage must be a positive number. Received: ${signal.leverage}`,
+        });
+      }
+    }
+
+    if (usesPerpsCloseSemantics && signal.direction === undefined) {
+      errors.push({
+        code: "missing_perps_direction",
+        field: signal.closeOnly === true ? "closeOnly" : "reduceOnly",
+        message:
+          "Reduce-only and close-only strategy signals require explicit direction for isolated perps orders",
+      });
+    }
 
     if (executableAction) {
       if (signal.quantity === undefined) {
@@ -1453,7 +1507,7 @@ class PerformanceTracker {
       position.averagePrice =
         totalQuantity > 0
           ? (position.quantity * position.averagePrice + quantity * price) /
-            totalQuantity
+          totalQuantity
           : 0;
       position.quantity = totalQuantity;
       this.positions.set(pair, position);
@@ -1464,8 +1518,8 @@ class PerformanceTracker {
     const pnl =
       realizedQuantity > 0
         ? (price - position.averagePrice) * realizedQuantity -
-          commission -
-          slippage
+        commission -
+        slippage
         : 0;
     position.quantity = Math.max(0, position.quantity - realizedQuantity);
     if (position.quantity === 0) {
@@ -1508,12 +1562,12 @@ class PerformanceTracker {
     const avgWin =
       winningTrades.length > 0
         ? winningTrades.reduce((sum, win) => sum + win, 0) /
-          winningTrades.length
+        winningTrades.length
         : 0;
     const avgLoss =
       losingTrades.length > 0
         ? Math.abs(losingTrades.reduce((sum, loss) => sum + loss, 0)) /
-          losingTrades.length
+        losingTrades.length
         : 0;
     const profitFactor = avgLoss > 0 ? avgWin / avgLoss : 0;
 
@@ -1523,12 +1577,12 @@ class PerformanceTracker {
     const returnStd =
       this.returns.length > 1
         ? Math.sqrt(
-            this.returns.reduce(
-              (sum, ret) => sum + Math.pow(ret - avgReturn, 2),
-              0,
-            ) /
-              (this.returns.length - 1),
-          )
+          this.returns.reduce(
+            (sum, ret) => sum + Math.pow(ret - avgReturn, 2),
+            0,
+          ) /
+          (this.returns.length - 1),
+        )
         : 0;
     const sharpeRatio = returnStd > 0 ? avgReturn / returnStd : 0;
 

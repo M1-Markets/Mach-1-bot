@@ -94,6 +94,18 @@ export class PaperTradingEngine extends BaseTradingMode {
     this.config = config;
     this.marketManager = marketManager;
     this.realtimeManager = realtimeManager;
+    if (
+      "setMode" in this.marketManager &&
+      typeof this.marketManager.setMode === "function"
+    ) {
+      this.marketManager.setMode("simulation");
+    }
+    if (
+      "setMode" in this.realtimeManager &&
+      typeof this.realtimeManager.setMode === "function"
+    ) {
+      this.realtimeManager.setMode("simulation");
+    }
     this.rng = options?.rng ?? realRng;
     this.clock = options?.clock ?? realClock;
     this.scheduler = options?.scheduler ?? realScheduler;
@@ -252,6 +264,7 @@ export class PaperTradingEngine extends BaseTradingMode {
         remainingQuantity: 0n,
         averageFillPrice: executionPrice,
         fees: commission,
+        feeCurrency: orderData.order.quoteToken,
         slippage,
         timestamp: this.clock.now(),
       });
@@ -949,7 +962,12 @@ export class PaperTradingEngine extends BaseTradingMode {
    */
   async enableLiveMarketData(): Promise<void> {
     try {
-      await this.realtimeManager.connect();
+      if (
+        "connect" in this.realtimeManager &&
+        typeof this.realtimeManager.connect === "function"
+      ) {
+        await this.realtimeManager.connect();
+      }
       console.log("✅ Connected to live market data for paper trading");
     } catch (error) {
       logger.warn("Failed to connect to live market data", {}, error as Error);
@@ -961,7 +979,12 @@ export class PaperTradingEngine extends BaseTradingMode {
    * Disconnect from live market data
    */
   async disableLiveMarketData(): Promise<void> {
-    await this.realtimeManager.disconnect();
+    if (
+      "disconnect" in this.realtimeManager &&
+      typeof this.realtimeManager.disconnect === "function"
+    ) {
+      await this.realtimeManager.disconnect();
+    }
     console.log("📴 Disconnected from live market data");
   }
 
@@ -973,7 +996,18 @@ export class PaperTradingEngine extends BaseTradingMode {
     activeSubscriptions: number;
     totalEventListeners: number;
   } {
-    return this.realtimeManager.getConnectionStatus();
+    if (
+      "getConnectionStatus" in this.realtimeManager &&
+      typeof this.realtimeManager.getConnectionStatus === "function"
+    ) {
+      return this.realtimeManager.getConnectionStatus();
+    }
+
+    return {
+      connected: false,
+      activeSubscriptions: 0,
+      totalEventListeners: 0,
+    };
   }
 
   /**

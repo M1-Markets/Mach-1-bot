@@ -3,7 +3,13 @@ import { MarketManager } from "@/domains/trading/market-manager";
 import { OrderManager } from "@/domains/trading/order-manager";
 import { PositionTracker } from "@/domains/trading/position-tracker";
 import type { RiskEvent as StrategyRiskEvent } from "@/domains/strategies/core/i-strategy";
-import { Address, OrderRequest, Portfolio, TradingPair } from "@/shared/types";
+import {
+  Address,
+  OrderRequest,
+  Portfolio,
+  Position,
+  TradingPair,
+} from "@/shared/types";
 import { calculateScaledNotionalValue } from "@/shared/utils";
 import { Rng, realRng } from "@/shared/utils/determinism";
 import { createLogger } from "@/shared/utils/logger";
@@ -30,11 +36,11 @@ export interface RiskCheckResult {
 
 export interface RiskBreach {
   type:
-    | "position_limit"
-    | "daily_loss"
-    | "max_drawdown"
-    | "correlation"
-    | "leverage";
+  | "position_limit"
+  | "daily_loss"
+  | "max_drawdown"
+  | "correlation"
+  | "leverage";
   severity: "warning" | "critical";
   message: string;
   currentValue: number;
@@ -56,9 +62,45 @@ export interface EmittedRiskEventDetails {
   reason: string;
 }
 
+export interface PerpsFundingState {
+  status: "available" | "unsupported" | "missing" | "stale";
+  rate?: bigint;
+  accruedFunding?: bigint;
+  updatedAt?: number;
+  warning?: string;
+}
+
+export interface PerpsRiskContext {
+  marketMode: "isolated_perps";
+  maxConfiguredLeverage?: number;
+  liquidationThresholdPercent?: number;
+  accountState?: {
+    equity: bigint;
+    freeCollateral: bigint;
+    maintenanceMargin: bigint;
+    updatedAt: number;
+  };
+  getPosition?: (pair: TradingPair) => Promise<Position>;
+  funding?: PerpsFundingState;
+  markDataStaleAfterMs?: number;
+}
+
+type PerpsRiskContextProvider =
+  | ((order: OrderRequest) => Promise<PerpsRiskContext | undefined>)
+  | ((order: OrderRequest) => PerpsRiskContext | undefined);
+
+type PerpsRiskEvaluation = {
+  warnings: string[];
+  rejectionReasons: string[];
+  riskScore: number;
+  events: StrategyRiskEvent[];
+};
+
 const DEFAULT_WARNING_RISK_SCORE_THRESHOLD = 15;
 const CORRELATION_LOOKBACK_DAYS = 30;
 const MIN_CORRELATION_RETURNS = 20;
+const DEFAULT_PERPS_STATE_MAX_AGE_MS = 30_000;
+const LIQUIDATION_WARNING_MULTIPLIER = 2;
 
 export class RiskManager extends EventEmitter {
   private riskLimits: RiskLimits = {
@@ -80,12 +122,17 @@ export class RiskManager extends EventEmitter {
   private orderManager: OrderManager;
   private readonly failOpen: boolean;
   private readonly rng: Rng;
+  private perpsContextProvider?: PerpsRiskContextProvider;
 
   constructor(
     positionTracker: PositionTracker,
     marketManager: MarketManager,
     orderManager: OrderManager,
-    options?: { failOpen?: boolean; rng?: Rng },
+    options?: {
+      failOpen?: boolean;
+      rng?: Rng;
+      perpsContextProvider?: PerpsRiskContextProvider;
+    },
   ) {
     super();
     this.positionTracker = positionTracker;
@@ -93,6 +140,7 @@ export class RiskManager extends EventEmitter {
     this.orderManager = orderManager;
     this.failOpen = options?.failOpen ?? false;
     this.rng = options?.rng ?? realRng;
+    this.perpsContextProvider = options?.perpsContextProvider;
     this.resetDailyLossesIfNeeded();
   }
 
@@ -173,6 +221,14 @@ export class RiskManager extends EventEmitter {
       }
     }
 
+    const perpsRisk = await this.evaluatePerpsRisk(order);
+    warnings.push(...perpsRisk.warnings);
+    rejectionReasons.push(...perpsRisk.rejectionReasons);
+    riskScore += perpsRisk.riskScore;
+    for (const event of perpsRisk.events) {
+      this.emitRiskEvent(event);
+    }
+
     const result = {
       approved: rejectionReasons.length === 0,
       warnings,
@@ -182,6 +238,12 @@ export class RiskManager extends EventEmitter {
 
     this.emitValidationEvents(order, result);
     return result;
+  }
+
+  setPerpsContextProvider(
+    provider: PerpsRiskContextProvider | undefined,
+  ): void {
+    this.perpsContextProvider = provider;
   }
 
   async checkPositionLimit(order: OrderRequest): Promise<boolean> {
@@ -274,6 +336,9 @@ export class RiskManager extends EventEmitter {
   async checkCorrelation(order: OrderRequest): Promise<boolean> {
     try {
       const result = await this.evaluateCorrelation(order);
+      if (result.status === "unavailable") {
+        return this.failOpen;
+      }
       return result.status !== "above_limit";
     } catch (_error) {
       logger.warn("checkCorrelation: error, applying failOpen policy", {
@@ -355,9 +420,9 @@ export class RiskManager extends EventEmitter {
       return this.failOpen
         ? { status: "within_limit", correlation: null }
         : {
-            status: "unavailable",
-            reason: "Correlation check unavailable.",
-          };
+          status: "unavailable",
+          reason: "Correlation check unavailable.",
+        };
     }
   }
 
@@ -490,6 +555,271 @@ export class RiskManager extends EventEmitter {
     };
   }
 
+  private async evaluatePerpsRisk(
+    order: OrderRequest,
+  ): Promise<PerpsRiskEvaluation> {
+    if (!this.perpsContextProvider) {
+      return { warnings: [], rejectionReasons: [], riskScore: 0, events: [] };
+    }
+
+    const context = await this.perpsContextProvider(order);
+    if (!context || context.marketMode !== "isolated_perps") {
+      return { warnings: [], rejectionReasons: [], riskScore: 0, events: [] };
+    }
+
+    const warnings: string[] = [];
+    const rejectionReasons: string[] = [];
+    const events: StrategyRiskEvent[] = [];
+    let riskScore = 0;
+
+    const pair = this.toPair(order.baseToken, order.quoteToken);
+    const position = context.getPosition ? await context.getPosition(pair) : undefined;
+    const riskIncreasing = this.isRiskIncreasingPerpsOrder(order, position);
+    const requestedLeverage = order.leverage ?? context.maxConfiguredLeverage ?? 1;
+    const configuredMaxLeverage = Math.min(
+      context.maxConfiguredLeverage ?? this.riskLimits.maxLeverage,
+      this.riskLimits.maxLeverage,
+    );
+
+    if (requestedLeverage > configuredMaxLeverage) {
+      rejectionReasons.push(
+        `Perps leverage ${requestedLeverage} exceeds configured max leverage ${configuredMaxLeverage}`,
+      );
+      riskScore += 40;
+    }
+
+    if (!context.accountState) {
+      rejectionReasons.push(
+        "Isolated perps account state unavailable; rejecting order fail-closed",
+      );
+      riskScore += 50;
+      return { warnings, rejectionReasons, riskScore, events };
+    }
+
+    const fundingState = context.funding;
+    if (fundingState?.status === "unsupported") {
+      warnings.push(
+        fundingState.warning ??
+        "Funding rate unavailable from Monaco; skipping funding adjustment.",
+      );
+    }
+    if (riskIncreasing && fundingState?.status === "missing") {
+      rejectionReasons.push(
+        fundingState.warning ??
+        "Funding data unavailable for isolated perps order; rejecting fail-closed",
+      );
+      riskScore += 15;
+    }
+    if (riskIncreasing && fundingState?.status === "stale") {
+      rejectionReasons.push(
+        fundingState.warning ??
+        "Funding data is stale for isolated perps order; rejecting fail-closed",
+      );
+      riskScore += 20;
+    }
+
+    const orderValue = calculateScaledNotionalValue(order.price, order.quantity);
+    const requiredMargin = this.divideAndRoundUp(
+      orderValue,
+      BigInt(Math.max(1, Math.trunc(requestedLeverage))),
+    );
+
+    if (riskIncreasing && requiredMargin > context.accountState.freeCollateral) {
+      rejectionReasons.push(
+        `Required collateral ${this.formatScaledBigInt(requiredMargin)} exceeds free collateral ${this.formatScaledBigInt(context.accountState.freeCollateral)}`,
+      );
+      riskScore += 35;
+    }
+
+    const projectedExposure = this.calculateProjectedPerpsExposure(
+      orderValue,
+      riskIncreasing,
+      position,
+    );
+    if (projectedExposure > this.riskLimits.maxPositionSize) {
+      rejectionReasons.push("Order exceeds maximum exposure limits");
+      riskScore += 25;
+    }
+
+    const projectedMarginRisk = this.calculateProjectedMarginRisk(
+      requiredMargin,
+      riskIncreasing,
+      position,
+    );
+    const maxPositionRisk =
+      (context.accountState.equity * BigInt(this.riskLimits.positionLimitPercent)) /
+      100n;
+    if (projectedMarginRisk > maxPositionRisk) {
+      rejectionReasons.push(
+        `Projected margin at risk ${this.formatScaledBigInt(projectedMarginRisk)} exceeds per-position risk limit ${this.formatScaledBigInt(maxPositionRisk)}`,
+      );
+      riskScore += 25;
+    }
+
+    const liquidationThresholdPercent = context.liquidationThresholdPercent;
+    if (position?.balance && position.balance > 0n && liquidationThresholdPercent) {
+      const stateAgeMs = Date.now() - context.accountState.updatedAt;
+      const maxAgeMs = context.markDataStaleAfterMs ?? DEFAULT_PERPS_STATE_MAX_AGE_MS;
+      if (riskIncreasing && stateAgeMs > maxAgeMs) {
+        rejectionReasons.push(
+          "Perps mark price or maintenance margin data is stale; rejecting order fail-closed",
+        );
+        riskScore += 45;
+      } else {
+        const liquidationDistance = this.calculateLiquidationDistancePercent(position);
+        if (liquidationDistance === null) {
+          if (riskIncreasing) {
+            rejectionReasons.push(
+              "Perps liquidation inputs unavailable; rejecting order fail-closed",
+            );
+            riskScore += 45;
+          }
+        } else if (
+          liquidationDistance <=
+          liquidationThresholdPercent * LIQUIDATION_WARNING_MULTIPLIER
+        ) {
+          const severity =
+            liquidationDistance <= liquidationThresholdPercent
+              ? "critical"
+              : "warning";
+          const eventType =
+            severity === "critical"
+              ? "liquidation_triggered"
+              : "liquidation_warning";
+          const message =
+            severity === "critical"
+              ? `Liquidation distance ${liquidationDistance.toFixed(2)}% is below configured threshold ${liquidationThresholdPercent.toFixed(2)}%`
+              : `Liquidation distance ${liquidationDistance.toFixed(2)}% is approaching configured threshold ${liquidationThresholdPercent.toFixed(2)}%`;
+
+          if (severity === "critical" && riskIncreasing) {
+            rejectionReasons.push(message);
+            riskScore += 45;
+          } else {
+            warnings.push(message);
+            riskScore += 15;
+          }
+
+          events.push({
+            type: eventType,
+            severity,
+            message,
+            data: this.buildRiskEventDetails(
+              order,
+              liquidationDistance,
+              liquidationThresholdPercent,
+              message,
+            ),
+            timestamp: Date.now(),
+          });
+
+          if (
+            position.maintenanceMargin !== undefined &&
+            position.maintenanceMargin > 0n
+          ) {
+            const marginMessage =
+              severity === "critical"
+                ? `Maintenance margin ${this.formatScaledBigInt(position.maintenanceMargin)} at critical liquidation distance`
+                : `Maintenance margin ${this.formatScaledBigInt(position.maintenanceMargin)} near liquidation threshold`;
+            events.push({
+              type: "margin_warning",
+              severity,
+              message: marginMessage,
+              data: this.buildRiskEventDetails(
+                order,
+                Number(position.maintenanceMargin) / 100,
+                Number(context.accountState.maintenanceMargin) / 100,
+                marginMessage,
+              ),
+              timestamp: Date.now(),
+            });
+          }
+        }
+      }
+    }
+
+    return { warnings, rejectionReasons, riskScore, events };
+  }
+
+  private isRiskIncreasingPerpsOrder(
+    order: OrderRequest,
+    position?: Position,
+  ): boolean {
+    if (order.closeOnly || order.reduceOnly) {
+      return false;
+    }
+
+    if (!position || position.balance <= 0n || !position.side) {
+      return true;
+    }
+
+    const requestedSide = order.direction ?? (order.isBuy ? "long" : "short");
+    if (requestedSide === position.side) {
+      return true;
+    }
+
+    return order.quantity > position.balance;
+  }
+
+  private calculateProjectedPerpsExposure(
+    orderValue: bigint,
+    riskIncreasing: boolean,
+    position?: Position,
+  ): bigint {
+    const currentExposure = this.getCurrentPerpsExposure(position);
+    if (!riskIncreasing) {
+      return currentExposure;
+    }
+
+    return currentExposure + orderValue;
+  }
+
+  private getCurrentPerpsExposure(position?: Position): bigint {
+    if (!position || position.balance <= 0n) {
+      return 0n;
+    }
+
+    if (position.markPrice !== undefined) {
+      return (position.balance * position.markPrice) / 100n;
+    }
+
+    return position.value;
+  }
+
+  private calculateProjectedMarginRisk(
+    requiredMargin: bigint,
+    riskIncreasing: boolean,
+    position?: Position,
+  ): bigint {
+    const currentCollateral = position?.collateral ?? 0n;
+    if (!riskIncreasing) {
+      return currentCollateral;
+    }
+
+    return currentCollateral + requiredMargin;
+  }
+
+  private calculateLiquidationDistancePercent(position: Position): number | null {
+    if (
+      position.markPrice === undefined ||
+      position.markPrice <= 0n ||
+      position.liquidationPrice === undefined ||
+      position.maintenanceMargin === undefined
+    ) {
+      return null;
+    }
+
+    const distance = position.markPrice - position.liquidationPrice;
+    return Math.abs(Number(distance) / Number(position.markPrice)) * 100;
+  }
+
+  private divideAndRoundUp(dividend: bigint, divisor: bigint): bigint {
+    return (dividend + divisor - 1n) / divisor;
+  }
+
+  private formatScaledBigInt(value: bigint): string {
+    return `${(Number(value) / 100).toFixed(2)} USDC`;
+  }
+
   async setRiskLimits(limits: Partial<RiskLimits>): Promise<void> {
     this.riskLimits = { ...this.riskLimits, ...limits };
 
@@ -538,7 +868,7 @@ export class RiskManager extends EventEmitter {
       if (
         Number(summary.dailyPnL) < 0 &&
         Math.abs(Number(summary.dailyPnL)) >
-          Number(this.riskLimits.maxDailyLoss) * 0.8
+        Number(this.riskLimits.maxDailyLoss) * 0.8
       ) {
         recommendations.push(
           "Approaching daily loss limit - consider position reduction",

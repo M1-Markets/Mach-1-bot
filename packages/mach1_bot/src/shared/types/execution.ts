@@ -13,6 +13,10 @@ import type {
   Position,
   TradingPair,
 } from "./common";
+import type {
+  IsolatedPerpsConfig,
+  LiveTradingMarketMode,
+} from "./config";
 
 export type ExecutionOrderStatus = NormalizedOrderStatus;
 
@@ -59,12 +63,18 @@ export interface OrderLifecycleRecord {
   strategyId?: string;
   pair: TradingPair;
   side: "buy" | "sell";
+  direction?: OrderRequest["direction"];
   type: "market" | "limit";
+  requestedPrice: bigint;
   requestedQuantity: bigint;
+  leverage?: number;
+  reduceOnly?: boolean;
+  closeOnly?: boolean;
   filledQuantity: bigint;
   remainingQuantity: bigint;
   averageFillPrice?: bigint;
   fees: bigint;
+  feeCurrency?: Address;
   slippage: bigint;
   status: OrderLifecycleStatus;
   submittedAt: number;
@@ -179,6 +189,8 @@ export interface LiveTradingConfig {
   network: ChainNetwork;
   environment?: MonacoEnvironment;
   rpcUrl?: string;
+  marketMode?: LiveTradingMarketMode;
+  perps?: IsolatedPerpsConfig;
   maxSlippage: number;
   confirmations?: number;
   maxRetries?: number;

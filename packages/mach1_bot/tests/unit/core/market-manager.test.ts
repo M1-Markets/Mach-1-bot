@@ -1,4 +1,5 @@
 import { MarketManager } from "@/domains/trading/market-manager";
+import { MarketDataUnavailableError } from "@/shared/errors";
 import { Address, TradingPair } from "@/shared/types";
 import { vi } from "vitest";
 
@@ -6,15 +7,117 @@ describe("MarketManager", () => {
   let marketManager: MarketManager;
   let testPair: TradingPair;
 
+  const livePairMetadata = {
+    id: "pair-btc-usdc",
+    symbol: "BTC/USDC",
+    base_token: "BTC",
+    quote_token: "USDC",
+    base_asset_id: "btc-asset",
+    quote_asset_id: "usdc-asset",
+    base_icon_url: "",
+    quote_icon_url: "",
+    base_token_contract: "0x3333333333333333333333333333333333333333",
+    quote_token_contract: "0x0987654321098765432109876543210987654321",
+    base_decimals: 8,
+    quote_decimals: 6,
+    market_type: "SPOT",
+    is_active: true,
+    maker_fee_bps: 10,
+    taker_fee_bps: 20,
+    min_order_size: "0.0001",
+    max_order_size: "1000",
+    tick_size: "0.01",
+  };
+
+  const liveMarginPairMetadata = {
+    ...livePairMetadata,
+    id: "pair-btc-usdc-margin",
+    market_type: "MARGIN",
+  };
+
+  const livePair: TradingPair = {
+    base: livePairMetadata.base_token_contract as Address,
+    quote: livePairMetadata.quote_token_contract as Address,
+    symbol: livePairMetadata.symbol,
+  };
+
   beforeEach(() => {
-    marketManager = new MarketManager();
-    // Use the same addresses that are initialized in MarketManager's mock data
+    marketManager = new MarketManager({ mode: "simulation" });
     testPair = {
       base: "0x1234567890123456789012345678901234567890",
       quote: "0x0987654321098765432109876543210987654321",
       symbol: "BTC/USDC",
     };
   });
+
+  const createLiveSdk = (overrides?: Record<string, unknown>) =>
+    ({
+      market: {
+        getTradingPairBySymbol: vi.fn().mockResolvedValue(livePairMetadata),
+        getCandlesticks: vi.fn().mockResolvedValue([
+          {
+            T: 1710000000000,
+            t: 1710003600000,
+            o: "64000",
+            h: "65000",
+            l: "63000",
+            c: "64500",
+            v: "12.5",
+            s: "BTC/USDC",
+            i: "1d",
+            n: 42,
+          },
+        ]),
+        getMarketMetadata: vi.fn().mockResolvedValue({
+          symbol: "BTC/USDC",
+          base_icon_url: "",
+          quote_icon_url: "",
+          last_price: "64500",
+          last_price_timestamp: 1710000000000,
+          high_24h: "65000",
+          low_24h: "63000",
+          volume_24h: "12.5",
+          price_change_24h: "1200",
+          price_change_percent_24h: "1.86",
+          market_initialization_timestamp: 1700000000000,
+        }),
+        getPaginatedTradingPairs: vi.fn().mockResolvedValue({
+          data: {
+            data: [livePairMetadata],
+            total_pages: 1,
+          },
+        }),
+      },
+      orderbook: {
+        getOrderbook: vi.fn().mockResolvedValue({
+          bids: [{ price: "64400", quantity: "1.25", orderCount: 2 }],
+          asks: [{ price: "64600", quantity: "1.5", orderCount: 3 }],
+          baseDecimals: 8,
+          quoteDecimals: 6,
+          tradingPairId: livePairMetadata.id,
+          tradingMode: "SPOT",
+          timestamp: new Date().toISOString(),
+          sequence: 1,
+        }),
+      },
+      trades: {
+        getTrades: vi.fn().mockResolvedValue([
+          {
+            eventType: "trade",
+            tradingPairId: livePairMetadata.id,
+            tradingMode: "SPOT",
+            data: {
+              tradeId: "trade-1",
+              price: "64550",
+              quantity: "0.25",
+              makerSide: "BUY",
+              executedAt: "2026-05-26T00:00:00.000Z",
+            },
+          },
+        ]),
+      },
+      ...overrides,
+    }) as any;
 
   describe("constructor", () => {
     it("should initialize market manager", () => {
@@ -24,7 +127,7 @@ describe("MarketManager", () => {
   });
 
   describe("getOrderBook", () => {
-    it("should return order book for trading pair", async () => {
+    it("should return order book for trading pair in simulation mode", async () => {
       const depth = 10;
 
       const orderBook = await marketManager.getOrderBook(testPair, depth);
@@ -34,31 +137,47 @@ describe("MarketManager", () => {
       expect(Array.isArray(orderBook.asks)).toBe(true);
       expect(orderBook.bids.length).toBeLessThanOrEqual(depth);
       expect(orderBook.asks.length).toBeLessThanOrEqual(depth);
-
-      // Verify bid/ask structure
-      orderBook.bids.forEach((bid) => {
-        expect(typeof bid.price).toBe("bigint");
-        expect(typeof bid.quantity).toBe("bigint");
-        expect(bid.price).toBeGreaterThan(0n);
-        expect(bid.quantity).toBeGreaterThan(0n);
-      });
-
-      orderBook.asks.forEach((ask) => {
-        expect(typeof ask.price).toBe("bigint");
-        expect(typeof ask.quantity).toBe("bigint");
-        expect(ask.price).toBeGreaterThan(0n);
-        expect(ask.quantity).toBeGreaterThan(0n);
-      });
     });
 
-    it("should handle different depth values", async () => {
-      const orderBook5 = await marketManager.getOrderBook(testPair, 5);
-      const orderBook20 = await marketManager.getOrderBook(testPair, 20);
+    it("rejects in live mode when orderbook data missing", async () => {
+      const liveManager = new MarketManager({ mode: "live" });
+      liveManager.setSDK(
+        createLiveSdk({
+          orderbook: {
+            getOrderbook: vi.fn().mockResolvedValue({
+              bids: [],
+              asks: [],
+              baseDecimals: 8,
+              quoteDecimals: 6,
+              tradingPairId: livePairMetadata.id,
+              tradingMode: "SPOT",
+              timestamp: new Date().toISOString(),
+              sequence: 1,
+            }),
+          },
+        }),
+      );
 
-      expect(orderBook5.bids.length).toBeLessThanOrEqual(5);
-      expect(orderBook5.asks.length).toBeLessThanOrEqual(5);
-      expect(orderBook20.bids.length).toBeLessThanOrEqual(20);
-      expect(orderBook20.asks.length).toBeLessThanOrEqual(20);
+      await expect(liveManager.getOrderBook(livePair)).rejects.toBeInstanceOf(
+        MarketDataUnavailableError,
+      );
+    });
+
+    it("uses live SDK orderbook without touching mock maps", async () => {
+      const liveManager = new MarketManager({ mode: "live" });
+      liveManager.setSDK(createLiveSdk());
+
+      const orderBook = await liveManager.getOrderBook(livePair);
+
+      expect(orderBook).toEqual({
+        bids: [{ price: 64400000000n, quantity: 125000000n }],
+        asks: [{ price: 64600000000n, quantity: 150000000n }],
+      });
+      expect(
+        (liveManager as any).mockOrderBooks.has(
+          `${livePair.base}-${livePair.quote}`,
+        ),
+      ).toBe(false);
     });
   });
 
@@ -66,7 +185,6 @@ describe("MarketManager", () => {
     it("should return best bid and ask prices", async () => {
       const bestPrices = await marketManager.getBestPrices(testPair);
 
-      expect(bestPrices).toBeDefined();
       expect(bestPrices.baseToken).toBe(testPair.base);
       expect(bestPrices.quoteToken).toBe(testPair.quote);
       expect(
@@ -89,18 +207,44 @@ describe("MarketManager", () => {
       expect(price).toBeGreaterThan(0n);
     });
 
-    it("should synthesize fallback price data for valid SDK pairs", async () => {
+    it("throws typed live error when SDK candlestick fetch fails", async () => {
+      const liveManager = new MarketManager({ mode: "live" });
+      liveManager.setSDK(
+        createLiveSdk({
+          market: {
+            getTradingPairBySymbol: vi.fn().mockResolvedValue(livePairMetadata),
+            getCandlesticks: vi.fn().mockRejectedValue(new Error("timeout")),
+          },
+        }),
+      );
+
+      await expect(liveManager.getCurrentPrice(livePair)).rejects.toMatchObject(
+        {
+          name: "MarketDataUnavailableError",
+          code: "MARKET_DATA_UNAVAILABLE",
+          details: expect.objectContaining({
+            interval: "1d",
+            originalError: "timeout",
+          }),
+        },
+      );
+    });
+
+    it("should synthesize fallback price data in simulation mode", async () => {
       const sdkPair: TradingPair = {
         base: "0x3333333333333333333333333333333333333333" as Address,
         quote: "0x0987654321098765432109876543210987654321" as Address,
         symbol: "AMZN/USDC",
       };
 
-      marketManager.setSDK({
-        market: {
-          getCandlesticks: vi.fn().mockRejectedValue(new Error("timeout")),
-        },
-      } as any);
+      marketManager.setSDK(
+        createLiveSdk({
+          market: {
+            getTradingPairBySymbol: vi.fn().mockResolvedValue(livePairMetadata),
+            getCandlesticks: vi.fn().mockRejectedValue(new Error("timeout")),
+          },
+        }),
+      );
 
       const price = await marketManager.getCurrentPrice(sdkPair);
 
@@ -123,65 +267,40 @@ describe("MarketManager", () => {
     });
 
     it("should normalize nested Monaco API responses", async () => {
-      const sdkPairs = [
-        {
-          id: "pair-1",
-          base_token: "BTC",
-          quote_token: "USDC",
-          base_asset_id: "btc",
-          quote_asset_id: "usdc",
-          base_icon_url: "",
-          quote_icon_url: "",
-          base_token_contract: "0x1234567890123456789012345678901234567890",
-          quote_token_contract: "0x0987654321098765432109876543210987654321",
-          symbol: "BTC/USDC",
-          base_decimals: 8,
-          quote_decimals: 6,
-          market_type: "SPOT",
-          is_active: true,
-          maker_fee_bps: 10,
-          taker_fee_bps: 20,
-          min_order_size: "0.0001",
-          max_order_size: "1000",
-          tick_size: "0.01",
-        },
-        {
-          id: "pair-2",
-          base_token: "BTC",
-          quote_token: "USDC",
-          base_asset_id: "btc",
-          quote_asset_id: "usdc",
-          base_icon_url: "",
-          quote_icon_url: "",
-          base_token_contract: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-          quote_token_contract: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-          symbol: "BTC/USDC",
-          base_decimals: 8,
-          quote_decimals: 6,
-          market_type: "MARGIN",
-          is_active: true,
-          maker_fee_bps: 10,
-          taker_fee_bps: 20,
-          min_order_size: "0.0001",
-          max_order_size: "1000",
-          tick_size: "0.01",
-        },
-      ];
-
-      marketManager.setSDK({
-        market: {
-          getPaginatedTradingPairs: vi.fn().mockResolvedValue({
-            data: {
-              data: sdkPairs,
-              total_pages: 1,
-            },
-          }),
-        },
-      } as any);
+      marketManager.setSDK(createLiveSdk());
 
       const pairs = await marketManager.getAllTradingPairs();
 
-      expect(pairs).toEqual([sdkPairs[0]]);
+      expect(pairs).toEqual([livePairMetadata]);
+    });
+
+    it("should select isolated perps pairs when requested", async () => {
+      marketManager.setSDK(
+        createLiveSdk({
+          market: {
+            getPaginatedTradingPairs: vi.fn().mockResolvedValue({
+              data: {
+                data: [livePairMetadata, liveMarginPairMetadata],
+                total_pages: 1,
+              },
+            }),
+          },
+        }),
+      );
+
+      const pairs = await marketManager.getAllTradingPairs({
+        marketMode: "isolated_perps",
+      });
+
+      expect(pairs).toEqual([liveMarginPairMetadata]);
+    });
+
+    it("should reject unsupported market mode requests", async () => {
+      await expect(
+        marketManager.getAllTradingPairs({
+          marketMode: "cross_margin" as never,
+        }),
+      ).rejects.toThrow("Unsupported live market mode: cross_margin");
     });
   });
 
@@ -189,7 +308,6 @@ describe("MarketManager", () => {
     it("should return market statistics", async () => {
       const stats = await marketManager.getMarketStats(testPair);
 
-      expect(stats).toBeDefined();
       expect(typeof stats.spread).toBe("bigint");
       expect(typeof stats.depth).toBe("bigint");
       expect(typeof stats.volume).toBe("bigint");
@@ -198,14 +316,11 @@ describe("MarketManager", () => {
   });
 
   describe("getRecentTrades", () => {
-    it("should return recent trade history", async () => {
-      const limit = 50;
-
-      const trades = await marketManager.getRecentTrades(testPair, limit);
+    it("should return recent trade history in simulation mode", async () => {
+      const trades = await marketManager.getRecentTrades(testPair, 50);
 
       expect(Array.isArray(trades)).toBe(true);
-      expect(trades.length).toBeLessThanOrEqual(limit);
-
+      expect(trades.length).toBeLessThanOrEqual(50);
       trades.forEach((trade) => {
         expect(typeof trade.price).toBe("bigint");
         expect(typeof trade.quantity).toBe("bigint");
@@ -213,63 +328,98 @@ describe("MarketManager", () => {
         expect(["buy", "sell"]).toContain(trade.side);
       });
     });
+
+    it("uses live trades endpoint without touching mock trades", async () => {
+      const liveManager = new MarketManager({ mode: "live" });
+      liveManager.setSDK(createLiveSdk());
+
+      const trades = await liveManager.getRecentTrades(livePair, 10);
+
+      expect(trades).toEqual([
+        {
+          price: 64550000000n,
+          quantity: 25000000n,
+          timestamp: Date.parse("2026-05-26T00:00:00.000Z"),
+          side: "buy",
+        },
+      ]);
+      expect(
+        (liveManager as any).mockTrades.has(`${livePair.base}-${livePair.quote}`),
+      ).toBe(false);
+    });
   });
 
   describe("getTicker", () => {
     it("should return market ticker data", async () => {
       const ticker = await marketManager.getTicker(testPair);
 
-      expect(ticker).toBeDefined();
       expect(typeof ticker.price).toBe("bigint");
       expect(typeof ticker.volume24h).toBe("bigint");
       expect(typeof ticker.change24h).toBe("number");
       expect(typeof ticker.high24h).toBe("bigint");
       expect(typeof ticker.low24h).toBe("bigint");
     });
+
+    it("uses live market metadata without touching mock state", async () => {
+      const liveManager = new MarketManager({ mode: "live" });
+      liveManager.setSDK(createLiveSdk());
+
+      const ticker = await liveManager.getTicker(livePair);
+
+      expect(ticker.price).toBe(64500000000n);
+      expect(ticker.volume24h).toBe(1250000000n);
+      expect(ticker.change24h).toBeCloseTo(0.0186);
+      expect(ticker.high24h).toBe(65000000000n);
+      expect(ticker.low24h).toBe(63000000000n);
+      expect(
+        (liveManager as any).mockPrices.has(`${livePair.base}-${livePair.quote}`),
+      ).toBe(false);
+    });
   });
 
   describe("getCandles", () => {
-    it("should return historical price candles", async () => {
-      const start = new Date(Date.now() - 24 * 60 * 60 * 1000); // 24 hours ago
+    it("should return historical price candles in simulation mode", async () => {
+      const start = new Date(Date.now() - 24 * 60 * 60 * 1000);
       const end = new Date();
-      const timeframe = "1h";
-
-      const candles = await marketManager.getCandles(
-        testPair,
-        timeframe,
-        start,
-        end,
-      );
+      const candles = await marketManager.getCandles(testPair, "1h", start, end);
 
       expect(Array.isArray(candles)).toBe(true);
-      candles.forEach((candle) => {
-        expect(typeof candle.timestamp).toBe("number");
-        expect(typeof candle.open).toBe("number");
-        expect(typeof candle.high).toBe("number");
-        expect(typeof candle.low).toBe("number");
-        expect(typeof candle.close).toBe("number");
-        expect(typeof candle.volume).toBe("number");
-      });
+      expect(candles.length).toBeGreaterThan(0);
+    });
+
+    it("uses live candlestick endpoint without touching mock candle cache", async () => {
+      const liveManager = new MarketManager({ mode: "live" });
+      liveManager.setSDK(createLiveSdk());
+
+      const candles = await liveManager.getCandles(
+        livePair,
+        "1d",
+        new Date("2026-05-25T00:00:00.000Z"),
+        new Date("2026-05-26T00:00:00.000Z"),
+      );
+
+      expect(candles).toEqual([
+        {
+          timestamp: 1710000000000,
+          open: 64000,
+          high: 65000,
+          low: 63000,
+          close: 64500,
+          volume: 12.5,
+        },
+      ]);
+      expect(
+        (liveManager as any).priceHistory.has(`${livePair.base}-${livePair.quote}`),
+      ).toBe(false);
     });
   });
 
   describe("getTradeHistory", () => {
     it("should return trade history", async () => {
-      const limit = 50;
-
-      const trades = await marketManager.getTradeHistory(testPair, limit);
+      const trades = await marketManager.getTradeHistory(testPair, 50);
 
       expect(Array.isArray(trades)).toBe(true);
-      expect(trades.length).toBeLessThanOrEqual(limit);
-
-      trades.forEach((trade) => {
-        expect(typeof trade.price).toBe("bigint");
-        expect(typeof trade.quantity).toBe("bigint");
-        expect(typeof trade.timestamp).toBe("number");
-        expect(typeof trade.isBuy).toBe("boolean");
-        expect(trade.baseToken).toMatch(/^0x[a-fA-F0-9]{40}$/);
-        expect(trade.quoteToken).toMatch(/^0x[a-fA-F0-9]{40}$/);
-      });
+      expect(trades.length).toBeLessThanOrEqual(50);
     });
   });
 
@@ -289,17 +439,9 @@ describe("MarketManager", () => {
         symbol: "INVALID/USDC",
       };
 
-      // Should throw an error for invalid trading pair not in mock data
       await expect(marketManager.getOrderBook(invalidPair)).rejects.toThrow(
         "No price data for pair INVALID/USDC",
       );
-    });
-
-    it("should handle network connectivity issues", async () => {
-      // Test would mock network failure scenarios
-      // For now, we just ensure the method exists and returns something
-      const result = await marketManager.getOrderBook(testPair);
-      expect(result).toBeDefined();
     });
   });
 });

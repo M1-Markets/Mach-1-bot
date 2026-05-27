@@ -1,5 +1,11 @@
 import type { Command } from "commander";
-import type { GetUserBalancesResponse, UserProfile } from "mach1_sdk";
+import type {
+  GetUserBalancesResponse,
+  ListMarginAccountsResponse,
+  ListPositionsResponse,
+  MarginAccountSummary,
+  UserProfile,
+} from "mach1_sdk";
 import pc from "picocolors";
 import { formatUnits, parseUnits } from "viem";
 import {
@@ -77,6 +83,36 @@ type LiveBalanceResult = {
   address: string;
   accountRows: BalanceRow[];
   walletRows: WalletBalanceRow[];
+};
+
+type IsolatedPerpsSummaryRow = {
+  marginAccountId: string;
+  equity: string;
+  freeCollateral: string;
+  usedMargin: string;
+  maintenanceMargin: string;
+  withdrawableCollateral: string;
+  realizedPnl: string;
+  unrealizedPnl: string;
+};
+
+type IsolatedPerpsPositionRow = {
+  tradingPairId: string;
+  side: string;
+  size: string;
+  entryPrice: string;
+  markPrice: string;
+  leverage: string;
+  collateral: string;
+  unrealizedPnl: string;
+  liquidationPrice: string;
+  fundingRate: string;
+  accruedFunding: string;
+};
+
+type LivePerpsResult = {
+  summary?: IsolatedPerpsSummaryRow;
+  positions: IsolatedPerpsPositionRow[];
 };
 
 const shouldTraceMonacoApi = (): boolean =>
@@ -262,6 +298,133 @@ const logBalanceRows = (
   }
 };
 
+const parseMarginAccountId = (
+  response: ListMarginAccountsResponse,
+): string | undefined => {
+  if (!Array.isArray(response?.accounts)) {
+    throw new Error("Margin accounts response missing accounts array.");
+  }
+
+  for (const account of response.accounts) {
+    if (!isRecord(account)) {
+      continue;
+    }
+
+    const marginAccountId = getStringProp(account, "margin_account_id");
+    if (marginAccountId) {
+      return marginAccountId;
+    }
+  }
+
+  return undefined;
+};
+
+const parseMarginAccountSummary = (
+  marginAccountId: string,
+  summary: MarginAccountSummary,
+): IsolatedPerpsSummaryRow => {
+  traceMonacoApi("perps.getMarginAccountSummary", summary);
+  if (!isRecord(summary)) {
+    throw new Error("Margin account summary response is not an object.");
+  }
+
+  return {
+    marginAccountId,
+    equity: getStringProp(summary, "equity") ?? "0",
+    freeCollateral: getStringProp(summary, "free_collateral") ?? "0",
+    usedMargin: getStringProp(summary, "initial_margin_required") ?? "0",
+    maintenanceMargin:
+      getStringProp(summary, "maintenance_margin_required") ?? "0",
+    withdrawableCollateral:
+      getStringProp(summary, "withdrawable_collateral") ?? "0",
+    realizedPnl: getStringProp(summary, "realized_pnl") ?? "0",
+    unrealizedPnl: getStringProp(summary, "unrealized_pnl") ?? "0",
+  };
+};
+
+const parsePerpsPositions = (
+  response: ListPositionsResponse,
+): IsolatedPerpsPositionRow[] => {
+  traceMonacoApiPayload("perps.listOpenPositions", response);
+  if (!Array.isArray(response?.positions)) {
+    throw new Error("Perps positions response missing positions array.");
+  }
+
+  return response.positions.flatMap((position) => {
+    if (!isRecord(position)) {
+      return [];
+    }
+
+    const tradingPairId = getStringProp(position, "trading_pair_id");
+    const side = getStringProp(position, "side");
+    const size = getStringProp(position, "size");
+    if (!tradingPairId || !side || !size) {
+      return [];
+    }
+
+    return [
+      {
+        tradingPairId,
+        side,
+        size,
+        entryPrice: getStringProp(position, "entry_price") ?? "0",
+        markPrice: getStringProp(position, "mark_price") ?? "0",
+        leverage: getStringProp(position, "leverage") ?? "unavailable",
+        collateral: getStringProp(position, "isolated_margin") ?? "0",
+        unrealizedPnl: getStringProp(position, "unrealized_pnl") ?? "0",
+        liquidationPrice:
+          getStringProp(position, "liquidation_price") ?? "unavailable",
+        fundingRate:
+          getStringProp(position, "funding_rate") ?? "unavailable",
+        accruedFunding:
+          getStringProp(position, "accrued_funding") ?? "unavailable",
+      },
+    ];
+  });
+};
+
+const fetchLivePerpsResult = async (
+  sdk: {
+    perps: {
+      listMarginAccounts: (
+        params?: { state?: string },
+      ) => Promise<ListMarginAccountsResponse>;
+      getMarginAccountSummary: (
+        marginAccountId: string,
+      ) => Promise<MarginAccountSummary>;
+      listOpenPositions: (params?: {
+        margin_account_id?: string;
+      }) => Promise<ListPositionsResponse>;
+    };
+  },
+  onStatus: (status: string) => void,
+): Promise<LivePerpsResult> => {
+  onStatus("Fetching isolated margin accounts");
+  const rawAccounts = await sdk.perps.listMarginAccounts({ state: "ACTIVE" });
+  traceMonacoApiPayload("perps.listMarginAccounts", rawAccounts);
+  const marginAccountId = parseMarginAccountId(rawAccounts);
+
+  if (!marginAccountId) {
+    return {
+      summary: undefined,
+      positions: [],
+    };
+  }
+
+  onStatus("Fetching isolated margin account summary");
+  const rawSummary = await sdk.perps.getMarginAccountSummary(marginAccountId);
+
+  onStatus("Fetching open perps positions");
+  const rawPositions = await sdk.perps.listOpenPositions({
+    margin_account_id: marginAccountId,
+  });
+
+  return {
+    summary: parseMarginAccountSummary(marginAccountId, rawSummary),
+    positions: parsePerpsPositions(rawPositions),
+  };
+};
+
 export const registerLiveCommands = (liveCommand: Command): void => {
   liveCommand
     .command("balance")
@@ -380,13 +543,83 @@ export const registerLiveCommands = (liveCommand: Command): void => {
         }
         console.error(
           pc.red(
-            `❌ Failed to fetch live balances: ${
-              error instanceof Error ? error.message : String(error)
+            `❌ Failed to fetch live balances: ${error instanceof Error ? error.message : String(error)
             }`,
           ),
         );
       } finally {
         balanceUi?.unmount();
+        process.exit(exitCode);
+      }
+    });
+
+  liveCommand
+    .command("perps")
+    .description("Show isolated perps margin balances and open positions")
+    .option(
+      "-c, --config <file>",
+      "Configuration file path",
+      "mach-one-bot.toml",
+    )
+    .option(
+      "--env <environment>",
+      "Environment: mainnet, staging, development, or local",
+    )
+    .action(async (options) => {
+      let exitCode = 0;
+      try {
+        const prepared = await loadBotConfigWithEnv(
+          options.config,
+          options.env,
+          "staging",
+        );
+
+        logBalanceStatus("Connecting to Monaco");
+        await withMonacoSession(
+          prepared,
+          async ({ sdk }) => {
+            const result = await fetchLivePerpsResult(sdk, logBalanceStatus);
+
+            console.log(pc.cyan("Isolated perps account"));
+            if (!result.summary) {
+              console.log(pc.gray("  none"));
+            } else {
+              console.log(JSON.stringify(result.summary));
+            }
+
+            logBalanceRows(
+              "Open Perps Positions",
+              result.positions.map((position) => ({
+                tradingPairId: position.tradingPairId,
+                side: position.side,
+                size: position.size,
+                entryPrice: position.entryPrice,
+                markPrice: position.markPrice,
+                leverage: position.leverage,
+                collateral: position.collateral,
+                unrealizedPnl: position.unrealizedPnl,
+                liquidationPrice: position.liquidationPrice,
+                fundingRate: position.fundingRate,
+                accruedFunding: position.accruedFunding,
+              })),
+            );
+          },
+          logBalanceStatus,
+          {
+            connectWebSocket: false,
+            traceProfileOnInitialize: false,
+          },
+        );
+      } catch (error) {
+        exitCode = 1;
+        logBalanceStatus("Perps fetch failed");
+        console.error(
+          pc.red(
+            `❌ Failed to fetch isolated perps state: ${error instanceof Error ? error.message : String(error)
+            }`,
+          ),
+        );
+      } finally {
         process.exit(exitCode);
       }
     });
@@ -459,11 +692,11 @@ export const registerLiveCommands = (liveCommand: Command): void => {
           if (!response.ok) {
             const message = isRecord(responseBody)
               ? getStringProp(responseBody, "message") ||
-                getStringProp(responseBody, "error")
+              getStringProp(responseBody, "error")
               : undefined;
             throw new Error(
               message ||
-                `Faucet request failed with status ${response.status} ${response.statusText}`,
+              `Faucet request failed with status ${response.status} ${response.statusText}`,
             );
           }
 
@@ -496,8 +729,7 @@ export const registerLiveCommands = (liveCommand: Command): void => {
         }
         console.error(
           pc.red(
-            `❌ Faucet request failed: ${
-              error instanceof Error ? error.message : String(error)
+            `❌ Faucet request failed: ${error instanceof Error ? error.message : String(error)
             }`,
           ),
         );
@@ -568,11 +800,11 @@ export const registerLiveCommands = (liveCommand: Command): void => {
           const inputResult = options.all
             ? { tokenInput: "all", amountInput: "all" }
             : await promptForDepositInput({
-                tokenOptions,
-                initialToken: options.token,
-                initialAmount: options.amount,
-                viewport,
-              });
+              tokenOptions,
+              initialToken: options.token,
+              initialAmount: options.amount,
+              viewport,
+            });
           const { tokenInput, amountInput } = inputResult;
           const trimmedTokenInput = tokenInput.trim();
           const normalizedTokenInput = trimmedTokenInput.toLowerCase();
@@ -611,8 +843,7 @@ export const registerLiveCommands = (liveCommand: Command): void => {
 
             console.log(
               pc.cyan(
-                `📦 Depositing ${balancesToDeposit.length} token balance${
-                  balancesToDeposit.length === 1 ? "" : "s"
+                `📦 Depositing ${balancesToDeposit.length} token balance${balancesToDeposit.length === 1 ? "" : "s"
                 }...`,
               ),
             );
@@ -741,8 +972,7 @@ export const registerLiveCommands = (liveCommand: Command): void => {
 
           if (walletBalance <= 0n) {
             throw new Error(
-              `Wallet balance is zero for ${
-                tokenInfo.symbol || tokenInfo.address
+              `Wallet balance is zero for ${tokenInfo.symbol || tokenInfo.address
               }.`,
             );
           }
@@ -785,8 +1015,7 @@ export const registerLiveCommands = (liveCommand: Command): void => {
 
           if (!assetId) {
             throw new Error(
-              `Unable to resolve asset ID for token ${
-                tokenInfo.symbol || tokenInfo.address
+              `Unable to resolve asset ID for token ${tokenInfo.symbol || tokenInfo.address
               }`,
             );
           }
@@ -892,8 +1121,7 @@ export const registerLiveCommands = (liveCommand: Command): void => {
         }
         console.error(
           pc.red(
-            `❌ Failed to deposit funds: ${
-              error instanceof Error ? error.message : String(error)
+            `❌ Failed to deposit funds: ${error instanceof Error ? error.message : String(error)
             }`,
           ),
         );
@@ -997,8 +1225,7 @@ export const registerLiveCommands = (liveCommand: Command): void => {
 
           if (!assetId) {
             throw new Error(
-              `Unable to resolve asset ID for token ${
-                tokenInfo.symbol || tokenInfo.address
+              `Unable to resolve asset ID for token ${tokenInfo.symbol || tokenInfo.address
               }`,
             );
           }
@@ -1014,8 +1241,7 @@ export const registerLiveCommands = (liveCommand: Command): void => {
           const availableRaw = parseUnits(balanceEntry.available, decimals);
           if (availableRaw <= 0n) {
             throw new Error(
-              `Vault balance is zero for ${
-                tokenInfo.symbol || tokenInfo.address
+              `Vault balance is zero for ${tokenInfo.symbol || tokenInfo.address
               }.`,
             );
           }
@@ -1103,8 +1329,7 @@ export const registerLiveCommands = (liveCommand: Command): void => {
         }
         console.error(
           pc.red(
-            `❌ Failed to withdraw funds: ${
-              error instanceof Error ? error.message : String(error)
+            `❌ Failed to withdraw funds: ${error instanceof Error ? error.message : String(error)
             }`,
           ),
         );
@@ -1420,8 +1645,7 @@ export const registerLiveCommands = (liveCommand: Command): void => {
         }
         console.error(
           pc.red(
-            `❌ Failed to swap tokens: ${
-              error instanceof Error ? error.message : String(error)
+            `❌ Failed to swap tokens: ${error instanceof Error ? error.message : String(error)
             }`,
           ),
         );

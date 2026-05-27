@@ -7,21 +7,37 @@ import type {
   OrderbookQuotationMode,
 } from "mach1_sdk";
 import { tradingPairResolver } from "mach1_sdk";
+import { OrderEventEmitter } from "@/domains/execution/order-event-emitter";
 import { MarketManager } from "@/domains/trading/market-manager";
 import { OrderManager } from "@/domains/trading/order-manager";
+import { OrderStatus } from "@/shared/constants";
 import { WEBSOCKET_CONFIG } from "@/shared/constants/monaco";
+import { ConnectionError } from "@/shared/errors";
 import {
   Address,
   EventCallback,
+  type MarketDataMode,
   TradingPair,
   UnsubscribeFunction,
 } from "@/shared/types/common";
 import type {
+  OrderLifecycleEvent,
+  OrderLifecycleRecord,
+} from "@/shared/types/execution";
+import type {
+  InternalOrder,
   InternalOrderEvent,
+  InternalOrderStatus,
   InternalTrade,
   OrderBookEvent,
   TradeEvent,
 } from "@/shared/types/internal-events";
+import {
+  type Clock,
+  type Rng,
+  realClock,
+  realRng,
+} from "@/shared/utils/determinism";
 import { createLogger } from "@/shared/utils/logger";
 import { exponentialBackoff } from "@/shared/utils/rate-limiter";
 import { isRecord } from "@/shared/utils/record-utils";
@@ -92,22 +108,37 @@ export class RealtimeManager {
   private activeOHLCVUnsubs = new Map<string, UnsubscribeFunction>();
   private reconnectAttempts = 0;
   private reconnectTimer?: NodeJS.Timeout;
-  private useSimulation: boolean;
+  private mode: MarketDataMode;
   private simulationStarted = false;
+  private readonly rng: Rng;
+  private readonly clock: Clock;
+  private detachOrderEventEmitter?: () => void;
+  private lastConnectionError?: Error;
 
   constructor(
     marketManager: MarketManager,
     orderManager: OrderManager,
     sdk?: Mach1SDK,
+    options?: {
+      mode?: MarketDataMode;
+      rng?: Rng;
+      clock?: Clock;
+      orderEventEmitter?: OrderEventEmitter;
+    },
   ) {
     this.marketManager = marketManager;
     this.orderManager = orderManager;
     this.sdk = sdk;
-    this.useSimulation = !sdk; // Use simulation if no SDK provided (backtest/paper mode)
+    this.mode = options?.mode ?? (sdk ? "live" : "simulation");
+    this.rng = options?.rng ?? realRng;
+    this.clock = options?.clock ?? realClock;
+    if (options?.orderEventEmitter) {
+      this.attachOrderEventEmitter(options.orderEventEmitter);
+    }
 
     logger.debug("RealtimeManager created", {
       hasSDK: !!sdk,
-      mode: sdk ? "live" : "simulation",
+      mode: this.mode,
     });
   }
 
@@ -118,8 +149,30 @@ export class RealtimeManager {
    */
   setSDK(sdk: Mach1SDK): void {
     this.sdk = sdk;
-    this.useSimulation = false;
     logger.debug("SDK attached to RealtimeManager");
+  }
+
+  setMode(mode: MarketDataMode): void {
+    this.mode = mode;
+  }
+
+  attachOrderEventEmitter(orderEventEmitter: OrderEventEmitter): () => void {
+    this.detachOrderEventEmitter?.();
+    this.detachOrderEventEmitter = orderEventEmitter.on((event) => {
+      this.emitUserOrderUpdate(event);
+    });
+    return () => {
+      this.detachOrderEventEmitter?.();
+      this.detachOrderEventEmitter = undefined;
+    };
+  }
+
+  getMode(): MarketDataMode {
+    return this.mode;
+  }
+
+  private isSimulationMode(): boolean {
+    return this.mode !== "live";
   }
 
   async connect(): Promise<void> {
@@ -128,17 +181,10 @@ export class RealtimeManager {
       return;
     }
 
-    if (this.useSimulation) {
+    if (this.isSimulationMode()) {
       logger.info("Connecting in simulation mode");
       this.isConnected = true;
-      this.startMarketDataSimulation();
-      return;
-    }
-
-    // In test runs or when WebSockets are unavailable, fall back to simulation
-    if (this.useSimulation) {
-      logger.info("Connecting in simulation mode");
-      this.isConnected = true;
+      this.lastConnectionError = undefined;
       this.startMarketDataSimulation();
       return;
     }
@@ -146,75 +192,44 @@ export class RealtimeManager {
     const wsClient = this.sdk?.ws;
 
     if (!wsClient) {
-      logger.warn("SDK WebSocket not available, falling back to simulation");
-      this.useSimulation = true;
-      this.isConnected = true;
-      this.startMarketDataSimulation();
-      return;
+      throw new ConnectionError("Monaco SDK WebSocket client");
     }
 
-    // Real WebSocket connection for live mode
     try {
       logger.debug("Connecting to Monaco WebSocket channels");
-
-      const connected = await this.tryConnectWebsocket(wsClient, "ws");
-
-      if (connected) {
-        this.isConnected = true;
-        this.reconnectAttempts = 0;
-        logger.debug("WebSocket connection established");
-      } else {
-        this.fallbackToSimulation("WebSocket connect failed");
-      }
+      await this.tryConnectWebsocket(wsClient, "ws");
+      this.isConnected = true;
+      this.reconnectAttempts = 0;
+      this.lastConnectionError = undefined;
+      logger.debug("WebSocket connection established");
     } catch (error) {
-      this.fallbackToSimulation("WebSocket connect error", error as Error);
+      this.lastConnectionError = error as Error;
+      throw new ConnectionError(
+        "Monaco SDK WebSocket client",
+        error as Error,
+      );
     }
   }
 
   private async tryConnectWebsocket(
     client: { connect: () => Promise<void>; isConnected?: () => boolean },
     channel: string,
-  ): Promise<boolean> {
+  ): Promise<void> {
     const timeoutMs = process.env.NODE_ENV === "test" ? 2000 : 5000;
 
-    try {
-      if (client.isConnected?.()) {
-        return true;
-      }
-
-      await Promise.race([
-        client.connect(),
-        new Promise((_, reject) =>
-          setTimeout(
-            () => reject(new Error(`WebSocket ${channel} connect timeout`)),
-            timeoutMs,
-          ),
-        ),
-      ]);
-      return true;
-    } catch (error) {
-      logger.warn("WebSocket channel connection failed", {
-        channel,
-        timeoutMs,
-        message: error instanceof Error ? error.message : String(error),
-      });
-      return false;
-    }
-  }
-
-  private fallbackToSimulation(reason: string, error?: Error): void {
-    if (this.useSimulation) {
+    if (client.isConnected?.()) {
       return;
     }
 
-    logger.warn("Falling back to simulation mode", {
-      reason,
-      error: error?.message,
-    });
-
-    this.useSimulation = true;
-    this.isConnected = true;
-    this.startMarketDataSimulation();
+    await Promise.race([
+      client.connect(),
+      new Promise((_, reject) =>
+        setTimeout(
+          () => reject(new Error(`WebSocket ${channel} connect timeout`)),
+          timeoutMs,
+        ),
+      ),
+    ]);
   }
 
   private startMarketDataSimulation(): void {
@@ -237,8 +252,8 @@ export class RealtimeManager {
 
     for (const monacoTradingPair of pairs) {
       const pair: TradingPair = {
-        base: monacoTradingPair.base_token as Address,
-        quote: monacoTradingPair.quote_token as Address,
+        base: monacoTradingPair.base_token_contract as Address,
+        quote: monacoTradingPair.quote_token_contract as Address,
         symbol: monacoTradingPair.symbol,
       };
 
@@ -249,7 +264,7 @@ export class RealtimeManager {
 
         listeners.forEach((callback) => {
           if (typeof callback === "function") {
-            callback({ pair, price, timestamp: Date.now() });
+            callback({ pair, price, timestamp: this.clock.now() });
           }
         });
 
@@ -266,7 +281,7 @@ export class RealtimeManager {
               quoteToken: pair.quote,
               bids: orderBook.bids,
               asks: orderBook.asks,
-              lastUpdate: Date.now(),
+              lastUpdate: this.clock.now(),
             },
           };
 
@@ -277,7 +292,7 @@ export class RealtimeManager {
           });
         }
 
-        if (Math.random() > 0.7) {
+        if (this.rng.next() > 0.7) {
           this.emitMockTrade(pair);
         }
       } catch (error) {
@@ -294,11 +309,18 @@ export class RealtimeManager {
 
     try {
       const price = await this.marketManager.getCurrentPrice(pair);
-      const quantity = BigInt(Math.floor(Math.random() * 100000) + 10000);
-      const isBuy = Math.random() > 0.5;
+      const timestamp = this.clock.now();
+      const quantity = BigInt(Math.floor(this.rng.next() * 100000) + 10000);
+      const isBuy = this.rng.next() > 0.5;
+      const entropy = Math.floor(this.rng.next() * 0xffffffff)
+        .toString(36)
+        .padStart(7, "0");
+      const transactionHash = Array.from({ length: 64 }, () =>
+        Math.floor(this.rng.next() * 16).toString(16),
+      ).join("");
 
       const trade: InternalTrade = {
-        id: `trade_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        id: `trade_${timestamp}_${entropy}`,
         baseToken: pair.base,
         quoteToken: pair.quote,
         price,
@@ -306,10 +328,9 @@ export class RealtimeManager {
         isBuy,
         maker: "0x1234567890123456789012345678901234567890" as Address,
         taker: "0x0987654321098765432109876543210987654321" as Address,
-        timestamp: Date.now(),
-        blockNumber: Math.floor(Math.random() * 1000000),
-        transactionHash:
-          `0x${Math.random().toString(16).substr(2, 64)}` as `0x${string}`,
+        timestamp,
+        blockNumber: Math.floor(this.rng.next() * 1000000),
+        transactionHash: `0x${transactionHash}` as `0x${string}`,
       };
 
       const event: TradeEvent = {
@@ -453,29 +474,6 @@ export class RealtimeManager {
 
     const eventKey = `user_orders:${trader || "all"}`;
 
-    const orderUpdateInterval = setInterval(async () => {
-      const orders = await this.orderManager.getOpenOrders(trader);
-
-      orders.forEach((order) => {
-        if (Math.random() > 0.95) {
-          const event: InternalOrderEvent = {
-            type: "order_update",
-            order,
-            previousStatus: order.status,
-          };
-
-          const listeners = this.eventListeners.get(eventKey) || [];
-          listeners.forEach((callback) => {
-            if (typeof callback === "function") {
-              callback(event);
-            }
-          });
-        }
-      });
-    }, 2000);
-
-    this.subscriptions.set(eventKey, orderUpdateInterval);
-
     return {
       subscribe: (
         callback: EventCallback<InternalOrderEvent>,
@@ -487,11 +485,6 @@ export class RealtimeManager {
         });
       },
       unsubscribe: () => {
-        const interval = this.subscriptions.get(eventKey);
-        if (interval) {
-          clearInterval(interval);
-          this.subscriptions.delete(eventKey);
-        }
         this.eventListeners.delete(eventKey);
       },
     };
@@ -523,11 +516,12 @@ export class RealtimeManager {
       throw new Error("Not connected to realtime streams");
     }
 
-    const start = Date.now();
+    const start = this.clock.now();
     // Skip delays in test environment
-    const delay = process.env.NODE_ENV === "test" ? 0 : Math.random() * 10 + 5;
+    const delay =
+      process.env.NODE_ENV === "test" ? 0 : this.rng.next() * 10 + 5;
     await new Promise((resolve) => setTimeout(resolve, delay));
-    return Date.now() - start;
+    return this.clock.now() - start;
   }
 
   async disconnect(): Promise<void> {
@@ -558,6 +552,7 @@ export class RealtimeManager {
     this.ohlcvCache.clear();
     this.isConnected = false;
     this.simulationStarted = false;
+    this.lastConnectionError = undefined;
 
     logger.info("Disconnected from realtime streams");
   }
@@ -617,7 +612,7 @@ export class RealtimeManager {
       await this.connect();
     }
 
-    if (this.useSimulation || !this.sdk) {
+    if (this.isSimulationMode() || !this.sdk) {
       // Simulation mode - return no-op
       logger.debug("OHLCV subscription in simulation mode (no-op)", {
         symbol,
@@ -665,6 +660,7 @@ export class RealtimeManager {
           const candlestick = event.candlestick;
           if (candlestick) {
             this.ohlcvCache.set(subscriptionKey, candlestick);
+            this.marketManager.cacheCandlestick(symbol, interval, candlestick);
           }
           callback(candlestick);
         },
@@ -698,7 +694,7 @@ export class RealtimeManager {
       await this.connect();
     }
 
-    if (this.useSimulation || !this.sdk) {
+    if (this.isSimulationMode() || !this.sdk) {
       // Use existing simulation-based orderbook subscription
       logger.debug("Orderbook subscription in simulation mode");
       const pair: TradingPair = {
@@ -752,6 +748,7 @@ export class RealtimeManager {
           });
 
           this.orderbookCache.set(symbol, event);
+          this.marketManager.cacheOrderbook(symbol, event);
           callback(event);
         },
       );
@@ -777,16 +774,32 @@ export class RealtimeManager {
     connected: boolean;
     activeSubscriptions: number;
     totalEventListeners: number;
+    mode: MarketDataMode;
+    usingLiveWebSocket: boolean;
+    lastConnectionError?: string;
+    activeSubscriptionKeys: string[];
   } {
     const totalListeners = Array.from(this.eventListeners.values()).reduce(
       (sum, listeners) => sum + listeners.length,
       0,
     );
+    const activeSubscriptionKeys = [
+      ...new Set([
+        ...this.subscriptions.keys(),
+        ...this.eventListeners.keys(),
+        ...Array.from(this.activeOrderbookUnsubs.keys(), (key) => `orderbook_ws:${key}`),
+        ...Array.from(this.activeOHLCVUnsubs.keys(), (key) => `ohlcv_ws:${key}`),
+      ]),
+    ].sort();
 
     return {
       connected: this.isConnected,
-      activeSubscriptions: this.subscriptions.size,
+      activeSubscriptions: activeSubscriptionKeys.length,
       totalEventListeners: totalListeners,
+      mode: this.mode,
+      usingLiveWebSocket: this.isConnected && !this.isSimulationMode(),
+      lastConnectionError: this.lastConnectionError?.message,
+      activeSubscriptionKeys,
     };
   }
 
@@ -807,7 +820,7 @@ export class RealtimeManager {
     return {
       status: "healthy",
       lastPing: 5,
-      connectionTime: Date.now(),
+      connectionTime: this.clock.now(),
     };
   }
 
@@ -928,5 +941,66 @@ export class RealtimeManager {
         void subscribe();
       }
     });
+  }
+
+  private emitUserOrderUpdate(event: OrderLifecycleEvent): void {
+    const payload: InternalOrderEvent = {
+      type: "order_update",
+      order: this.toInternalOrder(event.order),
+      previousStatus: this.toInternalOrderStatus(event.previousStatus),
+      newStatus: this.toInternalOrderStatus(event.order.status),
+    };
+
+    for (const [eventKey, listeners] of this.eventListeners.entries()) {
+      if (!eventKey.startsWith("user_orders:")) {
+        continue;
+      }
+
+      listeners.forEach((callback) => {
+        if (typeof callback === "function") {
+          callback(payload);
+        }
+      });
+    }
+  }
+
+  private toInternalOrder(order: OrderLifecycleRecord): InternalOrder {
+    return {
+      id: order.exchangeOrderId ?? order.engineOrderId ?? order.localId,
+      trader: "0x0000000000000000000000000000000000000000" as Address,
+      baseToken: order.pair.base,
+      quoteToken: order.pair.quote,
+      price: order.averageFillPrice ?? order.requestedPrice,
+      quantity: order.requestedQuantity,
+      filledQuantity: order.filledQuantity,
+      remainingQuantity: order.remainingQuantity,
+      orderType: order.type === "limit" ? "LIMIT" : "MARKET",
+      status: this.toInternalOrderStatus(order.status) ?? OrderStatus.PENDING,
+      isBuy: order.side === "buy",
+      timestamp: order.updatedAt,
+    };
+  }
+
+  private toInternalOrderStatus(
+    status?: OrderLifecycleRecord["status"],
+  ): InternalOrderStatus | undefined {
+    if (status === undefined) {
+      return undefined;
+    }
+
+    switch (status) {
+      case "submitted":
+      case "accepted":
+      case "pending":
+        return OrderStatus.PENDING;
+      case "partially_filled":
+        return OrderStatus.PARTIALLY_FILLED;
+      case "filled":
+        return OrderStatus.FILLED;
+      case "cancelled":
+        return OrderStatus.CANCELLED;
+      case "rejected":
+        return OrderStatus.REJECTED;
+    }
   }
 }

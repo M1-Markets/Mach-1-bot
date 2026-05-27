@@ -1,11 +1,26 @@
 import * as fs from "fs";
 import * as path from "path";
+import type {
+  ConfigModeInput,
+  LiveTradingMarketMode,
+  PerpsMarginMode,
+  RuntimeMode,
+} from "@/shared/types/config";
 import { getDefaultAiPrompt } from "@/shared/utils/ai-utils";
+import {
+  normalizeLiveMarketConfig,
+  validateLiveMarketConfig,
+} from "@/shared/utils/live-market-config";
+import {
+  isConfigModeInput,
+  isLiveMode,
+  normalizeConfigMode,
+} from "@/shared/utils/config-mode";
 import { getNumber, getRecord, getString } from "@/shared/utils/record-utils";
 
 export interface ConfigResponse {
   privateKey: string;
-  mode: string;
+  mode: ConfigModeInput;
   rpcUrl: string;
   chainId: number;
   maxPositionSize: number;
@@ -21,11 +36,17 @@ export interface ConfigResponse {
 export interface BotConfig {
   privateKey: string;
   rpcUrl: string;
-  mode: string;
+  mode: RuntimeMode;
+  marketMode: LiveTradingMarketMode;
   maxPositionSize: number;
   maxDailyLoss: number;
   chainId: number;
   logLevel: string;
+  perps?: {
+    marginMode?: PerpsMarginMode;
+    leverage?: number;
+    liquidationThresholdPercent?: number;
+  };
   aiHelper?: {
     enabled: boolean;
     provider: "gemini" | "chatgpt" | "claude";
@@ -35,23 +56,29 @@ export interface BotConfig {
 }
 
 export interface TomlConfig {
-  wallet: {
-    private_key: string;
+  wallet?: {
+    private_key?: string;
   };
   trading: {
-    mode: string;
+    mode: ConfigModeInput;
+    market_mode?: LiveTradingMarketMode;
     base_currency: string;
     initial_balance: number;
     max_position_size: number;
     max_daily_loss: number;
   };
+  perps?: {
+    margin_mode?: PerpsMarginMode;
+    leverage?: number;
+    liquidation_threshold_percent?: number;
+  };
   strategy: {
     type: string;
     risk_level: string;
   };
-  network: {
-    rpc_url: string;
-    chain_id: number;
+  network?: {
+    rpc_url?: string;
+    chain_id?: number;
   };
   ai_helper?: {
     enabled: boolean;
@@ -70,7 +97,8 @@ export function createConfigFromResponse(response: ConfigResponse): TomlConfig {
       private_key: response.privateKey,
     },
     trading: {
-      mode: response.mode,
+      mode: normalizeConfigMode(response.mode),
+      market_mode: "spot",
       base_currency: "USDC",
       initial_balance: response.initialBalance,
       max_position_size: response.maxPositionSize,
@@ -85,16 +113,16 @@ export function createConfigFromResponse(response: ConfigResponse): TomlConfig {
       chain_id: response.chainId,
     },
     ...(response.enableAiHelper &&
-    response.aiHelperType &&
-    response.aiHelperApiKey
+      response.aiHelperType &&
+      response.aiHelperApiKey
       ? {
-          ai_helper: {
-            enabled: true,
-            provider: response.aiHelperType,
-            api_key: response.aiHelperApiKey,
-            prompt: getDefaultAiPrompt(),
-          },
-        }
+        ai_helper: {
+          enabled: true,
+          provider: response.aiHelperType,
+          api_key: response.aiHelperApiKey,
+          prompt: getDefaultAiPrompt(),
+        },
+      }
       : {}),
   };
 }
@@ -105,9 +133,22 @@ export function createConfigFromResponse(response: ConfigResponse): TomlConfig {
 export async function writeConfigToFile(
   config: TomlConfig,
   filePath: string,
+  options?: { includeSecrets?: boolean },
 ): Promise<void> {
   const { stringify } = await import("smol-toml");
-  const tomlContent = stringify(config);
+  const tomlContent = stringify(
+    options?.includeSecrets
+      ? config
+      : {
+        ...config,
+        wallet: config.wallet
+          ? {
+            ...config.wallet,
+            private_key: undefined,
+          }
+          : undefined,
+      },
+  );
   fs.writeFileSync(filePath, tomlContent);
 }
 
@@ -132,14 +173,50 @@ export async function loadConfigFromFile(configFile: string): Promise<unknown> {
  */
 export function validateConfig(tomlConfig: unknown): void {
   const config = getRecord(tomlConfig);
+  const trading = getRecord(config?.trading);
+  const modeValue = getString(trading?.mode);
+  if (modeValue && !isConfigModeInput(modeValue)) {
+    throw new Error(`mode must be one of: backtest, simulation, live, paper`);
+  }
+
   const wallet = getRecord(config?.wallet);
-  if (!getString(wallet?.private_key)) {
+  if (isLiveMode(modeValue) && !getString(wallet?.private_key)) {
     throw new Error("private_key is required in [wallet] section");
   }
 
   const network = getRecord(config?.network);
-  if (!getString(network?.rpc_url)) {
+  const rpcUrl = getString(network?.rpc_url);
+  if (isLiveMode(modeValue) && !rpcUrl) {
     throw new Error("rpc_url is required in [network] section");
+  }
+  if (isLiveMode(modeValue) && rpcUrl) {
+    try {
+      const parsedUrl = new URL(rpcUrl);
+      if (!["http:", "https:"].includes(parsedUrl.protocol)) {
+        throw new Error("Invalid protocol");
+      }
+    } catch {
+      throw new Error("rpc_url must be a valid http(s) URL");
+    }
+  }
+
+  const perps = getRecord(config?.perps);
+  const liveMarketConfigErrors = validateLiveMarketConfig({
+    mode: modeValue,
+    marketMode: getString(trading?.market_mode),
+    perps: perps
+      ? {
+        marginMode: getString(perps.margin_mode),
+        leverage: getNumber(perps.leverage),
+        liquidationThresholdPercent: getNumber(
+          perps.liquidation_threshold_percent,
+        ),
+      }
+      : undefined,
+  });
+
+  if (liveMarketConfigErrors.length > 0) {
+    throw new Error(liveMarketConfigErrors.join(", "));
   }
 }
 
@@ -151,14 +228,31 @@ export function toBotConfig(tomlConfig: unknown): BotConfig {
   const wallet = getRecord(config?.wallet);
   const network = getRecord(config?.network);
   const trading = getRecord(config?.trading);
+  const perps = getRecord(config?.perps);
+  const normalizedLiveMarketConfig = normalizeLiveMarketConfig({
+    mode: getString(trading?.mode),
+    marketMode: getString(trading?.market_mode),
+    perps: perps
+      ? {
+        marginMode: getString(perps.margin_mode),
+        leverage: getNumber(perps.leverage),
+        liquidationThresholdPercent: getNumber(
+          perps.liquidation_threshold_percent,
+        ),
+      }
+      : undefined,
+  });
+
   return {
     privateKey: getString(wallet?.private_key) ?? "",
     rpcUrl: getString(network?.rpc_url) ?? "",
-    mode: getString(trading?.mode) ?? "simulation",
+    mode: normalizeConfigMode(getString(trading?.mode)),
+    marketMode: normalizedLiveMarketConfig.marketMode,
     maxPositionSize: getNumber(trading?.max_position_size) ?? 1000,
     maxDailyLoss: getNumber(trading?.max_daily_loss) ?? 500,
     chainId: getNumber(network?.chain_id) ?? 713715,
     logLevel: "info",
+    perps: normalizedLiveMarketConfig.perps,
   };
 }
 

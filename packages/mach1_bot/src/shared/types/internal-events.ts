@@ -109,6 +109,7 @@ export interface OrderEvent {
   type: "order_update";
   order: Order;
   previousStatus?: InternalOrderStatus;
+  newStatus?: InternalOrderStatus;
 }
 
 /**
@@ -118,6 +119,7 @@ export interface InternalOrderEvent {
   type: "order_update";
   order: InternalOrder;
   previousStatus?: InternalOrderStatus;
+  newStatus?: InternalOrderStatus;
 }
 
 /**

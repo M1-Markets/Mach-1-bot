@@ -118,6 +118,29 @@ npx mach1 list-strategies                 # browse what's available
 
 Sample configs live in `packages/mach1_bot/example_configs/`. The CLI handles wallet setup, market resolution, risk limits, and graceful shutdown — things the example scripts skip for brevity.
 
+### Live isolated perps
+
+Use `trading.market_mode = "isolated_perps"` plus a `[perps]` block when you want Monaco isolated-margin perpetuals instead of spot. A ready-to-edit example lives at `packages/mach1_bot/example_configs/live-isolated-perps-bot.toml`.
+
+Required fields for this path:
+- `trading.mode = "live"`
+- `trading.market_mode = "isolated_perps"`
+- `perps.margin_mode = "isolated"`
+- `perps.leverage`
+- `perps.liquidation_threshold_percent`
+
+Supported order behavior in this phase:
+- Strategy and manual orders can submit long or short entries.
+- Reduce-only and close-only paths are supported when the signal/order includes explicit perps direction.
+- Advanced strategy actions such as `close_position`, `reduce_position`, `stop`, and `stop_limit` remain rejected until broader engine support lands.
+
+Scope and fail-closed rules:
+- Only isolated margin is supported. Cross-margin config is rejected.
+- New perps orders fail closed when isolated margin account state is missing.
+- New risk-increasing perps orders fail closed when mark price or maintenance-margin data is stale.
+- Funding data stays fail-closed for risk-increasing paths when Monaco cannot provide fresh funding state.
+- Use `npx mach1 live perps --config <file> --env staging` to inspect isolated margin balances and open perps positions, including leverage, collateral, unrealized PnL, funding, and liquidation price when Monaco returns those fields.
+
 ## Trading modes
 
 Set `MODE` in your `.env` to control execution path.

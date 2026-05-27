@@ -351,228 +351,397 @@
 
 ## Phase 11: Public API Stubs And Analytics
 
-- [ ] Implement or remove `rebalance()`.
-  - [ ] Compute current allocation from portfolio.
-  - [ ] Compute target trade deltas from requested target weights.
-  - [ ] Submit orders through active execution engine.
-  - [ ] Return executed trades and new allocation from actual order results.
-  - [ ] Test zero-delta rebalance submits no orders.
-  - [ ] Test overweight asset creates sell order.
-  - [ ] Test underweight asset creates buy order.
+- [x] Implement or remove `rebalance()`.
+  - [x] Compute current allocation from portfolio.
+  - [x] Compute target trade deltas from requested target weights.
+  - [x] Submit orders through active execution engine.
+  - [x] Return executed trades and new allocation from actual order results.
+  - [x] Test zero-delta rebalance submits no orders.
+  - [x] Test overweight asset creates sell order.
+  - [x] Test underweight asset creates buy order.
 
-- [ ] Implement `setTakeProfitPercent()`.
-  - [ ] Store take-profit percent in bot risk/order settings.
-  - [ ] Apply setting when opening new position if no explicit take-profit exists.
-  - [ ] Create actionable take-profit trigger using existing trigger mechanism.
-  - [ ] Test setting persists.
-  - [ ] Test buy with take-profit setting creates trigger.
+- [x] Implement `setTakeProfitPercent()`.
+  - [x] Store take-profit percent in bot risk/order settings.
+  - [x] Apply setting when opening new position if no explicit take-profit exists.
+  - [x] Create actionable take-profit trigger using existing trigger mechanism.
+  - [x] Test setting persists.
+  - [x] Test buy with take-profit setting creates trigger.
 
-- [ ] Implement `getRiskHeatmap()`.
-  - [ ] Build heatmap from current positions, exposure, drawdown, concentration, and correlation risk.
-  - [ ] Return deterministic display string.
-  - [ ] Test empty portfolio heatmap.
-  - [ ] Test concentrated portfolio heatmap.
+- [x] Implement `getRiskHeatmap()`.
+  - [x] Build heatmap from current positions, exposure, drawdown, concentration, and correlation risk.
+  - [x] Return deterministic display string.
+  - [x] Test empty portfolio heatmap.
+  - [x] Test concentrated portfolio heatmap.
 
-- [ ] Replace placeholder plotting/export methods in backtest results.
-  - [ ] Implement `exportTrades(filename)` as CSV writer.
-  - [ ] Implement equity curve data export or return chart data.
-  - [ ] Implement drawdown data export or return chart data.
-  - [ ] Test CSV output fields.
-  - [ ] Test equity curve data non-empty after trades.
+- [x] Replace placeholder plotting/export methods in backtest results.
+  - [x] Implement `exportTrades(filename)` as CSV writer.
+  - [x] Implement equity curve data export or return chart data.
+  - [x] Implement drawdown data export or return chart data.
+  - [x] Test CSV output fields.
+  - [x] Test equity curve data non-empty after trades.
 
 ## Phase 12: Market Data Mode Separation
 
-- [ ] Prevent live realtime fallback to simulation.
-  - [ ] Add explicit realtime mode: `live`, `simulation`, or `test`.
-  - [ ] In live mode, throw connection error when SDK WebSocket client is unavailable.
-  - [ ] In live mode, throw connection error when WebSocket connect times out.
-  - [ ] In live mode, do not call `startMarketDataSimulation()` from connection failure paths.
-  - [ ] Keep simulation fallback only for explicit simulation/test mode.
-  - [ ] Test live mode missing `sdk.ws` rejects connection.
-  - [ ] Test live mode WebSocket timeout rejects connection.
-  - [ ] Test simulation mode still starts simulated stream.
+- [x] Prevent live realtime fallback to simulation.
+  - [x] Add explicit realtime mode: `live`, `simulation`, or `test`.
+  - [x] In live mode, throw connection error when SDK WebSocket client is unavailable.
+  - [x] In live mode, throw connection error when WebSocket connect times out.
+  - [x] In live mode, do not call `startMarketDataSimulation()` from connection failure paths.
+  - [x] Keep simulation fallback only for explicit simulation/test mode.
+  - [x] Test live mode missing `sdk.ws` rejects connection.
+  - [x] Test live mode WebSocket timeout rejects connection.
+  - [x] Test simulation mode still starts simulated stream.
 
-- [ ] Remove duplicate simulation branch in `RealtimeManager.connect()`.
-  - [ ] Delete second `if (this.useSimulation)` block.
-  - [ ] Keep single simulation-mode entry path at start of `connect()`.
-  - [ ] Test simulation `connect()` calls `startMarketDataSimulation()` once.
+- [x] Remove duplicate simulation branch in `RealtimeManager.connect()`.
+  - [x] Delete second `if (this.useSimulation)` block.
+  - [x] Keep single simulation-mode entry path at start of `connect()`.
+  - [x] Test simulation `connect()` calls `startMarketDataSimulation()` once.
 
-- [ ] Split `MarketManager` live and simulation data paths.
-  - [ ] Add explicit market data mode to `MarketManager`.
-  - [ ] In live mode, require SDK-backed data for price, orderbook, ticker, candles, and recent trades.
-  - [ ] In simulation mode, allow generated mock price, orderbook, ticker, candles, and recent trades.
-  - [ ] In live mode, do not generate mock orderbooks when cache is empty.
-  - [ ] In live mode, do not generate mock candles when candle cache is empty.
-  - [ ] In live mode, do not generate mock recent trades when trade cache is empty.
-  - [ ] Test live price SDK failure rejects.
-  - [ ] Test live orderbook missing data rejects.
-  - [ ] Test simulation still generates orderbook.
-  - [ ] Test simulation still generates candles.
+- [x] Split `MarketManager` live and simulation data paths.
+  - [x] Add explicit market data mode to `MarketManager`.
+  - [x] In live mode, require SDK-backed data for price, orderbook, ticker, candles, and recent trades.
+  - [x] In simulation mode, allow generated mock price, orderbook, ticker, candles, and recent trades.
+  - [x] In live mode, do not generate mock orderbooks when cache is empty.
+  - [x] In live mode, do not generate mock candles when candle cache is empty.
+  - [x] In live mode, do not generate mock recent trades when trade cache is empty.
+  - [x] Test live price SDK failure rejects.
+  - [x] Test live orderbook missing data rejects.
+  - [x] Test simulation still generates orderbook.
+  - [x] Test simulation still generates candles.
 
-- [ ] Remove live SDK failure fallback to mock price in `MarketManager.getCurrentPrice()`.
-  - [ ] Throw typed `MarketDataUnavailableError` when SDK candlestick fetch fails in live mode.
-  - [ ] Include pair symbol, interval, and original error message in typed error.
-  - [ ] Keep mock fallback only when manager mode is simulation.
-  - [ ] Test live SDK fetch error throws typed error.
-  - [ ] Test simulation unknown valid pair still derives mock price.
+- [x] Remove live SDK failure fallback to mock price in `MarketManager.getCurrentPrice()`.
+  - [x] Throw typed `MarketDataUnavailableError` when SDK candlestick fetch fails in live mode.
+  - [x] Include pair symbol, interval, and original error message in typed error.
+  - [x] Keep mock fallback only when manager mode is simulation.
+  - [x] Test live SDK fetch error throws typed error.
+  - [x] Test simulation unknown valid pair still derives mock price.
 
-- [ ] Add live implementations for `MarketManager.getOrderBook()`, `getTicker()`, `getCandles()`, and `getRecentTrades()`.
-  - [ ] Fetch orderbook from Monaco realtime cache or SDK API when available.
-  - [ ] Fetch ticker from Monaco market API when available.
-  - [ ] Fetch candles from Monaco market candlesticks endpoint.
-  - [ ] Fetch recent trades from Monaco market trades endpoint when SDK supports it.
-  - [ ] Return typed unavailable errors for unsupported SDK endpoints.
-  - [ ] Test each live method does not touch mock maps.
+- [x] Add live implementations for `MarketManager.getOrderBook()`, `getTicker()`, `getCandles()`, and `getRecentTrades()`.
+  - [x] Fetch orderbook from Monaco realtime cache or SDK API when available.
+  - [x] Fetch ticker from Monaco market API when available.
+  - [x] Fetch candles from Monaco market candlesticks endpoint.
+  - [x] Fetch recent trades from Monaco market trades endpoint when SDK supports it.
+  - [x] Return typed unavailable errors for unsupported SDK endpoints.
+  - [x] Test each live method does not touch mock maps.
 
 ## Phase 13: Realtime Event Correctness
 
-- [ ] Make realtime simulation deterministic.
-  - [ ] Inject `Rng` and `Clock` into `RealtimeManager`.
-  - [ ] Replace direct `Math.random()` in mock trade emission with injected RNG.
-  - [ ] Replace direct `Date.now()` in mock trade ids/timestamps with injected clock.
-  - [ ] Preserve existing simulation event frequency using RNG threshold.
-  - [ ] Test same seed emits same mock trade sequence.
+- [x] Make realtime simulation deterministic.
+  - [x] Inject `Rng` and `Clock` into `RealtimeManager`.
+  - [x] Replace direct `Math.random()` in mock trade emission with injected RNG.
+  - [x] Replace direct `Date.now()` in mock trade ids/timestamps with injected clock.
+  - [x] Preserve existing simulation event frequency using RNG threshold.
+  - [x] Test same seed emits same mock trade sequence.
 
-- [ ] Replace simulated user order updates with real order lifecycle events.
-  - [ ] Remove random `Math.random() > 0.95` user order update emission.
-  - [ ] Subscribe user-order stream to order lifecycle store/event emitter from Phase 5.
-  - [ ] Emit user order update only when an order actually changes status.
-  - [ ] Include previous status and new status in event payload.
-  - [ ] Test no random user order event appears without order change.
-  - [ ] Test fill event appears on user order stream.
-  - [ ] Test cancel event appears on user order stream.
+- [x] Replace simulated user order updates with real order lifecycle events.
+  - [x] Remove random `Math.random() > 0.95` user order update emission.
+  - [x] Subscribe user-order stream to order lifecycle store/event emitter from Phase 5.
+  - [x] Emit user order update only when an order actually changes status.
+  - [x] Include previous status and new status in event payload.
+  - [x] Test no random user order event appears without order change.
+  - [x] Test fill event appears on user order stream.
+  - [x] Test cancel event appears on user order stream.
 
-- [ ] Add realtime mode status APIs.
-  - [ ] Expose whether realtime manager is using live WebSocket or simulation.
-  - [ ] Expose last connection error.
-  - [ ] Expose active subscription keys without exposing callback references.
-  - [ ] Test live connection status after SDK connect.
-  - [ ] Test simulation connection status after simulation connect.
-  - [ ] Test disconnect clears status and active subscriptions.
+- [x] Add realtime mode status APIs.
+  - [x] Expose whether realtime manager is using live WebSocket or simulation.
+  - [x] Expose last connection error.
+  - [x] Expose active subscription keys without exposing callback references.
+  - [x] Test live connection status after SDK connect.
+  - [x] Test simulation connection status after simulation connect.
+  - [x] Test disconnect clears status and active subscriptions.
 
 ## Phase 14: Position Accounting Correctness
 
-- [ ] Fix sell-side position updates.
-  - [ ] Always update base-token position for buy and sell fills.
-  - [ ] On buy, increase base balance and update weighted average entry price.
-  - [ ] On sell, decrease base balance and compute realized PnL against base average entry price.
-  - [ ] Do not create quote-token position for sell fills.
-  - [ ] Test buy creates base position.
-  - [ ] Test sell reduces base position.
-  - [ ] Test sell does not create quote position.
-  - [ ] Test partial sell preserves remaining average entry price.
+- [x] Fix sell-side position updates.
+  - [x] Always update base-token position for buy and sell fills.
+  - [x] On buy, increase base balance and update weighted average entry price.
+  - [x] On sell, decrease base balance and compute realized PnL against base average entry price.
+  - [x] Do not create quote-token position for sell fills.
+  - [x] Test buy creates base position.
+  - [x] Test sell reduces base position.
+  - [x] Test sell does not create quote position.
+  - [x] Test partial sell preserves remaining average entry price.
 
-- [ ] Replace hardcoded position fee formula.
-  - [ ] Pass fee amount from order lifecycle fill when available.
-  - [ ] Use configured maker/taker fee bps when fill fee is not supplied.
-  - [ ] Remove `(fillPrice * fillQuantity) / 10000` hardcoded fee calculation.
-  - [ ] Store fee currency explicitly.
-  - [ ] Test supplied fill fee is used exactly.
-  - [ ] Test configured fee bps fallback is used.
+- [x] Replace hardcoded position fee formula.
+  - [x] Pass fee amount from order lifecycle fill when available.
+  - [x] Use configured maker/taker fee bps when fill fee is not supplied.
+  - [x] Remove `(fillPrice * fillQuantity) / 10000` hardcoded fee calculation.
+  - [x] Store fee currency explicitly.
+  - [x] Test supplied fill fee is used exactly.
+  - [x] Test configured fee bps fallback is used.
 
-- [ ] Make initial balances configurable.
-  - [ ] Add `startingBalances?: Record<Address, bigint>` to `PositionTracker` constructor options.
-  - [ ] Load mock default balances only in explicit simulation mode.
-  - [ ] Start with empty balances in live mode unless loaded from profile.
-  - [ ] Preserve current tests by passing simulation mode/default balances.
-  - [ ] Test live tracker starts empty.
-  - [ ] Test simulation tracker loads defaults.
-  - [ ] Test custom starting balances override defaults.
+- [x] Make initial balances configurable.
+  - [x] Add `startingBalances?: Record<Address, bigint>` to `PositionTracker` constructor options.
+  - [x] Load mock default balances only in explicit simulation mode.
+  - [x] Start with empty balances in live mode unless loaded from profile.
+  - [x] Preserve current tests by passing simulation mode/default balances.
+  - [x] Test live tracker starts empty.
+  - [x] Test simulation tracker loads defaults.
+  - [x] Test custom starting balances override defaults.
 
-- [ ] Fix portfolio cash/quote valuation.
-  - [ ] Identify quote/stable balances separately from open positions.
-  - [ ] Value quote/stable balances using decimals and quote currency rules, not raw balance as USD value.
-  - [ ] Exclude pure cash balances from `openPositions` count.
-  - [ ] Include cash in total portfolio value.
-  - [ ] Test USDC balance contributes cash value.
-  - [ ] Test cash balance does not count as open position.
-  - [ ] Test base asset position uses market price.
+- [x] Fix portfolio cash/quote valuation.
+  - [x] Identify quote/stable balances separately from open positions.
+  - [x] Value quote/stable balances using decimals and quote currency rules, not raw balance as USD value.
+  - [x] Exclude pure cash balances from `openPositions` count.
+  - [x] Include cash in total portfolio value.
+  - [x] Test USDC balance contributes cash value.
+  - [x] Test cash balance does not count as open position.
+  - [x] Test base asset position uses market price.
 
-- [ ] Fix daily PnL calculation.
-  - [ ] Calculate daily realized PnL from closed sell fills, not gross sell proceeds.
-  - [ ] Add daily unrealized PnL change when enough mark data exists.
-  - [ ] Subtract fees from daily PnL.
-  - [ ] Test profitable sell adds realized profit only.
-  - [ ] Test losing sell subtracts realized loss.
-  - [ ] Test buy-only day does not create positive daily PnL.
+- [x] Fix daily PnL calculation.
+  - [x] Calculate daily realized PnL from closed sell fills, not gross sell proceeds.
+  - [x] Add daily unrealized PnL change when enough mark data exists.
+  - [x] Subtract fees from daily PnL.
+  - [x] Test profitable sell adds realized profit only.
+  - [x] Test losing sell subtracts realized loss.
+  - [x] Test buy-only day does not create positive daily PnL.
 
-- [ ] Fix performance metrics that compare sell price to current position average after sells.
-  - [ ] Store realized PnL per sell fill in trade history.
-  - [ ] Compute win/loss from stored realized PnL.
-  - [ ] Compute profit factor from realized wins and realized losses.
-  - [ ] Compute Sharpe from realized returns or equity curve, not current average price.
-  - [ ] Test win rate from two winning and one losing realized trades.
-  - [ ] Test profit factor from realized PnL.
+- [x] Fix performance metrics that compare sell price to current position average after sells.
+  - [x] Store realized PnL per sell fill in trade history.
+  - [x] Compute win/loss from stored realized PnL.
+  - [x] Compute profit factor from realized wins and realized losses.
+  - [x] Compute Sharpe from realized returns or equity curve, not current average price.
+  - [x] Test win rate from two winning and one losing realized trades.
+  - [x] Test profit factor from realized PnL.
 
 ## Phase 15: Config Unification
 
-- [ ] Make one source of truth for TOML schema.
-  - [ ] Remove duplicated inline schema object from `packages/mach1_bot/src/cli/utils/config-schema.ts`.
-  - [ ] Load `packages/mach1_bot/schema/toml-config.schema.json` as canonical schema.
-  - [ ] Export schema type from loaded JSON or generated TypeScript type.
-  - [ ] Add script or test that fails when TypeScript schema and JSON schema drift.
-  - [ ] Test `loadTomlConfigSchema()` returns canonical JSON schema.
+- [x] Make one source of truth for TOML schema.
+  - [x] Remove duplicated inline schema object from `packages/mach1_bot/src/cli/utils/config-schema.ts`.
+  - [x] Load `packages/mach1_bot/schema/toml-config.schema.json` as canonical schema.
+  - [x] Export schema type from loaded JSON or generated TypeScript type.
+  - [x] Add script or test that fails when TypeScript schema and JSON schema drift.
+  - [x] Test `loadTomlConfigSchema()` returns canonical JSON schema.
 
-- [ ] Align config mode names.
-  - [ ] Use runtime mode union consistently: `backtest`, `simulation`, `live`.
-  - [ ] Treat `paper` only as accepted input alias.
-  - [ ] Normalize `paper` to `simulation` at config boundary.
-  - [ ] Remove `"paper"` from internal default config.
-  - [ ] Test `paper` input becomes `simulation`.
-  - [ ] Test exported sanitized config uses `simulation`.
+- [x] Align config mode names.
+  - [x] Use runtime mode union consistently: `backtest`, `simulation`, `live`.
+  - [x] Treat `paper` only as accepted input alias.
+  - [x] Normalize `paper` to `simulation` at config boundary.
+  - [x] Remove `"paper"` from internal default config.
+  - [x] Test `paper` input becomes `simulation`.
+  - [x] Test exported sanitized config uses `simulation`.
 
-- [ ] Relax private-key and RPC requirements for non-live modes.
-  - [ ] Require private key only for live mode or commands that submit live transactions.
-  - [ ] Require RPC URL only for live mode and wallet-chain commands.
-  - [ ] Allow backtest config without private key.
-  - [ ] Allow simulation config without private key.
-  - [ ] Test backtest config loads without private key.
-  - [ ] Test simulation config loads without private key.
-  - [ ] Test live config still rejects missing private key.
-  - [ ] Test live config still rejects invalid RPC URL.
+- [x] Relax private-key and RPC requirements for non-live modes.
+  - [x] Require private key only for live mode or commands that submit live transactions.
+  - [x] Require RPC URL only for live mode and wallet-chain commands.
+  - [x] Allow backtest config without private key.
+  - [x] Allow simulation config without private key.
+  - [x] Test backtest config loads without private key.
+  - [x] Test simulation config loads without private key.
+  - [x] Test live config still rejects missing private key.
+  - [x] Test live config still rejects invalid RPC URL.
 
-- [ ] Remove unused duplicated default config helper.
-  - [ ] Delete `getDefaultConfig()` if no caller uses it.
-  - [ ] Keep a single `defaults` object or exported factory.
-  - [ ] Test default values still applied by `loadConfig()`.
+- [x] Remove unused duplicated default config helper.
+  - [x] Delete `getDefaultConfig()` if no caller uses it.
+  - [x] Keep a single `defaults` object or exported factory.
+  - [x] Test default values still applied by `loadConfig()`.
 
-- [ ] Prevent unsafe config file writes.
-  - [ ] Make `saveToFile()` exclude sensitive values by default.
-  - [ ] Add explicit option to include secrets when caller intentionally requests it.
-  - [ ] Ensure CLI never writes raw private key unless command explicitly says so.
-  - [ ] Test default save redacts private key.
-  - [ ] Test explicit include-secrets path writes full config.
+- [x] Prevent unsafe config file writes.
+  - [x] Make `saveToFile()` exclude sensitive values by default.
+  - [x] Add explicit option to include secrets when caller intentionally requests it.
+  - [x] Ensure CLI never writes raw private key unless command explicitly says so.
+  - [x] Test default save redacts private key.
+  - [x] Test explicit include-secrets path writes full config.
 
 ## Phase 16: Regression Test Matrix
 
-- [ ] Add end-to-end strategy execution tests.
-  - [ ] Test strategy tick receives real non-placeholder market data.
-  - [ ] Test valid buy signal becomes risk check then order submission.
-  - [ ] Test risk rejection prevents order submission.
-  - [ ] Test filled order updates position tracker.
-  - [ ] Test filled order updates strategy performance.
-  - [ ] Test rejected order does not update position or performance.
+- [x] Add end-to-end strategy execution tests.
+  - [x] Test strategy tick receives real non-placeholder market data.
+  - [x] Test valid buy signal becomes risk check then order submission.
+  - [x] Test risk rejection prevents order submission.
+  - [x] Test filled order updates position tracker.
+  - [x] Test filled order updates strategy performance.
+  - [x] Test rejected order does not update position or performance.
 
-- [ ] Add live safety tests.
-  - [ ] Test missing live market data skips strategy tick.
-  - [ ] Test missing live price rejects manual buy/sell.
-  - [ ] Test Monaco auth pause blocks order placement.
-  - [ ] Test pre-trade insufficient funds returns rejected order.
+- [x] Add live safety tests.
+  - [x] Test missing live market data skips strategy tick.
+  - [x] Test missing live price rejects manual buy/sell.
+  - [x] Test Monaco auth pause blocks order placement.
+  - [x] Test pre-trade insufficient funds returns rejected order.
 
-- [ ] Add cleanup tests.
-  - [ ] Test `emergencyStop()` stops coordinator.
-  - [ ] Test `emergencyStop()` cancels pending orders.
-  - [ ] Test `goLive()` active interval count does not grow after stop/start cycle.
-  - [ ] Test strategy stop cleans market subscriptions.
+- [x] Add cleanup tests.
+  - [x] Test `emergencyStop()` stops coordinator.
+  - [x] Test `emergencyStop()` cancels pending orders.
+  - [x] Test `goLive()` active interval count does not grow after stop/start cycle.
+  - [x] Test strategy stop cleans market subscriptions.
 
-- [ ] Add typecheck/lint guard.
-  - [ ] Ensure `npm run typecheck` passes.
-  - [ ] Run targeted Vitest suites:
-    - [ ] `packages/mach1_bot/tests/unit/bot/mach1-bot.test.ts`
-    - [ ] `packages/mach1_bot/tests/unit/execution/live-trading-engine.test.ts`
-    - [ ] `packages/mach1_bot/tests/unit/core/risk-manager.test.ts`
-    - [ ] `packages/mach1_bot/tests/unit/core/order-manager.test.ts`
-    - [ ] `packages/mach1_bot/tests/unit/core/market-manager.test.ts`
-    - [ ] `packages/mach1_bot/tests/unit/core/position-tracker.test.ts`
-    - [ ] `packages/mach1_bot/tests/unit/config/config-manager.test.ts`
-    - [ ] Strategy manager tests added for this roadmap.
+- [x] Add typecheck/lint guard.
+  - [x] Ensure `npm run typecheck` passes.
+  - [x] Run targeted Vitest suites:
+    - [x] `packages/mach1_bot/tests/unit/bot/mach1-bot.test.ts`
+    - [x] `packages/mach1_bot/tests/unit/execution/live-trading-engine.test.ts`
+    - [x] `packages/mach1_bot/tests/unit/core/risk-manager.test.ts`
+    - [x] `packages/mach1_bot/tests/unit/core/order-manager.test.ts`
+    - [x] `packages/mach1_bot/tests/unit/core/market-manager.test.ts`
+    - [x] `packages/mach1_bot/tests/unit/trading/position-tracker-order-events.test.ts`
+    - [x] `packages/mach1_bot/tests/unit/config/config-manager.test.ts`
+    - [x] Strategy manager tests added for this roadmap.
+
+## Phase 17: Monaco Perps Contract Discovery
+
+- [x] Confirm Monaco isolated-margin and perps contract surface before bot integration.
+  - [x] Inspect `@0xmonaco/core` methods behind `MarginAccountsAPIImpl`, `PositionsAPIImpl`, and perp routes.
+  - [x] Document which methods support isolated margin account lookup, margin balances, open positions, order placement, order cancellation, and order close/reduce flows.
+  - [x] Reject guessed request or response shapes; use real Monaco types only.
+  - [x] Keep scope limited to isolated margin. Do not add cross-margin support.
+  - [x] Add notes in code comments only where Monaco behavior is non-obvious.
+
+- [x] Lock bot-facing requirements against confirmed Monaco contracts.
+  - [x] Match isolated account, balance, position, and order flows to existing `mach1_bot` execution and risk abstractions.
+  - [x] Identify Monaco gaps that require SDK normalization before bot integration.
+  - [x] Reject direct `mach1_bot` usage of opaque Monaco route objects.
+  - [x] Preserve isolated-margin-only scope for this roadmap.
+
+## Phase 18: Typed SDK Perps Surface
+
+- [x] Add stable typed perps access through `mach1_sdk`.
+  - [x] Extend `packages/mach1_sdk/src/sdk.ts` with typed helpers or typed facades for isolated margin accounts, margin balances, positions, and perp order routes.
+  - [x] Keep auth and access-token propagation working for new helpers.
+  - [x] Prefer wrapping Monaco route objects over leaking raw route usage into `mach1_bot`.
+  - [x] Preserve existing SDK public API behavior for spot consumers.
+  - [x] Run `npm --prefix packages/mach1_sdk run typecheck`.
+
+- [x] Add SDK coverage for isolated margin and perps paths.
+  - [x] Test typed isolated margin account lookup.
+  - [x] Test typed margin balance retrieval.
+  - [x] Test typed open position retrieval.
+  - [x] Test perp order request normalization when Monaco types require adaptation.
+  - [x] Keep existing spot tests passing.
+
+## Phase 19: Perps Market Discovery And Config Surface
+
+- [x] Allow market discovery to select perp-capable markets.
+  - [x] Replace `SPOT`-only filtering in `packages/mach1_bot/src/domains/trading/market-manager.ts` with explicit market-type filtering.
+  - [x] Support spot behavior and isolated perps behavior without implicit fallback between them.
+  - [x] Reject unsupported market types instead of silently downgrading to spot.
+  - [x] Test spot-only selection.
+  - [x] Test isolated-perps selection.
+  - [x] Test unsupported market-type rejection.
+
+- [x] Extend shared bot types for isolated perps live trading.
+  - [x] Add explicit live trading market mode to shared config and execution types.
+  - [x] Extend order types with perps fields: direction, leverage, reduce-only, and close-only semantics when needed.
+  - [x] Extend position types with collateral, maintenance margin, liquidation price, side, and funding fields.
+  - [x] Keep shared type additions optional where spot code still compiles unchanged.
+  - [x] Run `npm --prefix packages/mach1_bot run typecheck`.
+
+- [x] Add isolated-perps TOML config support.
+  - [x] Extend canonical schema in `packages/mach1_bot/schema/toml-config.schema.json`.
+  - [x] Add isolated margin config fields for live perps mode.
+  - [x] Validate leverage and liquidation-threshold settings at config boundary.
+  - [x] Reject cross-margin config values for this phase.
+  - [x] Test config load accepts isolated perps mode.
+  - [x] Test config load rejects unsupported perps settings.
+
+## Phase 20: Isolated Perps Execution Engine And State Sync
+
+- [x] Add dedicated isolated-perps live execution engine.
+  - [x] Create perps engine beside current spot `LiveTradingEngine` instead of branching spot logic through one class.
+  - [x] Reuse shared execution-engine contract and trading-mode abstractions.
+  - [x] Keep spot live engine behavior unchanged.
+  - [x] Test perps engine type-level compliance with shared execution interface.
+
+- [x] Load isolated margin state before and during live trading.
+  - [x] Fetch isolated margin account state on engine initialize.
+  - [x] Fetch free collateral, used margin, maintenance margin, and open positions on sync cycle.
+  - [x] Fail closed when isolated account state cannot be loaded in live perps mode.
+  - [x] Test initialize rejects when margin account fetch fails.
+  - [x] Test sync updates cached isolated margin state.
+
+- [x] Add perp order placement and close flows.
+  - [x] Support long and short position entry through Monaco perps route.
+  - [x] Support reduce-only or close-position order path when Monaco supports it.
+  - [x] Preserve order lifecycle tracking through existing order store and event emitter.
+  - [x] Keep retry logic only for retryable transport or rate-limit failures.
+  - [x] Test long order submission path.
+  - [x] Test short order submission path.
+  - [x] Test reduce-only close path.
+
+- [x] Track isolated perps positions and PnL.
+  - [x] Extend `PositionTracker` or add dedicated perps tracker for side-aware positions.
+  - [x] Track entry price, mark price, collateral, leverage, realized PnL, unrealized PnL, and fees.
+  - [x] Add liquidation price and maintenance-margin state to tracked positions.
+  - [x] Keep fill-based accounting rules from earlier phases.
+  - [x] Test long PnL updates from mark price.
+  - [x] Test short PnL updates from mark price.
+  - [x] Test partial close preserves remaining average entry price.
+
+## Phase 21: Isolated Perps Risk, Funding, And Liquidation Safety
+
+- [x] Extend risk manager for isolated perps.
+  - [x] Enforce configured max leverage before order submission.
+  - [x] Enforce free-collateral sufficiency before order submission.
+  - [x] Enforce max per-position risk and per-market exposure.
+  - [x] Preserve existing spot risk checks without changing their pass/fail behavior.
+  - [x] Test leverage rejection.
+  - [x] Test insufficient collateral rejection.
+  - [x] Test spot path unchanged.
+
+- [x] Add liquidation-distance checks.
+  - [x] Compute liquidation distance from mark price and maintenance margin.
+  - [x] Reject new risk-increasing orders when liquidation distance is below configured threshold.
+  - [x] Emit warning or critical risk events when open position approaches liquidation.
+  - [x] Keep fail-closed behavior when mark price or maintenance-margin inputs are stale.
+  - [x] Test warning threshold.
+  - [x] Test critical threshold.
+  - [x] Test stale mark data blocks approval.
+
+- [x] Add funding-rate handling.
+  - [x] Load funding rate from Monaco when supported.
+  - [x] Add polling fallback only when no streaming path exists.
+  - [x] Track accrued funding on open positions.
+  - [x] Reflect funding in unrealized or realized PnL consistently.
+  - [x] Test funding update changes tracked position state.
+  - [x] Test missing funding data creates fail-closed warning or skip behavior.
+
+- [x] Add liquidation and auto-pause hooks.
+  - [x] Emit typed events for margin warning, liquidation warning, and liquidation-triggered state.
+  - [x] Wire live-trading pause callback for critical liquidation-risk events.
+  - [x] Do not auto-resume after liquidation-risk pause without explicit operator action.
+  - [x] Test critical liquidation event pauses live trading.
+
+## Phase 22: Strategy, CLI, And Operator Workflow For Perps
+
+- [x] Allow strategies to emit perps-capable signals.
+  - [x] Extend strategy signal validation for long, short, and reduce-only semantics where required.
+  - [x] Keep unsupported advanced order actions rejected until engine support exists.
+  - [x] Preserve coordinator tick loop and existing strategy scheduling behavior.
+  - [x] Test valid long signal becomes perps order request.
+  - [x] Test reduce-only signal skips unsupported path when fields missing.
+
+- [x] Extend CLI live commands for isolated perps visibility.
+  - [x] Add commands or output paths to show isolated margin balances.
+  - [x] Add commands or output paths to show open perps positions.
+  - [x] Show leverage, collateral, unrealized PnL, funding, and liquidation price in live inspection views.
+  - [x] Keep spot command behavior unchanged.
+  - [x] Test CLI formatting for empty isolated account state.
+  - [x] Test CLI formatting for active perps position state.
+
+- [x] Add isolated-perps example configs and docs.
+  - [x] Add one live isolated-perps TOML example under `packages/mach1_bot/example_configs/`.
+  - [x] Document required config fields and supported order behaviors.
+  - [x] Document that this roadmap supports isolated margin only.
+  - [x] Document fail-closed behavior for stale mark price, stale funding data, and missing margin account state.
+
+## Phase 23: Perps Regression Matrix And Release Guard
+
+- [x] Add isolated-perps regression tests.
+  - [x] Test market discovery returns perp-capable market when configured.
+  - [x] Test isolated margin state sync seeds engine and tracker state.
+  - [x] Test long entry then reduce-only close updates lifecycle and PnL.
+  - [x] Test short entry then close updates lifecycle and PnL.
+  - [x] Test liquidation-risk warning event reaches strategy or supervisor path.
+  - [x] Test funding update changes tracked account state.
+
+- [x] Add focused live safety tests for perps.
+  - [x] Test missing isolated margin account rejects live perps start.
+  - [x] Test stale mark price blocks new perps order.
+  - [x] Test insufficient collateral rejects before Monaco order call.
+  - [x] Test liquidation-risk pause blocks later order placement.
+
+- [x] Add final verification guard for isolated perps work.
+  - [x] Ensure `npm --prefix packages/mach1_sdk run typecheck` passes.
+  - [x] Ensure `npm --prefix packages/mach1_bot run typecheck` passes.
+  - [x] Run targeted Vitest files for touched perps areas.
+  - [x] Run `npm run typecheck` from repo root before checking off final item.
+  - [x] Keep spot regression suites green before merge.

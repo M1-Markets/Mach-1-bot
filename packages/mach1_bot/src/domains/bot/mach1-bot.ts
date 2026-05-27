@@ -1,8 +1,10 @@
-import type { TradingPairResolver } from "mach1_sdk";
-import type { BacktestEngine } from "@/domains/execution/backtest-engine";
-import type { LiveTradingEngine } from "@/domains/execution/live-trading-engine";
+import { mkdir, writeFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
+import type { Interval, TradingPairResolver } from "mach1_sdk";
 import { OrderEventEmitter, OrderLifecycleStore } from "@/domains/execution";
+import type { BacktestEngine } from "@/domains/execution/backtest-engine";
 import type { PaperTradingEngine } from "@/domains/execution/paper-trading-engine";
+import { StrategyExecutionCoordinator } from "@/domains/execution/strategy-execution-coordinator";
 import { EXAMPLE_STRATEGIES } from "@/domains/strategies/examples/example-strategies";
 import type { StrategyPerformanceReport } from "@/domains/strategies/management/strategy-manager";
 // Enhanced strategy system imports (optional dependencies)
@@ -10,6 +12,7 @@ import {
   type StrategyInstance,
   StrategyManager,
 } from "@/domains/strategies/management/strategy-manager";
+import type { RiskEvent as StrategyRiskEvent } from "@/domains/strategies/core/i-strategy";
 import {
   type StrategyExample,
   strategyRegistry,
@@ -19,14 +22,13 @@ import {
   type OptimizationSpace,
   StrategyOptimizer,
 } from "@/domains/strategies/optimization/strategy-optimizer";
-import { MarketManager } from "@/domains/trading/market-manager";
 import { MarketDataService } from "@/domains/trading/market-data-service";
+import { MarketManager } from "@/domains/trading/market-manager";
 import { OrderManager } from "@/domains/trading/order-manager";
 import { PositionTracker } from "@/domains/trading/position-tracker";
 import { RealtimeManager } from "@/domains/trading/realtime-manager";
 import { RiskBreach, RiskManager } from "@/domains/trading/risk-manager";
 import { TradingPairService } from "@/domains/trading/trading-pair-service";
-import { StrategyExecutionCoordinator } from "@/domains/execution/strategy-execution-coordinator";
 import { EnvironmentConfig, MACH1_PIT_PASS, NETWORK_PRESETS } from "@/shared";
 import { InvalidConfigError, MissingConfigError } from "@/shared/errors";
 import { CompletedTrade } from "@/shared/types/analytics";
@@ -49,6 +51,7 @@ import {
 import type {
   Address,
   ChainNetwork,
+  Portfolio as CorePortfolio,
   OrderRequest,
   TradingPair,
 } from "@/shared/types/common";
@@ -59,8 +62,8 @@ import type {
   TradeEvent,
 } from "@/shared/types/internal-events";
 import { RiskLimits as TradingRiskLimits } from "@/shared/types/trading";
-import { isRecord } from "@/shared/utils/record-utils";
 import { createSeededRng } from "@/shared/utils/determinism";
+import { isRecord } from "@/shared/utils/record-utils";
 import { ConfigBuilder } from "@/shared/utils/validation/config-builder";
 
 const isBotTrade = (value: unknown): value is BotTrade =>
@@ -125,6 +128,29 @@ const isVerboseLogLevel = (
 ): boolean =>
   typeof logLevel === "string" && logLevel.toUpperCase() === "DEBUG";
 
+const NETWORK_PRESET_ALIASES: Record<string, keyof typeof NETWORK_PRESETS> = {
+  mainnet: "sei-mainnet",
+  testnet: "sei-testnet",
+};
+const SIMULATION_ETH_USDC_PAIR: TradingPair = {
+  base: "0x1111111111111111111111111111111111111111" as Address,
+  quote: "0x4444444444444444444444444444444444444444" as Address,
+  symbol: "ETH/USDC",
+};
+const SIMULATION_BTC_USDC_PAIR: TradingPair = {
+  base: "0x2222222222222222222222222222222222222222" as Address,
+  quote: "0x4444444444444444444444444444444444444444" as Address,
+  symbol: "BTC/USDC",
+};
+const SIMULATION_SOL_USDC_PAIR: TradingPair = {
+  base: "0x3333333333333333333333333333333333333333" as Address,
+  quote: "0x4444444444444444444444444444444444444444" as Address,
+  symbol: "SOL/USDC",
+};
+const SIMULATION_CASH_TOKEN =
+  "0x4444444444444444444444444444444444444444" as Address;
+const SIMULATION_STARTING_BALANCE = 1_000_000_000n;
+
 type StrategySummary = {
   id: string;
   name: string;
@@ -152,6 +178,41 @@ type StrategyInstanceSummary = Pick<
   | "errors"
 >;
 
+type BacktestEquityPoint = { timestamp: number; equity: number };
+type BacktestDrawdownPoint = { timestamp: number; drawdown: number };
+
+type ActiveLiveExecutionEngine = ExecutionEngine & {
+  initialize(): Promise<void>;
+  getRealtimeManager(): RealtimeManager;
+  getTradingPairResolver(): TradingPairResolver;
+  getOHLCVInterval?(): Interval;
+  getLivePrice?(pair: TradingPair): Promise<bigint>;
+  stopLiveTrading?(): Promise<void>;
+};
+
+type PerpsRiskAwareLiveEngine = ActiveLiveExecutionEngine & {
+  getAccountState():
+    | {
+      equity: bigint;
+      freeCollateral: bigint;
+      maintenanceMargin: bigint;
+      updatedAt: number;
+    }
+    | undefined;
+  getFundingState?: (pair: TradingPair) => {
+    status: "available" | "unsupported" | "missing" | "stale";
+    rate?: bigint;
+    accruedFunding?: bigint;
+    updatedAt?: number;
+    warning?: string;
+  } | undefined;
+};
+
+const isPerpsRiskAwareLiveEngine = (
+  engine: ActiveLiveExecutionEngine | undefined,
+): engine is PerpsRiskAwareLiveEngine =>
+  !!engine && typeof (engine as PerpsRiskAwareLiveEngine).getAccountState === "function";
+
 export class Mach1Bot {
   private strategyCallback?: (data: MarketData) => Promise<void>;
   private eventHandlers = new Map<string, Array<(data: unknown) => void>>();
@@ -165,7 +226,7 @@ export class Mach1Bot {
   private positionTracker: PositionTracker;
   private realtimeManager: RealtimeManager;
   private riskManager: RiskManager;
-  private liveEngine?: LiveTradingEngine;
+  private liveEngine?: ActiveLiveExecutionEngine;
   private paperEngine?: PaperTradingEngine;
   private tradingPairResolver?: TradingPairResolver;
   private readonly tradingPairService: TradingPairService;
@@ -179,6 +240,9 @@ export class Mach1Bot {
   private enhancedFeaturesEnabled = false;
   private strategyLabel?: string;
   private preferredTradingPairs: string[] = [];
+  private takeProfitPercent?: number;
+  private activeTakeProfitTriggers = new Set<string>();
+  private liquidationRiskPaused = false;
 
   // Backtest mode support
   private backtestEngine?: BacktestEngine; // BacktestEngine instance during backtesting
@@ -192,13 +256,29 @@ export class Mach1Bot {
     // Validate required configuration
     this.validateConfig(config);
     this.config = config;
+    this.takeProfitPercent = config.takeProfitPercent;
 
     // Initialize core managers
-    this.marketManager = new MarketManager();
+    this.marketManager = new MarketManager({
+      mode: config.mode === "live" ? "live" : "simulation",
+    });
+    if (config.mode !== "live") {
+      this.marketManager.seedSimulationPair(SIMULATION_ETH_USDC_PAIR, 300_000n);
+      this.marketManager.seedSimulationPair(SIMULATION_BTC_USDC_PAIR, 45_000n);
+      this.marketManager.seedSimulationPair(SIMULATION_SOL_USDC_PAIR, 1_500n);
+    }
     this.orderManager = new OrderManager(this.marketManager);
     this.positionTracker = new PositionTracker(
       this.marketManager,
       this.orderManager,
+      config.mode === "live"
+        ? undefined
+        : {
+          mode: "simulation",
+          startingBalances: {
+            [SIMULATION_CASH_TOKEN]: SIMULATION_STARTING_BALANCE,
+          },
+        },
     );
     this.orderEventEmitter = new OrderEventEmitter();
     this.orderLifecycleStore = new OrderLifecycleStore(this.orderEventEmitter);
@@ -206,12 +286,62 @@ export class Mach1Bot {
     this.realtimeManager = new RealtimeManager(
       this.marketManager,
       this.orderManager,
+      undefined,
+      {
+        mode: config.mode === "live" ? "live" : "simulation",
+        orderEventEmitter: this.orderEventEmitter,
+      },
     );
     this.riskManager = new RiskManager(
       this.positionTracker,
       this.marketManager,
       this.orderManager,
     );
+    this.riskManager.setPerpsContextProvider(async (order) => {
+      if (
+        this.config.mode !== "live" ||
+        this.config.marketMode !== "isolated_perps"
+      ) {
+        return undefined;
+      }
+
+      const pair = {
+        base: order.baseToken,
+        quote: order.quoteToken,
+        symbol: `${order.baseToken}/${order.quoteToken}`,
+      };
+
+      if (!isPerpsRiskAwareLiveEngine(this.liveEngine)) {
+        return {
+          marketMode: "isolated_perps" as const,
+          maxConfiguredLeverage: this.config.perps?.leverage,
+          liquidationThresholdPercent:
+            this.config.perps?.liquidationThresholdPercent,
+          accountState: undefined,
+          funding: {
+            status: "missing" as const,
+            warning:
+              "Funding data unavailable for isolated perps order; rejecting fail-closed",
+          },
+        };
+      }
+
+      return {
+        marketMode: "isolated_perps" as const,
+        maxConfiguredLeverage: this.config.perps?.leverage,
+        liquidationThresholdPercent:
+          this.config.perps?.liquidationThresholdPercent,
+        accountState: this.liveEngine.getAccountState(),
+        getPosition: async (requestedPair: TradingPair) =>
+          this.liveEngine!.getPosition(requestedPair),
+        funding: this.liveEngine.getFundingState?.(pair),
+      };
+    });
+    this.riskManager.on("riskEvent", (event: StrategyRiskEvent) => {
+      if (this.isCriticalLiquidationRiskEvent(event)) {
+        void this.activateLiquidationRiskPause();
+      }
+    });
     this.tradingPairService = new TradingPairService(
       () => this.tradingPairResolver,
     );
@@ -354,7 +484,7 @@ export class Mach1Bot {
         env.MACH1_MODE === "paper"
           ? ("simulation" as BotConfig["mode"]) // normalize 'paper' to 'simulation'
           : (env.MACH1_MODE as BotConfig["mode"]) ||
-            ("simulation" as BotConfig["mode"]),
+          ("simulation" as BotConfig["mode"]),
       chainId: env.MACH1_CHAIN_ID ? parseInt(env.MACH1_CHAIN_ID) : undefined,
       logLevel: env.MACH1_LOG_LEVEL || "info",
     };
@@ -370,7 +500,11 @@ export class Mach1Bot {
     privateKey: string,
     options?: Partial<BotConfig>,
   ): Mach1Bot {
-    const preset = NETWORK_PRESETS[networkName];
+    const presetKey =
+      NETWORK_PRESETS[networkName] !== undefined
+        ? networkName
+        : NETWORK_PRESET_ALIASES[String(networkName)];
+    const preset = presetKey ? NETWORK_PRESETS[presetKey] : undefined;
     if (!preset) {
       throw new InvalidConfigError(
         "network",
@@ -432,7 +566,7 @@ export class Mach1Bot {
     };
 
     const result = await this.placeBotOrder(orderRequest);
-    return this.toBotOrder(
+    const botOrder = this.toBotOrder(
       result,
       symbol,
       "buy",
@@ -440,6 +574,12 @@ export class Mach1Bot {
       currentPrice,
       quantity,
     );
+
+    if (this.takeProfitPercent !== undefined) {
+      this.scheduleDefaultTakeProfit(symbol, currentPrice);
+    }
+
+    return botOrder;
   }
 
   async sell(symbol: string, options: TradeOptions): Promise<BotOrder> {
@@ -474,6 +614,12 @@ export class Mach1Bot {
   }
 
   private async placeBotOrder(orderRequest: OrderRequest) {
+    if (this.liquidationRiskPaused) {
+      throw new Error(
+        "Live trading paused due to critical liquidation risk. Explicit operator action required before resuming.",
+      );
+    }
+
     const executionEngine = await this.getActiveExecutionEngine();
 
     if (!this.isBacktesting || !this.backtestEngine) {
@@ -485,7 +631,32 @@ export class Mach1Bot {
       }
     }
 
-    return executionEngine.placeOrder(orderRequest);
+    const result = await executionEngine.placeOrder(orderRequest);
+    return await this.awaitOrderSettlement(executionEngine, result);
+  }
+
+  private async awaitOrderSettlement(
+    executionEngine: Awaited<ReturnType<Mach1Bot["getActiveExecutionEngine"]>>,
+    result: { orderId: string; status: string; filledQuantity?: bigint; remainingQuantity?: bigint },
+  ) {
+    if (this.config.mode === "live" || result.status !== "pending") {
+      return result;
+    }
+
+    if (typeof executionEngine.getOrderStatus !== "function") {
+      return result;
+    }
+
+    const deadline = Date.now() + 1_000;
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      const status = await executionEngine.getOrderStatus(result.orderId);
+      if (status.status !== "pending") {
+        return status.status === "rejected" ? result : status;
+      }
+    }
+
+    return result;
   }
 
   private toBotOrder(
@@ -548,6 +719,9 @@ export class Mach1Bot {
         if (!this.liveEngine) {
           throw new Error("Live trading engine unavailable");
         }
+        if (typeof this.liveEngine.getLivePrice !== "function") {
+          throw new Error("Active live engine does not expose live price lookup");
+        }
         return await this.liveEngine.getLivePrice(pair);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -586,8 +760,8 @@ export class Mach1Bot {
           orderType: limitPrice ? "limit" : "market",
           ...(limitPrice
             ? {
-                amountUsd: Number((position.balance * limitPrice) / 100n) / 100,
-              }
+              amountUsd: Number((position.balance * limitPrice) / 100n) / 100,
+            }
             : {}),
         });
       },
@@ -598,32 +772,46 @@ export class Mach1Bot {
     symbol: string,
     options: TakeProfitOptions,
   ): Promise<BotOrder> {
+    return this.startTakeProfitTrigger(symbol, options);
+  }
+
+  private async startTakeProfitTrigger(
+    symbol: string,
+    options: TakeProfitOptions,
+  ): Promise<BotOrder> {
     const pair = this.parseSymbol(symbol);
     const targetPrice = BigInt(Math.floor(options.targetPrice * 100));
+    const triggerKey = this.tradingPairService.normalizeSymbol(symbol);
 
-    return this.waitForPriceTrigger(
-      symbol,
-      pair,
-      (current) => current >= targetPrice,
-      async () => {
-        const position = await this.positionTracker.getPosition(pair);
-        if (position.balance <= 0n) {
-          throw new Error(`No position to take profit on for ${symbol}`);
-        }
+    this.activeTakeProfitTriggers.add(triggerKey);
 
-        const amountToSell =
-          options.amountPercent && options.amountPercent > 0
-            ? (position.balance *
+    try {
+      return await this.waitForPriceTrigger(
+        symbol,
+        pair,
+        (current) => current >= targetPrice,
+        async () => {
+          const position = await this.positionTracker.getPosition(pair);
+          if (position.balance <= 0n) {
+            throw new Error(`No position to take profit on for ${symbol}`);
+          }
+
+          const amountToSell =
+            options.amountPercent && options.amountPercent > 0
+              ? (position.balance *
                 BigInt(Math.floor(options.amountPercent * 100))) /
               BigInt(10000)
-            : position.balance;
+              : position.balance;
 
-        return this.sell(symbol, {
-          amount: Number(amountToSell),
-          orderType: "market",
-        });
-      },
-    );
+          return this.sell(symbol, {
+            amount: Number(amountToSell),
+            orderType: "market",
+          });
+        },
+      );
+    } finally {
+      this.activeTakeProfitTriggers.delete(triggerKey);
+    }
   }
 
   async trailingStop(
@@ -758,6 +946,26 @@ export class Mach1Bot {
     });
   }
 
+  private scheduleDefaultTakeProfit(symbol: string, entryPrice: bigint): void {
+    if (this.takeProfitPercent === undefined || this.takeProfitPercent <= 0) {
+      return;
+    }
+
+    const triggerKey = this.tradingPairService.normalizeSymbol(symbol);
+    if (this.activeTakeProfitTriggers.has(triggerKey)) {
+      return;
+    }
+
+    const targetPrice =
+      (Number(entryPrice) / 100) * (1 + this.takeProfitPercent / 100);
+    void this.startTakeProfitTrigger(symbol, {
+      targetPrice,
+      amountPercent: 100,
+    }).catch(() => {
+      // Background trigger failures should not fail already-filled entry orders.
+    });
+  }
+
   async backtest(options: BacktestOptions): Promise<BacktestResults> {
     // Import BacktestEngine
     const { BacktestEngine } = await import(
@@ -826,6 +1034,15 @@ export class Mach1Bot {
 
       // The actual backtest results are in the report.summary
       const backtestResult = report.summary;
+      const equityCurveData = this.buildBacktestEquityCurveData(
+        options,
+        report.dailyReturns ?? [],
+        options.initialCapital || 10000,
+      );
+      const drawdownData = this.buildBacktestDrawdownData(
+        equityCurveData,
+        report.drawdownCurve ?? [],
+      );
 
       console.log(`🔍 Mach1Bot received backtest result after completion:`, {
         totalTrades: backtestResult.totalTrades,
@@ -847,18 +1064,40 @@ export class Mach1Bot {
         winRate: backtestResult.winRate,
         totalTrades: backtestResult.totalTrades,
         plotEquityCurve: async () => {
-          console.log("📈 Equity curve plotting would be implemented here");
-          // TODO: Generate and save equity curve plot
+          await this.writeBacktestDataFile(
+            "equity-curve.json",
+            equityCurveData,
+          );
         },
         plotDrawdown: async () => {
-          console.log("📉 Drawdown curve plotting would be implemented here");
-          // TODO: Generate and save drawdown plot
+          await this.writeBacktestDataFile("drawdown-curve.json", drawdownData);
         },
         exportTrades: async (filename: string) => {
-          console.log(`📄 Exporting trades to ${filename}...`);
-          // TODO: Export trades to CSV file
-          // Could use report.tradingMetrics and backtestResult.trades
+          const header = [
+            "timestamp",
+            "symbol",
+            "side",
+            "price",
+            "quantity",
+            "pnl",
+          ];
+          const rows = backtestResult.trades.map((trade) =>
+            [
+              trade.timestamp.toString(),
+              trade.pair.symbol,
+              trade.side,
+              (Number(trade.price) / 100).toFixed(2),
+              Number(trade.quantity).toString(),
+              (Number(trade.pnl) / 100).toFixed(2),
+            ].join(","),
+          );
+          await this.writeBacktestDataFile(filename, [
+            header.join(","),
+            ...rows,
+          ]);
         },
+        getEquityCurveData: () => equityCurveData,
+        getDrawdownData: () => drawdownData,
       };
 
       console.log(`🎯 Mach1Bot final results:`, {
@@ -888,6 +1127,114 @@ export class Mach1Bot {
     if (yearsInPeriod <= 0) return 0;
 
     return Math.pow(1 + totalReturn, 1 / yearsInPeriod) - 1;
+  }
+
+  private buildBacktestEquityCurveData(
+    options: BacktestOptions,
+    dailyReturns: number[],
+    initialCapital: number,
+  ): BacktestEquityPoint[] {
+    const startDate = new Date(options.start);
+    const dayMs = 24 * 60 * 60 * 1000;
+    let equity = initialCapital;
+
+    return dailyReturns.map((dailyReturn, index) => {
+      equity *= 1 + dailyReturn;
+      return {
+        timestamp: startDate.getTime() + dayMs * (index + 1),
+        equity,
+      };
+    });
+  }
+
+  private buildBacktestDrawdownData(
+    equityCurveData: BacktestEquityPoint[],
+    drawdownCurve: number[],
+  ): BacktestDrawdownPoint[] {
+    return drawdownCurve.map((drawdown, index) => ({
+      timestamp:
+        equityCurveData[index]?.timestamp ??
+        equityCurveData[equityCurveData.length - 1]?.timestamp ??
+        Date.now(),
+      drawdown,
+    }));
+  }
+
+  private async writeBacktestDataFile(
+    filename: string,
+    payload: string[] | object,
+  ): Promise<void> {
+    const outputPath = resolve(filename);
+    await mkdir(dirname(outputPath), { recursive: true });
+    const data = Array.isArray(payload)
+      ? payload.join("\n") + "\n"
+      : JSON.stringify(payload, null, 2);
+    await writeFile(outputPath, data, "utf8");
+  }
+
+  private findTradingPairForToken(token: Address): TradingPair | null {
+    for (const symbol of this.tradingPairService.getAllSymbols()) {
+      const pair = this.parseSymbol(symbol);
+      if (pair.base.toLowerCase() === token.toLowerCase()) {
+        return pair;
+      }
+    }
+
+    return null;
+  }
+
+  private calculateCoreAllocationBySymbol(
+    portfolio: CorePortfolio,
+    symbols?: string[],
+  ): Record<string, number> {
+    const allocations = new Map<string, number>();
+    const totalValueUsd = Number(portfolio.totalValue) / 100;
+    const requestedSymbols = symbols
+      ? symbols.map((symbol) => this.tradingPairService.normalizeSymbol(symbol))
+      : undefined;
+
+    if (totalValueUsd <= 0) {
+      return Object.fromEntries(
+        (requestedSymbols ?? []).map((symbol) => [symbol, 0]),
+      );
+    }
+
+    for (const position of portfolio.positions.values()) {
+      const pair = this.findTradingPairForToken(position.token);
+      if (!pair) {
+        continue;
+      }
+
+      const normalizedSymbol = this.tradingPairService.normalizeSymbol(
+        pair.symbol,
+      );
+      allocations.set(
+        normalizedSymbol,
+        Number(position.value) / 100 / totalValueUsd,
+      );
+    }
+
+    for (const symbol of requestedSymbols ?? []) {
+      if (!allocations.has(symbol)) {
+        allocations.set(symbol, 0);
+      }
+    }
+
+    return Object.fromEntries(
+      Array.from(allocations.entries()).sort(([left], [right]) =>
+        left.localeCompare(right),
+      ),
+    );
+  }
+
+  private labelRisk(score: number): "LOW" | "MODERATE" | "HIGH" {
+    if (score >= 0.6) {
+      return "HIGH";
+    }
+    if (score >= 0.25) {
+      return "MODERATE";
+    }
+    return "LOW";
   }
 
   async simulate(options: SimulationOptions): Promise<void> {
@@ -971,9 +1318,11 @@ export class Mach1Bot {
       return this.liveEngine;
     }
 
-    const { LiveTradingEngine } = await import(
-      "@/domains/execution/live-trading-engine.js"
-    );
+    const [{ IsolatedPerpsLiveTradingEngine }, { LiveTradingEngine }] =
+      await Promise.all([
+        import("@/domains/execution/isolated-perps-live-trading-engine.js"),
+        import("@/domains/execution/live-trading-engine.js"),
+      ]);
 
     const network: ChainNetwork = this.config.rpcUrl.includes("testnet")
       ? "sei-testnet"
@@ -984,6 +1333,8 @@ export class Mach1Bot {
       pitPassCode: MACH1_PIT_PASS,
       network,
       environment: this.config.environment ?? "staging",
+      marketMode: this.config.marketMode,
+      perps: this.config.perps,
       rpcUrl: this.config.rpcUrl,
       privateKey: this.config.privateKey,
       maxSlippage: 0.01,
@@ -991,13 +1342,21 @@ export class Mach1Bot {
       tradingPairs: tradingPairs.length > 0 ? tradingPairs : undefined,
     };
 
-    const liveEngine = new LiveTradingEngine(
-      liveConfig,
-      this.marketManager,
-      this.realtimeManager,
-      undefined,
-      this.orderLifecycleStore,
-    );
+    const liveEngine: ActiveLiveExecutionEngine =
+      this.config.marketMode === "isolated_perps"
+        ? new IsolatedPerpsLiveTradingEngine(
+          liveConfig,
+          this.marketManager,
+          this.realtimeManager,
+          this.orderLifecycleStore,
+        )
+        : new LiveTradingEngine(
+          liveConfig,
+          this.marketManager,
+          this.realtimeManager,
+          undefined,
+          this.orderLifecycleStore,
+        );
     await liveEngine.initialize();
     // Replace the realtime manager with the live, SDK-backed instance
     this.realtimeManager = liveEngine.getRealtimeManager();
@@ -1050,8 +1409,35 @@ export class Mach1Bot {
     return this.getOrCreatePaperEngine();
   }
 
+  private isCriticalLiquidationRiskEvent(event: StrategyRiskEvent): boolean {
+    return (
+      this.config.mode === "live" &&
+      this.config.marketMode === "isolated_perps" &&
+      event.severity === "critical" &&
+      event.type === "liquidation_triggered"
+    );
+  }
+
+  private async activateLiquidationRiskPause(): Promise<void> {
+    if (this.liquidationRiskPaused) {
+      return;
+    }
+
+    this.liquidationRiskPaused = true;
+    await this.strategyExecutionCoordinator?.stop();
+    this.strategyExecutionCoordinator = undefined;
+    await this.liveEngine?.stopLiveTrading?.();
+    this.config.onTradingPaused?.();
+  }
+
   async goLive(options?: LiveOptions): Promise<void> {
     await this.ensureInitialized();
+
+    if (this.liquidationRiskPaused) {
+      throw new Error(
+        "Live trading paused due to critical liquidation risk. Explicit operator action required before resuming.",
+      );
+    }
 
     if (
       this.strategyExecutionCoordinator &&
@@ -1303,11 +1689,74 @@ export class Mach1Bot {
   }
 
   async rebalance(targets: Record<string, number>): Promise<RebalanceResult> {
-    // TODO: Use PortfolioManager rebalancing
+    const normalizedTargets = new Map<string, number>();
+    for (const [symbol, weight] of Object.entries(targets)) {
+      if (!Number.isFinite(weight) || weight < 0) {
+        throw new Error(`Invalid target weight for ${symbol}`);
+      }
+      normalizedTargets.set(
+        this.tradingPairService.normalizeSymbol(symbol),
+        weight,
+      );
+    }
+
+    const corePortfolio = await this.positionTracker.getPortfolio();
+    const totalValueUsd = Number(corePortfolio.totalValue) / 100;
+    if (totalValueUsd <= 0) {
+      return { executed: false, trades: [], newAllocation: {} };
+    }
+
+    const currentValues = new Map<string, number>();
+    for (const position of corePortfolio.positions.values()) {
+      const pair = this.findTradingPairForToken(position.token);
+      if (!pair) {
+        continue;
+      }
+      currentValues.set(pair.symbol, Number(position.value) / 100);
+      if (!normalizedTargets.has(pair.symbol)) {
+        normalizedTargets.set(pair.symbol, 0);
+      }
+    }
+
+    const trades: RebalanceResult["trades"] = [];
+    for (const [symbol, targetWeight] of normalizedTargets.entries()) {
+      const currentValueUsd = currentValues.get(symbol) ?? 0;
+      const targetValueUsd = totalValueUsd * targetWeight;
+      const deltaUsd = targetValueUsd - currentValueUsd;
+
+      if (Math.abs(deltaUsd) < 0.01) {
+        continue;
+      }
+
+      if (deltaUsd > 0) {
+        const order = await this.buy(symbol, { amountUsd: deltaUsd });
+        trades.push({
+          symbol,
+          side: "buy",
+          amount: order.size,
+        });
+      } else {
+        const order = await this.sell(symbol, {
+          amountUsd: Math.abs(deltaUsd),
+        });
+        trades.push({
+          symbol,
+          side: "sell",
+          amount: order.size,
+        });
+      }
+    }
+
+    const newAllocation = Object.fromEntries(
+      Array.from(normalizedTargets.entries()).sort(([left], [right]) =>
+        left.localeCompare(right),
+      ),
+    );
+
     return {
-      executed: true,
-      trades: [],
-      newAllocation: targets,
+      executed: trades.length > 0,
+      trades,
+      newAllocation,
     };
   }
 
@@ -1367,16 +1816,71 @@ export class Mach1Bot {
   }
 
   async setTakeProfitPercent(percent: number): Promise<void> {
-    // Store for future use in order management
-    // TODO: Implement take-profit percentage in order management
+    if (!Number.isFinite(percent) || percent <= 0) {
+      throw new Error("Take-profit percent must be greater than 0");
+    }
+
+    this.takeProfitPercent = percent;
+    this.config.takeProfitPercent = percent;
   }
 
   async getRiskHeatmap(): Promise<{
     display(): string;
   }> {
-    // TODO: Generate risk heatmap
+    const portfolio = await this.positionTracker.getPortfolio();
+    const performance = await this.getPerformanceStats();
+    const entries = Object.entries(
+      this.calculateCoreAllocationBySymbol(portfolio),
+    ).sort(([left], [right]) => left.localeCompare(right));
+
+    const totalExposure = entries.reduce((sum, [, weight]) => sum + weight, 0);
+    const largestWeight = entries.reduce(
+      (max, [, weight]) => Math.max(max, weight),
+      0,
+    );
+    const concentrationRisk = entries.reduce(
+      (sum, [, weight]) => sum + weight * weight,
+      0,
+    );
+    const correlationRisk =
+      entries.length === 0
+        ? 0
+        : entries.length === 1
+          ? 1
+          : Math.min(1, 0.5 + concentrationRisk / 2);
+
+    const lines =
+      entries.length === 0
+        ? [
+          "Risk Heatmap",
+          "Exposure: 0.00%",
+          "Drawdown: 0.00%",
+          "Concentration: 0.00%",
+          "Correlation: 0.00%",
+          "Overall: LOW",
+        ]
+        : [
+          "Risk Heatmap",
+          ...entries.map(
+            ([symbol, weight]) =>
+              `${symbol} exposure ${(weight * 100).toFixed(2)}% ${this.labelRisk(weight)}`,
+          ),
+          `Exposure ${(totalExposure * 100).toFixed(2)}%`,
+          `Drawdown ${(performance.maxDrawdown * 100).toFixed(2)}% ${this.labelRisk(performance.maxDrawdown)}`,
+          `Concentration ${(concentrationRisk * 100).toFixed(2)}% ${this.labelRisk(concentrationRisk)}`,
+          `Correlation ${(correlationRisk * 100).toFixed(2)}% ${this.labelRisk(correlationRisk)}`,
+          `Overall: ${this.labelRisk(
+            Math.max(
+              largestWeight,
+              concentrationRisk,
+              correlationRisk,
+              performance.maxDrawdown,
+            ),
+          )}`,
+        ];
+
     return {
-      display: () => "Risk Heatmap (stub)",
+      display: () => lines.join("\n"),
     };
   }
 
@@ -1516,8 +2020,8 @@ export class Mach1Bot {
         spread:
           event.orderBook.asks.length > 0 && event.orderBook.bids.length > 0
             ? Number(
-                event.orderBook.asks[0].price - event.orderBook.bids[0].price,
-              ) / 100
+              event.orderBook.asks[0].price - event.orderBook.bids[0].price,
+            ) / 100
             : 0,
       };
       handler(book);
@@ -1812,7 +2316,7 @@ export class Mach1Bot {
     const endDate = new Date();
     const startDate = new Date(
       endDate.getTime() -
-        (options.totalPeriodDays || 365) * 24 * 60 * 60 * 1000,
+      (options.totalPeriodDays || 365) * 24 * 60 * 60 * 1000,
     );
 
     return await this.requireStrategyOptimizer().walkForwardAnalysis(
@@ -2146,7 +2650,11 @@ export function createEnhancedBotForNetwork(
   privateKey: string,
   options?: Partial<BotConfig>,
 ): Mach1Bot {
-  const preset = NETWORK_PRESETS[networkName];
+  const presetKey =
+    NETWORK_PRESETS[networkName] !== undefined
+      ? networkName
+      : NETWORK_PRESET_ALIASES[String(networkName)];
+  const preset = presetKey ? NETWORK_PRESETS[presetKey] : undefined;
   if (!preset) {
     throw new InvalidConfigError(
       "network",

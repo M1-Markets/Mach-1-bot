@@ -1,6 +1,15 @@
 import { DEFAULT_CONTRACT_ADDRESSES } from "@/shared/constants";
 import { Address } from "@/shared/types/common";
-import type { SDKConfig } from "@/shared/types/config";
+import type { RuntimeMode, SDKConfig } from "@/shared/types/config";
+import {
+  isConfigModeInput,
+  isLiveMode,
+  normalizeConfigMode,
+} from "@/shared/utils/config-mode";
+import {
+  normalizeLiveMarketConfig,
+  validateLiveMarketConfig,
+} from "@/shared/utils/live-market-config";
 
 export interface ContractAddresses {
   clob: Address;
@@ -18,18 +27,21 @@ export interface FullSDKConfig extends SDKConfig {
   maxDailyLoss?: number;
   defaultSlippage?: number;
   stopLossPercent?: number;
+  takeProfitPercent?: number;
 }
 
 export class ConfigManager {
   private config: FullSDKConfig | null = null;
   private defaults: Partial<FullSDKConfig> = {
-    mode: "paper",
+    mode: "simulation",
+    marketMode: "spot",
     maxRetries: 3,
     timeout: 30000,
     maxPositionSize: 1000,
     maxDailyLoss: 200,
     defaultSlippage: 0.5,
     stopLossPercent: 5,
+    takeProfitPercent: undefined,
     contractAddresses: DEFAULT_CONTRACT_ADDRESSES,
     logLevel: "info",
   };
@@ -38,31 +50,32 @@ export class ConfigManager {
     // Non-singleton for testing
   }
 
-  private getDefaultConfig(): Partial<FullSDKConfig> {
-    return {
-      mode: "paper",
-      maxRetries: 3,
-      timeout: 30000,
-      maxPositionSize: 1000,
-      maxDailyLoss: 200,
-      defaultSlippage: 0.5,
-      stopLossPercent: 5,
-      contractAddresses: DEFAULT_CONTRACT_ADDRESSES,
-      logLevel: "info",
-    };
-  }
-
   loadConfig(config: Partial<FullSDKConfig>): FullSDKConfig {
-    // Validate required fields
-    this.validateConfig(config);
+    const normalizedConfig: Partial<FullSDKConfig> = {
+      ...config,
+      mode: normalizeConfigMode(config.mode),
+      ...normalizeLiveMarketConfig({
+        mode: config.mode,
+        marketMode: config.marketMode,
+        perps: config.perps
+          ? {
+            marginMode: config.perps.marginMode,
+            leverage: config.perps.leverage,
+            liquidationThresholdPercent:
+              config.perps.liquidationThresholdPercent,
+          }
+          : undefined,
+      }),
+    };
 
-    // Merge with defaults
+    this.validateConfig(normalizedConfig);
+
     const fullConfig: FullSDKConfig = {
       ...this.defaults,
-      ...config,
+      ...normalizedConfig,
       contractAddresses: {
         ...(this.defaults.contractAddresses ?? {}),
-        ...config.contractAddresses,
+        ...normalizedConfig.contractAddresses,
       },
     } as FullSDKConfig;
 
@@ -72,21 +85,49 @@ export class ConfigManager {
 
   validateConfig(config: Partial<FullSDKConfig>): void {
     const errors: string[] = [];
+    const rawMode = config.mode;
+    const mode =
+      typeof rawMode === "string"
+        ? normalizeConfigMode(rawMode)
+        : normalizeConfigMode(this.defaults.mode);
 
-    // Validate private key
-    if (!config.privateKey || typeof config.privateKey !== "string") {
+    if (typeof rawMode === "string" && !isConfigModeInput(rawMode)) {
+      errors.push("Mode must be one of: backtest, simulation, live, paper");
+    }
+
+    errors.push(
+      ...validateLiveMarketConfig({
+        mode: rawMode,
+        marketMode: config.marketMode,
+        perps: config.perps
+          ? {
+            marginMode: config.perps.marginMode,
+            leverage: config.perps.leverage,
+            liquidationThresholdPercent:
+              config.perps.liquidationThresholdPercent,
+          }
+          : undefined,
+      }),
+    );
+
+    if (
+      isLiveMode(mode) &&
+      (!config.privateKey || typeof config.privateKey !== "string")
+    ) {
       errors.push("Private key is required");
     } else if (
-      !config.privateKey.startsWith("0x") ||
-      config.privateKey.length !== 66
+      config.privateKey &&
+      (!config.privateKey.startsWith("0x") || config.privateKey.length !== 66)
     ) {
       errors.push("Invalid private key format");
     }
 
-    // Validate RPC URL
-    if (!config.rpcUrl || typeof config.rpcUrl !== "string") {
+    if (
+      isLiveMode(mode) &&
+      (!config.rpcUrl || typeof config.rpcUrl !== "string")
+    ) {
       errors.push("RPC URL is required");
-    } else {
+    } else if (config.rpcUrl) {
       try {
         new URL(config.rpcUrl);
         if (
@@ -189,7 +230,10 @@ export class ConfigManager {
     }
   }
 
-  async saveToFile(filePath: string): Promise<void> {
+  async saveToFile(
+    filePath: string,
+    options?: { includeSecrets?: boolean },
+  ): Promise<void> {
     if (!this.config) {
       throw new Error("No configuration loaded");
     }
@@ -197,7 +241,7 @@ export class ConfigManager {
     try {
       // Use require instead of dynamic import for better Jest compatibility
       const fs = require("fs").promises;
-      const content = this.exportConfig(false);
+      const content = this.exportConfig(!(options?.includeSecrets ?? false));
       await fs.writeFile(filePath, content, "utf-8");
     } catch (error) {
       throw new Error(`Failed to save configuration to file: ${error}`);
@@ -208,10 +252,19 @@ export class ConfigManager {
    * @deprecated Use direct configuration instead of environment variables
    */
   loadFromEnv(): FullSDKConfig {
-    const missingVars: string[] = [];
+    const envMode = process.env.MACH1_MODE;
+    const resolvedMode =
+      typeof envMode === "string" && isConfigModeInput(envMode)
+        ? normalizeConfigMode(envMode)
+        : (this.defaults.mode as RuntimeMode);
 
-    if (!process.env.MACH1_PRIVATE_KEY) missingVars.push("MACH1_PRIVATE_KEY");
-    if (!process.env.MACH1_RPC_URL) missingVars.push("MACH1_RPC_URL");
+    const missingVars: string[] = [];
+    if (resolvedMode === "live" && !process.env.MACH1_PRIVATE_KEY) {
+      missingVars.push("MACH1_PRIVATE_KEY");
+    }
+    if (resolvedMode === "live" && !process.env.MACH1_RPC_URL) {
+      missingVars.push("MACH1_RPC_URL");
+    }
     if (!process.env.MACH1_CLOB_ADDRESS) missingVars.push("MACH1_CLOB_ADDRESS");
     if (!process.env.MACH1_BOOK_ADDRESS) missingVars.push("MACH1_BOOK_ADDRESS");
     if (!process.env.MACH1_STATE_ADDRESS)
@@ -225,30 +278,16 @@ export class ConfigManager {
       );
     }
 
-    const envMode = process.env.MACH1_MODE;
-    // Accept both 'simulation' (legacy) and 'paper' from env
-    const normalizedEnvMode =
-      envMode === "simulation" ? "paper" : (envMode as SDKConfig["mode"]);
-    const resolvedMode =
-      normalizedEnvMode === "backtest" ||
-      normalizedEnvMode === "paper" ||
-      normalizedEnvMode === "live"
-        ? normalizedEnvMode
-        : this.defaults.mode;
-
     const privateKey = process.env.MACH1_PRIVATE_KEY;
     const rpcUrl = process.env.MACH1_RPC_URL;
-    if (!privateKey || !rpcUrl) {
+    if (resolvedMode === "live" && (!privateKey || !rpcUrl)) {
       throw new Error("Required environment variables missing");
     }
 
     return {
       privateKey,
       rpcUrl,
-      mode:
-        resolvedMode === "paper"
-          ? ("simulation" as SDKConfig["mode"])
-          : (resolvedMode as SDKConfig["mode"]),
+      mode: resolvedMode,
       maxPositionSize:
         parseInt(process.env.MACH1_MAX_POSITION_SIZE || "0") ||
         this.defaults.maxPositionSize,

@@ -78,7 +78,7 @@ class TestStrategy implements IStrategy {
     parametersSchema: {},
   };
 
-  async initialize(_context: StrategyContext): Promise<void> {}
+  async initialize(_context: StrategyContext): Promise<void> { }
 
   async execute(_context: StrategyContext): Promise<StrategyResult> {
     return {
@@ -94,9 +94,9 @@ class TestStrategy implements IStrategy {
   async updateParameters(
     _parameters: Partial<StrategyParameters>,
     _context: StrategyContext,
-  ): Promise<void> {}
+  ): Promise<void> { }
 
-  async cleanup(_context: StrategyContext): Promise<void> {}
+  async cleanup(_context: StrategyContext): Promise<void> { }
 }
 
 class CapturingStrategy extends TestStrategy {
@@ -589,6 +589,335 @@ describe("StrategyManager coordinator scheduling", () => {
       expect.stringContaining("orderType:unsupported_order_type"),
     ]);
   });
+
+  it("runs risk check before submitting valid buy signal", async () => {
+    const callSequence: string[] = [];
+    const validatingRiskManager = {
+      validateOrder: vi.fn().mockImplementation(async (request) => {
+        callSequence.push(`risk:${request.strategyId}:${request.isBuy}`);
+        return {
+          approved: true,
+          rejectionReasons: [],
+        };
+      }),
+    };
+    const orderExecutor = vi.fn().mockImplementation(async (request) => {
+      callSequence.push(`order:${request.strategyId}:${request.isBuy}`);
+      return {
+        orderId: "order-approve-1",
+        status: "filled",
+        filledQuantity: request.quantity,
+        remainingQuantity: 0n,
+      };
+    });
+    const instance = {
+      id: "instance-8",
+      strategyId: "test-strategy",
+      strategy: new TestStrategy(),
+      parameters: {},
+      status: "running",
+      metrics: {
+        totalReturn: 0,
+        sharpeRatio: 0,
+        maxDrawdown: 0,
+        winRate: 0,
+        totalTrades: 0,
+        avgHoldingPeriod: 0,
+        profitFactor: 0,
+        lastUpdate: 0,
+      },
+      state: new Map(),
+      createdAt: Date.now(),
+      executionCount: 0,
+      errors: [],
+      subscriptions: new Set(),
+    } satisfies StrategyInstance;
+
+    (
+      manager as unknown as {
+        riskManager: typeof validatingRiskManager;
+        marketManager: { getCurrentPrice: () => Promise<bigint> };
+      }
+    ).riskManager = validatingRiskManager;
+    (
+      manager as unknown as {
+        marketManager: { getCurrentPrice: () => Promise<bigint> };
+      }
+    ).marketManager = {
+      getCurrentPrice: vi.fn().mockResolvedValue(12345n),
+    };
+    manager.setOrderExecutor(orderExecutor);
+
+    await (
+      manager as unknown as {
+        processStrategySignals: (
+          instance: StrategyInstance,
+          signals: StrategySignal[],
+          context: StrategyContext,
+        ) => Promise<string[]>;
+      }
+    ).processStrategySignals(
+      instance,
+      [
+        {
+          action: "buy",
+          pair: "ETH/USDC",
+          quantity: 1,
+          confidence: 1,
+          reason: "regression",
+        },
+      ],
+      createMockContext(),
+    );
+
+    expect(validatingRiskManager.validateOrder).toHaveBeenCalledWith(
+      expect.objectContaining({
+        strategyId: "instance-8",
+        isBuy: true,
+        orderType: "market",
+      }),
+    );
+    expect(orderExecutor).toHaveBeenCalledWith(
+      expect.objectContaining({
+        strategyId: "instance-8",
+        isBuy: true,
+        orderType: "market",
+      }),
+    );
+    expect(callSequence).toEqual([
+      "risk:instance-8:true",
+      "order:instance-8:true",
+    ]);
+  });
+
+  it("turns valid perps long signal into perps-capable order request", async () => {
+    const validatingRiskManager = {
+      validateOrder: vi.fn().mockResolvedValue({
+        approved: true,
+        rejectionReasons: [],
+      }),
+    };
+    const orderExecutor = vi.fn().mockResolvedValue({
+      orderId: "perps-order-1",
+      status: "pending",
+      filledQuantity: 0n,
+      remainingQuantity: 100n,
+    });
+    const instance = {
+      id: "instance-perps-1",
+      strategyId: "test-strategy",
+      strategy: new TestStrategy(),
+      parameters: {},
+      status: "running",
+      metrics: {
+        totalReturn: 0,
+        sharpeRatio: 0,
+        maxDrawdown: 0,
+        winRate: 0,
+        totalTrades: 0,
+        avgHoldingPeriod: 0,
+        profitFactor: 0,
+        lastUpdate: 0,
+      },
+      state: new Map(),
+      createdAt: Date.now(),
+      executionCount: 0,
+      errors: [],
+      subscriptions: new Set(),
+    } satisfies StrategyInstance;
+
+    (
+      manager as unknown as {
+        riskManager: typeof validatingRiskManager;
+        marketManager: { getCurrentPrice: () => Promise<bigint> };
+      }
+    ).riskManager = validatingRiskManager;
+    (
+      manager as unknown as {
+        marketManager: { getCurrentPrice: () => Promise<bigint> };
+      }
+    ).marketManager = {
+      getCurrentPrice: vi.fn().mockResolvedValue(12345n),
+    };
+    manager.setOrderExecutor(orderExecutor);
+
+    await (
+      manager as unknown as {
+        processStrategySignals: (
+          instance: StrategyInstance,
+          signals: StrategySignal[],
+          context: StrategyContext,
+        ) => Promise<string[]>;
+      }
+    ).processStrategySignals(
+      instance,
+      [
+        {
+          action: "buy",
+          pair: "ETH/USDC",
+          quantity: 1,
+          confidence: 1,
+          reason: "perps long entry",
+          direction: "long",
+          leverage: 4,
+        },
+      ],
+      createMockContext(),
+    );
+
+    expect(validatingRiskManager.validateOrder).toHaveBeenCalledWith(
+      expect.objectContaining({
+        direction: "long",
+        leverage: 4,
+        isBuy: true,
+        orderType: "market",
+      }),
+    );
+    expect(orderExecutor).toHaveBeenCalledWith(
+      expect.objectContaining({
+        direction: "long",
+        leverage: 4,
+        isBuy: true,
+        orderType: "market",
+      }),
+    );
+  });
+
+  it("skips reduce-only signal when isolated perps direction missing", async () => {
+    const instance = {
+      id: "instance-perps-2",
+      strategyId: "test-strategy",
+      strategy: new TestStrategy(),
+      parameters: {},
+      status: "running",
+      metrics: {
+        totalReturn: 0,
+        sharpeRatio: 0,
+        maxDrawdown: 0,
+        winRate: 0,
+        totalTrades: 0,
+        avgHoldingPeriod: 0,
+        profitFactor: 0,
+        lastUpdate: 0,
+      },
+      state: new Map(),
+      createdAt: Date.now(),
+      executionCount: 0,
+      errors: [],
+      subscriptions: new Set(),
+    } satisfies StrategyInstance;
+    const orderExecutor = vi.fn();
+
+    manager.setOrderExecutor(orderExecutor);
+
+    const warnings = await (
+      manager as unknown as {
+        processStrategySignals: (
+          instance: StrategyInstance,
+          signals: StrategySignal[],
+          context: StrategyContext,
+        ) => Promise<string[]>;
+      }
+    ).processStrategySignals(
+      instance,
+      [
+        {
+          action: "sell",
+          pair: "ETH/USDC",
+          quantity: 0.5,
+          confidence: 1,
+          reason: "reduce without explicit side",
+          reduceOnly: true,
+        },
+      ],
+      createMockContext(),
+    );
+
+    expect(orderExecutor).not.toHaveBeenCalled();
+    expect(warnings).toEqual([
+      expect.stringContaining("missing_perps_direction"),
+    ]);
+  });
+
+  it("prevents order submission when risk rejects valid signal", async () => {
+    const rejectingRiskManager = {
+      validateOrder: vi.fn().mockResolvedValue({
+        approved: false,
+        rejectionReasons: ["blocked by risk"],
+      }),
+    };
+    const orderExecutor = vi.fn();
+    const instance = {
+      id: "instance-9",
+      strategyId: "test-strategy",
+      strategy: new TestStrategy(),
+      parameters: {},
+      status: "running",
+      metrics: {
+        totalReturn: 0,
+        sharpeRatio: 0,
+        maxDrawdown: 0,
+        winRate: 0,
+        totalTrades: 0,
+        avgHoldingPeriod: 0,
+        profitFactor: 0,
+        lastUpdate: 0,
+      },
+      state: new Map(),
+      createdAt: Date.now(),
+      executionCount: 0,
+      errors: [],
+      subscriptions: new Set(),
+    } satisfies StrategyInstance;
+
+    (
+      manager as unknown as {
+        riskManager: typeof rejectingRiskManager;
+        marketManager: { getCurrentPrice: () => Promise<bigint> };
+      }
+    ).riskManager = rejectingRiskManager;
+    (
+      manager as unknown as {
+        marketManager: { getCurrentPrice: () => Promise<bigint> };
+      }
+    ).marketManager = {
+      getCurrentPrice: vi.fn().mockResolvedValue(12345n),
+    };
+    manager.setOrderExecutor(orderExecutor);
+
+    await (
+      manager as unknown as {
+        processStrategySignals: (
+          instance: StrategyInstance,
+          signals: StrategySignal[],
+          context: StrategyContext,
+        ) => Promise<string[]>;
+      }
+    ).processStrategySignals(
+      instance,
+      [
+        {
+          action: "buy",
+          pair: "ETH/USDC",
+          quantity: 1,
+          confidence: 1,
+          reason: "risk reject",
+        },
+      ],
+      createMockContext(),
+    );
+
+    expect(rejectingRiskManager.validateOrder).toHaveBeenCalledTimes(1);
+    expect(orderExecutor).not.toHaveBeenCalled();
+    expect(instance.errors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          severity: "warning",
+          message: expect.stringContaining("blocked by risk"),
+        }),
+      ]),
+    );
+  });
 });
 
 describe("StrategyManager market data context", () => {
@@ -1003,6 +1332,66 @@ describe("StrategyManager order events", () => {
     expect(report.performance.totalTrades).toBe(1);
     expect(report.performance.winRate).toBe(1);
   });
+
+  it("cleans subscribed market pairs before strategy cleanup", async () => {
+    const registry = new StrategyRegistry();
+    let subscriptionsDuringCleanup = -1;
+
+    class CleanupAwareStrategy extends TestStrategy {
+      override async cleanup(): Promise<void> {
+        subscriptionsDuringCleanup =
+          instanceRef?.subscriptions.size ?? subscriptionsDuringCleanup;
+      }
+    }
+
+    await registry.registerStrategy(
+      new CleanupAwareStrategy().config,
+      { createStrategy: () => new CleanupAwareStrategy() },
+      { tags: [] },
+    );
+
+    const manager = new StrategyManager(
+      registry,
+      {} as never,
+      {} as never,
+      {} as never,
+      {
+        subscribePrices: vi.fn().mockResolvedValue({
+          subscribe: () => () => undefined,
+          unsubscribe: () => undefined,
+        }),
+      } as never,
+      {} as never,
+    );
+    let instanceRef: StrategyInstance | undefined;
+
+    vi.spyOn(
+      manager as unknown as {
+        createStrategyContext: () => Promise<StrategyContext>;
+      },
+      "createStrategyContext",
+    ).mockResolvedValue(createMockContext());
+    vi.spyOn(
+      manager as unknown as {
+        startStrategyExecution: () => Promise<void>;
+      },
+      "startStrategyExecution",
+    ).mockResolvedValue(undefined);
+
+    await manager.createAndStartStrategy(
+      "test-strategy",
+      "instance-cleanup",
+      {},
+    );
+
+    instanceRef = manager.getInstance("instance-cleanup");
+    expect(instanceRef?.subscriptions.has("ETH/USDC")).toBe(true);
+
+    await manager.stopStrategy("instance-cleanup");
+
+    expect(subscriptionsDuringCleanup).toBe(0);
+    expect(manager.getInstance("instance-cleanup")).toBeUndefined();
+  });
 });
 
 describe("StrategyManager risk events", () => {
@@ -1148,6 +1537,123 @@ describe("StrategyManager risk events", () => {
 
     await vi.waitFor(() => {
       expect(onRiskEvent).toHaveBeenCalled();
+    });
+  });
+
+  it("routes liquidation warning events to subscribed strategy instances", async () => {
+    const registry = new StrategyRegistry();
+    const onRiskEvent = vi.fn().mockResolvedValue(undefined);
+
+    class RiskAwareStrategy extends TestStrategy {
+      override onRiskEvent = onRiskEvent;
+    }
+
+    await registry.registerStrategy(
+      new RiskAwareStrategy().config,
+      { createStrategy: () => new RiskAwareStrategy() },
+      { tags: [] },
+    );
+
+    const riskManager = new RiskManager(
+      {
+        getPortfolio: vi.fn().mockResolvedValue({
+          positions: new Map(),
+          totalValue: 100000n,
+          unrealizedPnL: 0n,
+        }),
+        getPosition: vi.fn().mockResolvedValue(undefined),
+        getPositionSummary: vi.fn().mockResolvedValue({
+          dailyPnL: 0n,
+          totalValue: 100000n,
+          totalPnL: 0n,
+          openPositions: 0,
+        }),
+        getOpenOrders: vi.fn().mockResolvedValue([]),
+      } as never,
+      {
+        getCurrentPrice: vi.fn().mockResolvedValue(10000n),
+        getCandles: vi.fn().mockResolvedValue([]),
+      } as never,
+      {
+        cancelAllOrders: vi.fn(),
+        getOrderStats: vi.fn().mockReturnValue({
+          totalOrders: 0,
+          openOrders: 0,
+          filledOrders: 0,
+          cancelledOrders: 0,
+        }),
+      } as never,
+    );
+
+    const manager = new StrategyManager(
+      registry,
+      {
+        getCurrentPrice: vi.fn().mockResolvedValue(10000n),
+        getCandles: vi.fn().mockResolvedValue([]),
+      } as never,
+      {
+        placeLimitOrder: vi.fn(),
+        placeMarketOrder: vi.fn(),
+      } as never,
+      {
+        getPortfolio: vi.fn().mockResolvedValue({
+          positions: new Map(),
+          totalValue: 100000n,
+        }),
+        getPositionSummary: vi.fn().mockResolvedValue({
+          dailyPnL: 0n,
+        }),
+        getPerformanceMetrics: vi.fn().mockResolvedValue({
+          sharpeRatio: 0,
+        }),
+      } as never,
+      {
+        subscribePrices: vi.fn().mockResolvedValue({
+          subscribe: () => () => undefined,
+          unsubscribe: () => undefined,
+        }),
+        getOHLCVSnapshot: vi.fn().mockResolvedValue({
+          T: 1_700_000_000_000,
+          o: 100,
+          h: 110,
+          l: 95,
+          c: 108,
+          v: 12345,
+        }),
+        getOrderbookSnapshot: vi.fn().mockResolvedValue({
+          bids: [{ price: "107.5", quantity: "2" }],
+          asks: [{ price: "108.5", quantity: "3" }],
+        }),
+      } as never,
+      riskManager,
+    );
+
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    await manager.createAndStartStrategy(
+      "test-strategy",
+      "liquidation-risk-instance",
+      {},
+    );
+
+    riskManager.emit("riskEvent", {
+      type: "liquidation_warning",
+      severity: "warning",
+      message: "Liquidation distance below warning threshold",
+      data: {
+        pair: "ETH/USDC",
+      },
+      timestamp: Date.now(),
+    });
+
+    await vi.waitFor(() => {
+      expect(onRiskEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "liquidation_warning",
+          severity: "warning",
+        }),
+        expect.anything(),
+      );
     });
   });
 });

@@ -1,0 +1,43 @@
+# Live isolated-perps configuration example
+# Scope for this phase: isolated margin only. Cross margin is rejected.
+# Fail-closed rules: bot rejects new orders when margin account state is missing,
+# mark price or maintenance margin data is stale, or required funding data is stale/missing
+# for risk-increasing orders.
+
+[bot]
+name = "live-isolated-perps-bot"
+description = "Example live Monaco isolated-perps bot using explicit leverage and liquidation guardrails"
+
+[wallet]
+private_key = "0x1234567890123456789012345678901234567890123456789012345678901234"
+
+[trading]
+mode = "live"
+market_mode = "isolated_perps"
+base_currency = "USDC"
+max_position_size = 1000
+max_daily_loss = 250
+
+[perps]
+margin_mode = "isolated"
+leverage = 3
+liquidation_threshold_percent = 12
+
+[strategy]
+type = "multi_indicator"
+id = "isolated_perps_multi_indicator"
+risk_level = "medium"
+trading_pairs = ["ETH/USDC"]
+
+[strategy.parameters]
+rsiPeriod = 7
+macdFast = 5
+macdSlow = 13
+macdSignal = 4
+bbPeriod = 10
+bbStdDev = 1.5
+confluenceThreshold = 2
+
+[network]
+rpc_url = "https://evm-rpc-testnet.sei.io"
+chain_id = 713715

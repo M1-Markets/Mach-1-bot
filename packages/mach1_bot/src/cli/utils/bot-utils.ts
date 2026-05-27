@@ -28,7 +28,21 @@ import type {
 } from "@/shared/types/ai";
 import type { BotConfig } from "@/shared/types/bot";
 import type { ChainNetwork } from "@/shared/types/common";
+import type {
+  ConfigModeInput,
+  LiveTradingMarketMode,
+  PerpsMarginMode,
+} from "@/shared/types/config";
 import { getDefaultAiPrompt } from "@/shared/utils/ai-utils";
+import {
+  isConfigModeInput,
+  isLiveMode,
+  normalizeConfigMode,
+} from "@/shared/utils/config-mode";
+import {
+  normalizeLiveMarketConfig,
+  validateLiveMarketConfig,
+} from "@/shared/utils/live-market-config";
 import {
   getNumberProp,
   getStringProp,
@@ -46,15 +60,21 @@ export interface TomlConfig {
     name: string;
     description: string;
   };
-  wallet: {
-    private_key: string;
+  wallet?: {
+    private_key?: string;
   };
   trading: {
-    mode: "backtest" | "simulation" | "live";
+    mode: ConfigModeInput;
+    market_mode?: LiveTradingMarketMode;
     base_currency: string;
     initial_balance: number;
     max_position_size: number;
     max_daily_loss: number;
+  };
+  perps?: {
+    margin_mode?: PerpsMarginMode;
+    leverage?: number;
+    liquidation_threshold_percent?: number;
   };
   strategy: {
     type: string;
@@ -63,9 +83,9 @@ export interface TomlConfig {
     parameters?: Record<string, unknown>; // Custom strategy parameters
     trading_pairs?: string[]; // Supported trading pairs for the strategy
   };
-  network: {
-    rpc_url: string;
-    chain_id: number;
+  network?: {
+    rpc_url?: string;
+    chain_id?: number;
   };
   ai_helper?: {
     enabled: boolean;
@@ -148,10 +168,10 @@ const getPairBalanceSummary = async (
       : `no ${baseSymbol} position`;
     const quoteText = quotePosition
       ? formatTokenBalance(
-          quotePosition.balance,
-          quotePosition.value,
-          quoteSymbol,
-        )
+        quotePosition.balance,
+        quotePosition.value,
+        quoteSymbol,
+      )
       : `no ${quoteSymbol} position`;
 
     return `Balances: ${baseText} | ${quoteText}`;
@@ -478,7 +498,7 @@ function extractTradingPairs(
 ): string[] {
   const configuredPairs =
     Array.isArray(strategyConfig?.trading_pairs) &&
-    strategyConfig.trading_pairs.length > 0
+      strategyConfig.trading_pairs.length > 0
       ? strategyConfig.trading_pairs
       : undefined;
 
@@ -550,8 +570,7 @@ async function getAvailableTokenBalance(
     }
   } catch (error) {
     console.warn(
-      `⚠️  Unable to read profile balance for ${tokenSymbol}: ${
-        error instanceof Error ? error.message : String(error)
+      `⚠️  Unable to read profile balance for ${tokenSymbol}: ${error instanceof Error ? error.message : String(error)
       }`,
     );
   }
@@ -570,8 +589,7 @@ async function getAvailableTokenBalance(
         }
       } catch (error) {
         console.warn(
-          `⚠️  Unable to read balance for ${tokenSymbol}: ${
-            error instanceof Error ? error.message : String(error)
+          `⚠️  Unable to read balance for ${tokenSymbol}: ${error instanceof Error ? error.message : String(error)
           }`,
         );
       }
@@ -639,7 +657,7 @@ async function validateStrategyBalances(
       const baseBalance = await getAvailableTokenBalance(
         pairDetails.base_token,
         pairDetails.base_asset_id ||
-          getStringProp(pairDetailsRecord, "base_asset_id"),
+        getStringProp(pairDetailsRecord, "base_asset_id"),
         pairDetails.base_decimals,
         profileBalances,
         sdk.profile,
@@ -648,7 +666,7 @@ async function validateStrategyBalances(
       const quoteBalance = await getAvailableTokenBalance(
         pairDetails.quote_token,
         pairDetails.quote_asset_id ||
-          getStringProp(pairDetailsRecord, "quote_asset_id"),
+        getStringProp(pairDetailsRecord, "quote_asset_id"),
         pairDetails.quote_decimals,
         profileBalances,
         sdk.profile,
@@ -683,8 +701,7 @@ async function validateStrategyBalances(
       await monaco.shutdown();
     } catch (error) {
       console.warn(
-        `⚠️  Failed to shut down Monaco SDK after balance validation: ${
-          error instanceof Error ? error.message : String(error)
+        `⚠️  Failed to shut down Monaco SDK after balance validation: ${error instanceof Error ? error.message : String(error)
         }`,
       );
     }
@@ -729,20 +746,67 @@ export async function parseTomlConfig(configFile: string): Promise<TomlConfig> {
 export function convertToBotConfig(tomlConfig: TomlConfig): BotConfig {
   const resolvedLogLevel =
     process.env.MONACO_LOG_LEVEL ?? process.env.MACH1_LOG_LEVEL ?? "info";
+  const mode = normalizeConfigMode(tomlConfig.trading?.mode);
 
-  // Validate required configuration
-  if (!tomlConfig.wallet?.private_key) {
+  if (tomlConfig.trading?.mode && !isConfigModeInput(tomlConfig.trading.mode)) {
+    throw new Error("mode must be one of: backtest, simulation, live, paper");
+  }
+
+  if (isLiveMode(mode) && !tomlConfig.wallet?.private_key) {
     throw new Error("private_key is required in [wallet] section");
   }
 
-  if (!tomlConfig.network?.rpc_url) {
+  if (isLiveMode(mode) && !tomlConfig.network?.rpc_url) {
     throw new Error("rpc_url is required in [network] section");
   }
 
+  if (isLiveMode(mode) && tomlConfig.network?.rpc_url) {
+    try {
+      const parsedUrl = new URL(tomlConfig.network.rpc_url);
+      if (!["http:", "https:"].includes(parsedUrl.protocol)) {
+        throw new Error("Invalid protocol");
+      }
+    } catch {
+      throw new Error("rpc_url must be a valid http(s) URL");
+    }
+  }
+
+  const liveMarketConfigErrors = validateLiveMarketConfig({
+    mode: tomlConfig.trading?.mode,
+    marketMode: tomlConfig.trading?.market_mode,
+    perps: tomlConfig.perps
+      ? {
+        marginMode: tomlConfig.perps.margin_mode,
+        leverage: tomlConfig.perps.leverage,
+        liquidationThresholdPercent:
+          tomlConfig.perps.liquidation_threshold_percent,
+      }
+      : undefined,
+  });
+
+  if (liveMarketConfigErrors.length > 0) {
+    throw new Error(liveMarketConfigErrors.join(", "));
+  }
+
+  const normalizedLiveMarketConfig = normalizeLiveMarketConfig({
+    mode: tomlConfig.trading?.mode,
+    marketMode: tomlConfig.trading?.market_mode,
+    perps: tomlConfig.perps
+      ? {
+        marginMode: tomlConfig.perps.margin_mode,
+        leverage: tomlConfig.perps.leverage,
+        liquidationThresholdPercent:
+          tomlConfig.perps.liquidation_threshold_percent,
+      }
+      : undefined,
+  });
+
   const config: BotConfig = {
-    privateKey: tomlConfig.wallet.private_key,
-    rpcUrl: tomlConfig.network.rpc_url,
-    mode: tomlConfig.trading?.mode || "simulation",
+    privateKey: tomlConfig.wallet?.private_key ?? "",
+    rpcUrl: tomlConfig.network?.rpc_url ?? "",
+    mode,
+    marketMode: normalizedLiveMarketConfig.marketMode,
+    perps: normalizedLiveMarketConfig.perps,
     environment: resolveEnvironmentOption(process.env.MONACO_ENV, "staging"),
     maxPositionSize: tomlConfig.trading?.max_position_size || 1000,
     maxDailyLoss: tomlConfig.trading?.max_daily_loss || 500,

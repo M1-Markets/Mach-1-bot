@@ -3,6 +3,7 @@ import { OrderManager } from "@/domains/trading/order-manager";
 import { PositionTracker } from "@/domains/trading/position-tracker";
 import {
   type EmittedRiskEventDetails,
+  type PerpsRiskContext,
   RiskLimits,
   RiskManager,
 } from "@/domains/trading/risk-manager";
@@ -13,6 +14,37 @@ describe("RiskManager", () => {
   let mockPositionTracker: PositionTracker;
   let mockMarketManager: MarketManager;
   let mockOrderManager: OrderManager;
+  const baseToken =
+    "0x1234567890123456789012345678901234567890" as Address;
+  const quoteToken =
+    "0x0987654321098765432109876543210987654321" as Address;
+
+  const createPerpsContext = (
+    overrides: Partial<PerpsRiskContext> = {},
+    positionOverrides: Partial<Position> = {},
+  ): PerpsRiskContext => ({
+    marketMode: "isolated_perps",
+    maxConfiguredLeverage: 5,
+    liquidationThresholdPercent: 10,
+    accountState: {
+      equity: 100000n,
+      freeCollateral: 80000n,
+      maintenanceMargin: 5000n,
+      updatedAt: Date.now(),
+    },
+    getPosition: vi.fn().mockResolvedValue({
+      token: baseToken,
+      balance: 0n,
+      value: 0n,
+      unrealizedPnL: 0n,
+      ...positionOverrides,
+    }),
+    funding: {
+      status: "unsupported",
+      warning: "Funding rate unavailable from Monaco; skipping funding adjustment.",
+    },
+    ...overrides,
+  });
 
   beforeEach(() => {
     // Create mocks
@@ -257,6 +289,235 @@ describe("RiskManager", () => {
       expect(result.approved).toBe(true);
       expect(result.warnings).toContain(
         "Correlation history unavailable; skipping correlation rejection.",
+      );
+    });
+
+    it("rejects isolated perps leverage above configured max", async () => {
+      riskManager.setPerpsContextProvider(() =>
+        createPerpsContext({ maxConfiguredLeverage: 4 }),
+      );
+
+      const result = await riskManager.validateOrder({
+        baseToken,
+        quoteToken,
+        isBuy: true,
+        direction: "long",
+        price: 10000n,
+        quantity: 100n,
+        leverage: 5,
+      });
+
+      expect(result.approved).toBe(false);
+      expect(result.rejectionReasons).toContain(
+        "Perps leverage 5 exceeds configured max leverage 3",
+      );
+    });
+
+    it("rejects isolated perps order when free collateral is insufficient", async () => {
+      vi.mocked(mockPositionTracker.getPosition).mockResolvedValue({
+        token: baseToken,
+        balance: 0n,
+        value: 0n,
+        unrealizedPnL: 0n,
+      });
+      riskManager.setPerpsContextProvider(() =>
+        createPerpsContext({
+          accountState: {
+            equity: 100000n,
+            freeCollateral: 1000n,
+            maintenanceMargin: 5000n,
+            updatedAt: Date.now(),
+          },
+        }),
+      );
+
+      const result = await riskManager.validateOrder({
+        baseToken,
+        quoteToken,
+        isBuy: true,
+        direction: "long",
+        price: 25000n,
+        quantity: 100n,
+        leverage: 5,
+      });
+
+      expect(result.approved).toBe(false);
+      expect(
+        result.rejectionReasons.some((reason) =>
+          reason.includes("Required collateral"),
+        ),
+      ).toBe(true);
+    });
+
+    it("keeps spot validation path unchanged when no perps context exists", async () => {
+      vi.mocked(mockPositionTracker.getPosition).mockResolvedValue({
+        token: baseToken,
+        balance: 0n,
+        value: 0n,
+        unrealizedPnL: 0n,
+      });
+      const spotOrder: OrderRequest = {
+        baseToken,
+        quoteToken,
+        isBuy: true,
+        price: 10000n,
+        quantity: 100n,
+      };
+
+      const result = await riskManager.validateOrder(spotOrder);
+
+      expect(result.approved).toBe(true);
+      expect(result.rejectionReasons).toHaveLength(0);
+    });
+
+    it("warns and skips funding adjustment when Monaco funding data is unsupported", async () => {
+      vi.mocked(mockPositionTracker.getPosition).mockResolvedValue({
+        token: baseToken,
+        balance: 0n,
+        value: 0n,
+        unrealizedPnL: 0n,
+      });
+      riskManager.setPerpsContextProvider(() =>
+        createPerpsContext({
+          funding: {
+            status: "unsupported",
+            warning:
+              "Funding rate unavailable from Monaco; skipping funding adjustment.",
+          },
+        }),
+      );
+
+      const result = await riskManager.validateOrder({
+        baseToken,
+        quoteToken,
+        isBuy: true,
+        direction: "long",
+        price: 10000n,
+        quantity: 100n,
+        leverage: 2,
+      });
+
+      expect(result.approved).toBe(true);
+      expect(result.warnings).toContain(
+        "Funding rate unavailable from Monaco; skipping funding adjustment.",
+      );
+    });
+
+    it("emits liquidation warning events before threshold breach", async () => {
+      const receivedTypes: string[] = [];
+      riskManager.on("riskEvent", (event) => {
+        receivedTypes.push(event.type);
+      });
+      vi.mocked(mockPositionTracker.getPosition).mockResolvedValue({
+        token: baseToken,
+        balance: 0n,
+        value: 0n,
+        unrealizedPnL: 0n,
+      });
+      riskManager.setPerpsContextProvider(() =>
+        createPerpsContext(
+          {},
+          {
+            balance: 100n,
+            value: 1000000n,
+            markPrice: 10000n,
+            liquidationPrice: 8500n,
+            maintenanceMargin: 2500n,
+            collateral: 15000n,
+            side: "long",
+          },
+        ),
+      );
+
+      const result = await riskManager.validateOrder({
+        baseToken,
+        quoteToken,
+        isBuy: true,
+        direction: "long",
+        price: 10000n,
+        quantity: 25n,
+        leverage: 2,
+      });
+
+      expect(result.approved).toBe(true);
+      expect(result.warnings.some((warning) => warning.includes("Liquidation distance"))).toBe(true);
+      expect(receivedTypes).toEqual(
+        expect.arrayContaining(["liquidation_warning", "margin_warning"]),
+      );
+    });
+
+    it("emits critical liquidation events and rejects risk-increasing orders", async () => {
+      const receivedTypes: string[] = [];
+      riskManager.on("riskEvent", (event) => {
+        receivedTypes.push(event.type);
+      });
+      riskManager.setPerpsContextProvider(() =>
+        createPerpsContext(
+          {},
+          {
+            balance: 100n,
+            value: 1000000n,
+            markPrice: 10000n,
+            liquidationPrice: 9500n,
+            maintenanceMargin: 2500n,
+            collateral: 15000n,
+            side: "long",
+          },
+        ),
+      );
+
+      const result = await riskManager.validateOrder({
+        baseToken,
+        quoteToken,
+        isBuy: true,
+        direction: "long",
+        price: 10000n,
+        quantity: 25n,
+        leverage: 2,
+      });
+
+      expect(result.approved).toBe(false);
+      expect(result.rejectionReasons.some((reason) => reason.includes("Liquidation distance"))).toBe(true);
+      expect(receivedTypes).toContain("liquidation_triggered");
+    });
+
+    it("blocks isolated perps approval when mark data is stale", async () => {
+      riskManager.setPerpsContextProvider(() =>
+        createPerpsContext(
+          {
+            accountState: {
+              equity: 100000n,
+              freeCollateral: 80000n,
+              maintenanceMargin: 5000n,
+              updatedAt: Date.now() - 60_000,
+            },
+            markDataStaleAfterMs: 1_000,
+          },
+          {
+            balance: 100n,
+            value: 1000000n,
+            markPrice: 10000n,
+            liquidationPrice: 9000n,
+            maintenanceMargin: 2500n,
+            collateral: 15000n,
+            side: "long",
+          },
+        ),
+      );
+
+      const result = await riskManager.validateOrder({
+        baseToken,
+        quoteToken,
+        isBuy: true,
+        direction: "long",
+        price: 10000n,
+        quantity: 25n,
+        leverage: 2,
+      });
+
+      expect(result.approved).toBe(false);
+      expect(result.rejectionReasons).toContain(
+        "Perps mark price or maintenance margin data is stale; rejecting order fail-closed",
       );
     });
 

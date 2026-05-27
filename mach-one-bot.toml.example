@@ -1,0 +1,233 @@
+# Mach1 Bot full example config.
+# Copy to `mach-one-bot.toml`.
+# Keep one `[strategy]` + `[strategy.parameters]` block active at time.
+# Leave alternate strategy blocks commented or TOML parser will reject duplicate tables.
+
+[general]
+name = "mach-one-bot"
+description = "Full example config for Mach1 Bot"
+
+# Optional alias for metadata. Use `[general]` or `[bot]` if you want.
+#[bot]
+#name = "mach-one-bot"
+#description = "Alias metadata section"
+
+[wallet]
+# Required for `live` mode.
+private_key = "0x1111111111111111111111111111111111111111111111111111111111111111"
+
+[trading]
+# Accepted: "backtest", "simulation", "live", "paper"
+# "paper" normalizes to "simulation".
+mode = "simulation"
+base_currency = "USDC"
+initial_balance = 10000
+max_position_size = 1000
+max_daily_loss = 500
+
+[strategy]
+# `type` stays descriptive. When `id` set, CLI resolves exact registered strategy by ID.
+type = "dca"
+risk_level = "medium"
+id = "builtin.dca"
+trading_pairs = ["ETH/USDC"]
+
+[strategy.parameters]
+pair = "ETH/USDC"
+totalAmountUsd = 1000
+intervalMinutes = 15
+orderCount = 10
+priceStrategy = "market" # "market" | "limit" | "twap"
+limitPriceOffset = -0.1
+maxSlippage = 0.5
+stopOnMarketClose = false
+
+[network]
+# Required for `live` mode.
+rpc_url = "https://evm-rpc-testnet.sei-apis.com"
+chain_id = 1328
+
+# Optional AI helper.
+#[ai_helper]
+#enabled = true
+#provider = "chatgpt" # "gemini" | "chatgpt" | "claude"
+#api_key = "replace-me"
+#prompt = """
+#You are trading assistant.
+#Prioritize risk management.
+#Explain reasoning briefly.
+#"""
+
+# ---------------------------------------------------------------------------
+# Strategy swap-ins.
+# Uncomment one full block below, then comment active `[strategy]` block above.
+# ---------------------------------------------------------------------------
+
+# Builtin: Grid Trading
+#[strategy]
+#type = "grid"
+#risk_level = "medium"
+#id = "builtin.grid"
+#trading_pairs = ["ETH/USDC"]
+#
+#[strategy.parameters]
+#pair = "ETH/USDC"
+#lowerBound = 2500
+#upperBound = 3500
+#gridCount = 10
+#totalAmount = 5000
+#mode = "neutral" # "neutral" | "long" | "short"
+#rebalanceThreshold = 5
+#takeProfit = 20
+#stopLoss = -15
+#maxActiveOrders = 20
+
+# Builtin: Portfolio Management
+#[strategy]
+#type = "custom"
+#risk_level = "medium"
+#id = "builtin.portfolio"
+#trading_pairs = ["ETH/USDC", "BTC/USDC", "USDC"]
+#
+#[strategy.parameters]
+## JSON string. Must sum targetPercent to 100.
+#allocationTargets = '[{"token":"ETH/USDC","targetPercent":40,"minPercent":30,"maxPercent":50},{"token":"BTC/USDC","targetPercent":30,"minPercent":20,"maxPercent":40},{"token":"USDC","targetPercent":30,"minPercent":20,"maxPercent":40}]'
+#rebalanceThreshold = 5
+#rebalanceInterval = 24
+#maxSlippage = 1.0
+#minTradeSize = 50
+#riskTolerance = 5
+#enableAutoRebalance = true
+#correlationThreshold = 0.8
+#concentrationLimit = 50
+
+# Builtin: Stress Test Orders
+#[strategy]
+#type = "stress_test"
+#risk_level = "high"
+#id = "builtin.stress_test"
+#trading_pairs = ["BTC/USDC"]
+#
+#[strategy.parameters]
+#pair = "BTC/USDC"
+#maxOrders = 1000
+#ordersPerBatch = 50
+#intervalMs = 500
+#minOrderUsd = 1
+#maxOrderUsd = 50
+#seed = 123456789
+
+# Example: RSI Mean Reversion
+#[strategy]
+#type = "rsi"
+#risk_level = "medium"
+#id = "rsi_strategy_v1"
+#trading_pairs = ["BTC/USDC", "ETH/USDC", "SOL/USDC"]
+#
+#[strategy.parameters]
+#rsiPeriod = 14
+#oversoldThreshold = 30
+#overboughtThreshold = 70
+#positionSize = 0.1
+#stopLoss = 0.05
+
+# Example: RSI conservative preset
+#[strategy]
+#type = "rsi"
+#risk_level = "low"
+#id = "rsi_strategy_v1"
+#trading_pairs = ["ETH/USDC"]
+#
+#[strategy.parameters]
+#rsiPeriod = 21
+#oversoldThreshold = 25
+#overboughtThreshold = 75
+#positionSize = 0.05
+#stopLoss = 0.03
+
+# Example: RSI aggressive preset
+#[strategy]
+#type = "rsi"
+#risk_level = "high"
+#id = "rsi_strategy_v1"
+#trading_pairs = ["BTC/USDC", "ETH/USDC", "SOL/USDC"]
+#
+#[strategy.parameters]
+#rsiPeriod = 10
+#oversoldThreshold = 35
+#overboughtThreshold = 65
+#positionSize = 0.15
+#stopLoss = 0.08
+
+# Example: Moving Average Crossover
+#[strategy]
+#type = "ma_crossover"
+#risk_level = "medium"
+#id = "ma_crossover_v1"
+#trading_pairs = ["BTC/USDC", "ETH/USDC"]
+#
+#[strategy.parameters]
+#fastPeriod = 10
+#slowPeriod = 30
+#maType = "sma" # "sma" | "ema"
+#positionSize = 0.2
+
+# Example: Multi-Indicator Confluence
+#[strategy]
+#type = "multi_indicator"
+#risk_level = "medium"
+#id = "multi_indicator_v1"
+#trading_pairs = ["BTC/USDC", "ETH/USDC", "SOL/USDC"]
+#
+#[strategy.parameters]
+#rsiPeriod = 14
+#macdFast = 12
+#macdSlow = 26
+#macdSignal = 9
+#bbPeriod = 20
+#bbStdDev = 2
+#confluenceThreshold = 2
+
+# Example: Multi-Indicator aggressive preset
+#[strategy]
+#type = "multi_indicator"
+#risk_level = "high"
+#id = "multi_indicator_v1"
+#trading_pairs = ["SOL/USDC"]
+#
+#[strategy.parameters]
+#rsiPeriod = 5
+#macdFast = 3
+#macdSlow = 8
+#macdSignal = 3
+#bbPeriod = 5
+#bbStdDev = 1.0
+#confluenceThreshold = 1
+
+# Example: Pairs Trading
+#[strategy]
+#type = "pairs_trading"
+#risk_level = "high"
+#id = "pairs_trading_v1"
+#trading_pairs = ["BTC/USDC", "ETH/USDC"]
+#
+#[strategy.parameters]
+#lookbackPeriod = 50
+#entryThreshold = 2.0
+#exitThreshold = 0.5
+#positionSize = 0.3
+
+# ---------------------------------------------------------------------------
+# Legacy notes.
+# ---------------------------------------------------------------------------
+
+# Some older example files include `[backtest]` settings like these:
+#
+##[backtest]
+##start_date = "2024-07-01"
+##end_date = "2024-07-02"
+##commission = 0.001
+##slippage = 0.0005
+#
+# Current canonical TOML schema in `packages/mach1_bot/schema/toml-config.schema.json`
+# does not define `[backtest]`. Keep block commented unless surrounding code adds support.

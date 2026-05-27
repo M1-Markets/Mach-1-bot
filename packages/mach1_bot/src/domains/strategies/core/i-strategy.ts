@@ -30,14 +30,14 @@ export interface StrategyConfig {
   supportedPairs: string[];
   /** Strategy category */
   category:
-    | "dca"
-    | "grid"
-    | "arbitrage"
-    | "momentum"
-    | "mean_reversion"
-    | "ml"
-    | "custom"
-    | "stress_test";
+  | "dca"
+  | "grid"
+  | "arbitrage"
+  | "momentum"
+  | "mean_reversion"
+  | "ml"
+  | "custom"
+  | "stress_test";
   /** Risk level (1-10) */
   riskLevel: number;
   /** Minimum capital required */
@@ -140,6 +140,10 @@ export interface StrategySignal {
   quantity?: number;
   price?: number;
   orderType?: "market" | "limit" | "stop" | "stop_limit";
+  direction?: "long" | "short";
+  leverage?: number;
+  reduceOnly?: boolean;
+  closeOnly?: boolean;
   confidence: number; // 0-1
   reason: string;
   metadata?: Record<string, unknown>;
@@ -248,12 +252,12 @@ export interface MarketEvent {
 
 export interface OrderEvent {
   type:
-    | "submitted"
-    | "accepted"
-    | "filled"
-    | "partially_filled"
-    | "cancelled"
-    | "rejected";
+  | "submitted"
+  | "accepted"
+  | "filled"
+  | "partially_filled"
+  | "cancelled"
+  | "rejected";
   orderId: string;
   // Order can be SDK OrderResult (low-level) or bot-level BotOrder (rich fields)
   order: OrderLifecycleRecord | OrderResult | BotOrder;
@@ -261,7 +265,14 @@ export interface OrderEvent {
 }
 
 export interface RiskEvent {
-  type: "position_limit" | "loss_limit" | "drawdown_limit" | "exposure_limit";
+  type:
+  | "position_limit"
+  | "loss_limit"
+  | "drawdown_limit"
+  | "exposure_limit"
+  | "margin_warning"
+  | "liquidation_warning"
+  | "liquidation_triggered";
   severity: "warning" | "critical";
   message: string;
   data: unknown;

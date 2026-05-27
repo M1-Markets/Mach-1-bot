@@ -141,6 +141,35 @@ vi.mock("@/cli/utils/monaco-session", () => ({
       const sdk = {
         getAuthState: () => ({ accessToken: "token" }),
         getAccountAddress: () => "0xabc",
+        perps: {
+          listMarginAccounts: async () => ({
+            accounts: [{ margin_account_id: "margin-1" }],
+          }),
+          getMarginAccountSummary: async () => ({
+            equity: "1500",
+            free_collateral: "1200",
+            initial_margin_required: "100",
+            maintenance_margin_required: "50",
+            withdrawable_collateral: "1100",
+            realized_pnl: "10",
+            unrealized_pnl: "25",
+          }),
+          listOpenPositions: async () => ({
+            positions: [
+              {
+                trading_pair_id: "pair-1",
+                side: "LONG",
+                size: "1.25",
+                entry_price: "3200",
+                mark_price: "3210",
+                leverage: "5",
+                isolated_margin: "250",
+                unrealized_pnl: "12.5",
+                liquidation_price: "2900",
+              },
+            ],
+          }),
+        },
         profile: {
           getProfile: async () => ({ id: "1", address: "0xabc" }),
           getUserBalances: async () => ({
@@ -389,6 +418,77 @@ describe("live subcommands", () => {
     registerLiveCommands(program);
     const code = await runCommand(program, ["faucet"]);
     expect(code).toBe(0);
+  });
+
+  it("formats empty isolated perps account state", async () => {
+    vi.mocked(withMonacoSession).mockImplementationOnce(
+      async (
+        _prepared: unknown,
+        fn: (value: unknown) => Promise<void>,
+        onStatus?: (status: string) => void,
+        _options?: unknown,
+      ) => {
+        onStatus?.("Authenticating with Monaco");
+        const sdk = {
+          perps: {
+            listMarginAccounts: async () => ({ accounts: [] }),
+            getMarginAccountSummary: async () => {
+              throw new Error("should not be called");
+            },
+            listOpenPositions: async () => ({ positions: [] }),
+          },
+        };
+        await fn({ sdk, network: "testnet" });
+      },
+    );
+
+    const program = new Command("live");
+    registerLiveCommands(program);
+    const code = await runCommand(program, ["perps"]);
+
+    expect(code).toBe(0);
+    expect(logSpy).toHaveBeenCalledWith("[balance] Connecting to Monaco");
+    expect(logSpy).toHaveBeenCalledWith("Isolated perps account");
+    expect(logSpy).toHaveBeenCalledWith("  none");
+    expect(logSpy).toHaveBeenCalledWith("Open Perps Positions");
+    expect(logSpy).toHaveBeenCalledWith("  none");
+  });
+
+  it("formats active isolated perps position state", async () => {
+    const program = new Command("live");
+    registerLiveCommands(program);
+    const code = await runCommand(program, ["perps"]);
+
+    expect(code).toBe(0);
+    expect(logSpy).toHaveBeenCalledWith("Isolated perps account");
+    expect(logSpy).toHaveBeenCalledWith(
+      JSON.stringify({
+        marginAccountId: "margin-1",
+        equity: "1500",
+        freeCollateral: "1200",
+        usedMargin: "100",
+        maintenanceMargin: "50",
+        withdrawableCollateral: "1100",
+        realizedPnl: "10",
+        unrealizedPnl: "25",
+      }),
+    );
+    expect(logSpy).toHaveBeenCalledWith("Open Perps Positions");
+    expect(logSpy).toHaveBeenCalledWith(
+      JSON.stringify({
+        tradingPairId: "pair-1",
+        side: "LONG",
+        size: "1.25",
+        entryPrice: "3200",
+        markPrice: "3210",
+        leverage: "5",
+        collateral: "250",
+        unrealizedPnl: "12.5",
+        liquidationPrice: "2900",
+        fundingRate: "unavailable",
+        accruedFunding: "unavailable",
+      }),
+    );
   });
 
   it("runs live deposit", async () => {

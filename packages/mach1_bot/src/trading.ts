@@ -31,7 +31,9 @@ export function createRealtimeManager(
   orderManager: OrderManager,
   sdk?: Mach1SDK,
 ): RealtimeManager {
-  return new RealtimeManager(marketManager, orderManager, sdk);
+  return new RealtimeManager(marketManager, orderManager, sdk, {
+    mode: sdk ? "live" : "simulation",
+  });
 }
 
 export function createRiskManager(

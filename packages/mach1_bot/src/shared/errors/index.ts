@@ -141,6 +141,21 @@ export class PriceUnavailableError extends MachOneError {
   }
 }
 
+export class MarketDataUnavailableError extends MachOneError {
+  constructor(
+    symbol: string,
+    dataType: "price" | "orderbook" | "ticker" | "candles" | "trades",
+    details?: unknown,
+  ) {
+    super(
+      "MARKET_DATA_UNAVAILABLE",
+      "TRADING",
+      `Live ${dataType} unavailable for ${symbol}`,
+      details,
+    );
+  }
+}
+
 // Network Errors
 export class NetworkError extends MachOneError {
   constructor(message: string, details?: unknown) {

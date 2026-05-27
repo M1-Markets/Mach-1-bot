@@ -18,7 +18,7 @@ vi.mock("path", () => ({
   resolve: vi.fn((value: string) => `/resolved/${value}`),
 }));
 vi.mock("smol-toml", () => ({
-  stringify: vi.fn(() => '[wallet]\nprivate_key = "test"'),
+  stringify: vi.fn((value: unknown) => JSON.stringify(value)),
   parse: vi.fn(() => ({
     wallet: { private_key: "test-key" },
     network: { rpc_url: "https://test.com" },
@@ -59,6 +59,7 @@ describe("config utils", () => {
       wallet: { private_key: "test" },
       trading: {
         mode: "simulation",
+        market_mode: "spot",
         base_currency: "USDC",
         initial_balance: 10000,
         max_position_size: 1000,
@@ -70,10 +71,32 @@ describe("config utils", () => {
 
     await writeConfigToFile(config, "/test/path.toml");
 
-    expect(mockFs.writeFileSync).toHaveBeenCalledWith(
-      "/test/path.toml",
-      expect.stringContaining("[wallet]"),
-    );
+    const [, content] = mockFs.writeFileSync.mock.calls[0] ?? [];
+    expect(content).toContain('"wallet":{}');
+    expect(content).not.toContain('private_key":"test"');
+  });
+
+  it("writes config with secrets when explicitly requested", async () => {
+    const config: TomlConfig = {
+      wallet: { private_key: "test" },
+      trading: {
+        mode: "simulation",
+        market_mode: "spot",
+        base_currency: "USDC",
+        initial_balance: 10000,
+        max_position_size: 1000,
+        max_daily_loss: 500,
+      },
+      strategy: { type: "dca", risk_level: "medium" },
+      network: { rpc_url: "https://test.com", chain_id: 713715 },
+    };
+
+    await writeConfigToFile(config, "/test/path.toml", {
+      includeSecrets: true,
+    });
+
+    const [, content] = mockFs.writeFileSync.mock.calls[0] ?? [];
+    expect(content).toContain('private_key":"test"');
   });
 
   it("checks config file existence", () => {
@@ -98,17 +121,64 @@ describe("config utils", () => {
   it("validates required fields", () => {
     expect(() =>
       validateConfig({
+        trading: { mode: "live" },
         wallet: { private_key: "test-key" },
         network: { rpc_url: "https://test.com" },
       }),
     ).not.toThrow();
 
     expect(() =>
-      validateConfig({ network: { rpc_url: "https://test.com" } }),
+      validateConfig({
+        trading: { mode: "live" },
+        network: { rpc_url: "https://test.com" },
+      }),
     ).toThrow("private_key is required in [wallet] section");
     expect(() =>
-      validateConfig({ wallet: { private_key: "test-key" } }),
+      validateConfig({
+        trading: { mode: "live" },
+        wallet: { private_key: "test-key" },
+      }),
     ).toThrow("rpc_url is required in [network] section");
+    expect(() =>
+      validateConfig({ trading: { mode: "backtest" } }),
+    ).not.toThrow();
+    expect(() =>
+      validateConfig({ trading: { mode: "simulation" } }),
+    ).not.toThrow();
+    expect(() =>
+      validateConfig({
+        trading: { mode: "live" },
+        wallet: { private_key: "test-key" },
+        network: { rpc_url: "not-a-url" },
+      }),
+    ).toThrow("rpc_url must be a valid http(s) URL");
+
+    expect(() =>
+      validateConfig({
+        trading: { mode: "live", market_mode: "isolated_perps" },
+        wallet: { private_key: "test-key" },
+        network: { rpc_url: "https://test.com" },
+        perps: {
+          margin_mode: "isolated",
+          leverage: 3,
+          liquidation_threshold_percent: 12,
+        },
+      }),
+    ).not.toThrow();
+
+    expect(() =>
+      validateConfig({
+        trading: { mode: "live", market_mode: "isolated_perps" },
+        wallet: { private_key: "test-key" },
+        network: { rpc_url: "https://test.com" },
+        perps: {
+          margin_mode: "cross",
+          leverage: 3,
+        },
+      }),
+    ).toThrow(
+      'Cross-margin perps mode is not supported in this phase; use perps.margin_mode = "isolated"',
+    );
   });
 
   it("converts config to bot config", () => {
@@ -117,7 +187,7 @@ describe("config utils", () => {
         wallet: { private_key: "test-key" },
         network: { rpc_url: "https://test.com", chain_id: 12345 },
         trading: {
-          mode: "live",
+          mode: "paper",
           max_position_size: 2000,
           max_daily_loss: 1000,
         },
@@ -125,11 +195,47 @@ describe("config utils", () => {
     ).toEqual({
       privateKey: "test-key",
       rpcUrl: "https://test.com",
-      mode: "live",
+      mode: "simulation",
+      marketMode: "spot",
       maxPositionSize: 2000,
       maxDailyLoss: 1000,
       chainId: 12345,
       logLevel: "info",
+      perps: undefined,
+    });
+  });
+
+  it("converts isolated perps config to bot config", () => {
+    expect(
+      toBotConfig({
+        wallet: { private_key: "test-key" },
+        network: { rpc_url: "https://test.com", chain_id: 12345 },
+        trading: {
+          mode: "live",
+          market_mode: "isolated_perps",
+          max_position_size: 2000,
+          max_daily_loss: 1000,
+        },
+        perps: {
+          margin_mode: "isolated",
+          leverage: 4,
+          liquidation_threshold_percent: 15,
+        },
+      }),
+    ).toEqual({
+      privateKey: "test-key",
+      rpcUrl: "https://test.com",
+      mode: "live",
+      marketMode: "isolated_perps",
+      maxPositionSize: 2000,
+      maxDailyLoss: 1000,
+      chainId: 12345,
+      logLevel: "info",
+      perps: {
+        marginMode: "isolated",
+        leverage: 4,
+        liquidationThresholdPercent: 15,
+      },
     });
   });
 

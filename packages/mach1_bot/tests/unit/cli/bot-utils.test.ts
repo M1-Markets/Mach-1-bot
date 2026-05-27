@@ -17,7 +17,14 @@ import {
 } from "@/cli/utils";
 
 // Mock dependencies
-vi.mock("fs");
+vi.mock("fs", async () => {
+  const actual = await vi.importActual<typeof import("fs")>("fs");
+  return {
+    ...actual,
+    existsSync: vi.fn(actual.existsSync),
+    readFileSync: vi.fn(actual.readFileSync),
+  };
+});
 vi.mock("picocolors", () => ({
   default: {
     cyan: (text: string) => text,
@@ -85,6 +92,7 @@ describe("CLI Bot Utilities", () => {
       },
       trading: {
         mode: "simulation",
+        market_mode: "spot",
         base_currency: "USDC",
         initial_balance: 10000,
         max_position_size: 1000,
@@ -107,6 +115,8 @@ describe("CLI Bot Utilities", () => {
         privateKey: "0x123456789abcdef",
         rpcUrl: "https://test.rpc.url",
         mode: "simulation",
+        marketMode: "spot",
+        perps: undefined,
         environment: "staging",
         maxPositionSize: 1000,
         maxDailyLoss: 500,
@@ -128,7 +138,9 @@ describe("CLI Bot Utilities", () => {
         },
         network: {
           ...validTomlConfig.network,
-          chain_id: undefined as unknown as TomlConfig["network"]["chain_id"],
+          chain_id: undefined as unknown as NonNullable<
+            TomlConfig["network"]
+          >["chain_id"],
         },
       };
 
@@ -140,6 +152,60 @@ describe("CLI Bot Utilities", () => {
       expect(result.chainId).toBe(713715);
     });
 
+    it("should normalize paper mode to simulation", () => {
+      const result = convertToBotConfig({
+        ...validTomlConfig,
+        trading: {
+          ...validTomlConfig.trading,
+          mode: "paper",
+        },
+      });
+
+      expect(result.mode).toBe("simulation");
+    });
+
+    it("should convert isolated perps live config", () => {
+      const result = convertToBotConfig({
+        ...validTomlConfig,
+        trading: {
+          ...validTomlConfig.trading,
+          mode: "live",
+          market_mode: "isolated_perps",
+        },
+        perps: {
+          margin_mode: "isolated",
+          leverage: 5,
+          liquidation_threshold_percent: 10,
+        },
+      });
+
+      expect(result.marketMode).toBe("isolated_perps");
+      expect(result.perps).toEqual({
+        marginMode: "isolated",
+        leverage: 5,
+        liquidationThresholdPercent: 10,
+      });
+    });
+
+    it("should reject unsupported cross-margin perps config", () => {
+      expect(() =>
+        convertToBotConfig({
+          ...validTomlConfig,
+          trading: {
+            ...validTomlConfig.trading,
+            mode: "live",
+            market_mode: "isolated_perps",
+          },
+          perps: {
+            margin_mode: "cross",
+            leverage: 3,
+          },
+        }),
+      ).toThrow(
+        'Cross-margin perps mode is not supported in this phase; use perps.margin_mode = "isolated"',
+      );
+    });
+
     it("should prefer env log level when provided", () => {
       process.env.MONACO_LOG_LEVEL = "DEBUG";
 
@@ -148,9 +214,39 @@ describe("CLI Bot Utilities", () => {
       expect(result.logLevel).toBe("DEBUG");
     });
 
-    it("should throw error if private_key is missing", () => {
+    it("should allow missing private_key outside live mode", () => {
       const configWithoutKey = {
         ...validTomlConfig,
+        trading: {
+          ...validTomlConfig.trading,
+          mode: "backtest" as const,
+        },
+        wallet: { private_key: "" },
+      };
+
+      expect(convertToBotConfig(configWithoutKey).privateKey).toBe("");
+    });
+
+    it("should allow missing rpc_url outside live mode", () => {
+      const configWithoutRpc = {
+        ...validTomlConfig,
+        trading: {
+          ...validTomlConfig.trading,
+          mode: "simulation" as const,
+        },
+        network: { ...validTomlConfig.network, rpc_url: "" },
+      };
+
+      expect(convertToBotConfig(configWithoutRpc).rpcUrl).toBe("");
+    });
+
+    it("should throw error if live private_key is missing", () => {
+      const configWithoutKey = {
+        ...validTomlConfig,
+        trading: {
+          ...validTomlConfig.trading,
+          mode: "live" as const,
+        },
         wallet: { private_key: "" },
       };
 
@@ -159,9 +255,13 @@ describe("CLI Bot Utilities", () => {
       );
     });
 
-    it("should throw error if rpc_url is missing", () => {
+    it("should throw error if live rpc_url is missing", () => {
       const configWithoutRpc = {
         ...validTomlConfig,
+        trading: {
+          ...validTomlConfig.trading,
+          mode: "live" as const,
+        },
         network: { ...validTomlConfig.network, rpc_url: "" },
       };
 
@@ -236,17 +336,24 @@ describe("CLI Bot Utilities", () => {
   });
 
   describe("tomlConfigSchema", () => {
-    it("should require the top-level required sections", () => {
+    it("should require trading and strategy sections", () => {
       expect(tomlConfigSchema).toHaveProperty("required");
       expect(tomlConfigSchema.required).toEqual(
-        expect.arrayContaining(["wallet", "trading", "strategy", "network"]),
+        expect.arrayContaining(["trading", "strategy"]),
       );
     });
 
     it("should enumerate known enum values for trading mode and risk level", () => {
       expect(tomlConfigSchema.properties?.trading?.properties?.mode).toEqual(
         expect.objectContaining({
-          enum: ["backtest", "simulation", "live"],
+          enum: ["backtest", "simulation", "live", "paper"],
+        }),
+      );
+      expect(
+        tomlConfigSchema.properties?.trading?.properties?.market_mode,
+      ).toEqual(
+        expect.objectContaining({
+          enum: ["spot", "isolated_perps"],
         }),
       );
       expect(
@@ -255,6 +362,30 @@ describe("CLI Bot Utilities", () => {
         expect.objectContaining({
           enum: ["low", "medium", "high"],
         }),
+      );
+    });
+
+    it("should require wallet private_key and network rpc_url only for live mode", () => {
+      expect(tomlConfigSchema.allOf).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            then: expect.objectContaining({
+              required: ["wallet", "network"],
+            }),
+          }),
+        ]),
+      );
+    });
+
+    it("should require perps settings for live isolated perps mode", () => {
+      expect(tomlConfigSchema.allOf).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            then: expect.objectContaining({
+              required: ["perps"],
+            }),
+          }),
+        ]),
       );
     });
   });

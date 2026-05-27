@@ -29,6 +29,7 @@ export interface ApplyOrderUpdateInput {
   remainingQuantity?: bigint;
   averageFillPrice?: bigint;
   fees?: bigint;
+  feeCurrency?: OrderLifecycleRecord["feeCurrency"];
   slippage?: bigint;
   reason?: string;
   timestamp?: number;
@@ -66,11 +67,13 @@ export class OrderLifecycleStore {
       pair: input.pair,
       side: input.order.isBuy ? "buy" : "sell",
       type: input.order.orderType ?? "market",
+      requestedPrice: input.order.price,
       requestedQuantity: input.order.quantity,
       filledQuantity: 0n,
       remainingQuantity: input.order.quantity,
       averageFillPrice: undefined,
       fees: 0n,
+      feeCurrency: undefined,
       slippage: 0n,
       status: "submitted",
       submittedAt: timestamp,
@@ -125,6 +128,7 @@ export class OrderLifecycleStore {
       remainingQuantity: nextRemainingQuantity,
       averageFillPrice: nextAverageFillPrice,
       fees: current.fees + (input.fees ?? 0n),
+      feeCurrency: input.feeCurrency ?? current.feeCurrency,
       slippage: current.slippage + (input.slippage ?? 0n),
       status: input.status ?? input.type,
       updatedAt: timestamp,

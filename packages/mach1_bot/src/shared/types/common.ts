@@ -5,6 +5,8 @@
 export type Address = `0x${string}`;
 export type ChainNetwork = "sei-mainnet" | "sei-testnet";
 export type MonacoEnvironment = "mainnet" | "staging" | "development" | "local";
+export type MarketDataMode = "live" | "simulation" | "test";
+export type PerpsPositionDirection = "long" | "short";
 
 // Event system types
 export type EventCallback<T> = (event: T) => void | Promise<void>;
@@ -27,6 +29,7 @@ export interface OrderRequest {
   baseToken: Address;
   quoteToken: Address;
   isBuy: boolean;
+  direction?: PerpsPositionDirection;
   strategyId?: string;
   /**
    * Optional client-side order id used before exchange acceptance. Risk and
@@ -43,6 +46,9 @@ export interface OrderRequest {
   price: bigint;
   /** Base quantity scaled by 100. `250n` means `2.50` base units. */
   quantity: bigint;
+  leverage?: number;
+  reduceOnly?: boolean;
+  closeOnly?: boolean;
   pitpassCode?: string;
 }
 
@@ -60,7 +66,18 @@ export interface Position {
   token: Address;
   balance: bigint;
   value: bigint;
+  entryPrice?: bigint;
+  markPrice?: bigint;
   unrealizedPnL: bigint;
+  realizedPnL?: bigint;
+  fees?: bigint;
+  collateral?: bigint;
+  leverage?: number;
+  maintenanceMargin?: bigint;
+  liquidationPrice?: bigint;
+  side?: PerpsPositionDirection;
+  fundingRate?: bigint;
+  accruedFunding?: bigint;
 }
 
 export interface Portfolio {

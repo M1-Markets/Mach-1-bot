@@ -1,5 +1,6 @@
 import { NETWORK_PRESETS } from "@/shared/constants/networks";
-import type { SDKConfig } from "@/shared/types/config";
+import type { ConfigModeInput, SDKConfig } from "@/shared/types/config";
+import { normalizeConfigMode } from "@/shared/utils/config-mode";
 
 export class SDKConfigBuilder {
   private config: Partial<SDKConfig> = {};
@@ -13,12 +14,8 @@ export class SDKConfigBuilder {
     return this;
   }
 
-  withMode(
-    mode: "backtest" | "paper" | "live" | "simulation",
-  ): SDKConfigBuilder {
-    // Map legacy 'simulation' to canonical 'paper'
-    this.config.mode =
-      mode === "simulation" ? "paper" : (mode as SDKConfig["mode"]);
+  withMode(mode: ConfigModeInput): SDKConfigBuilder {
+    this.config.mode = normalizeConfigMode(mode);
     return this;
   }
 
@@ -49,7 +46,9 @@ export class SDKConfigBuilder {
 
   build(): SDKConfig {
     const errors: string[] = [];
-    if (!this.config.rpcUrl) errors.push("RPC URL is required");
+    if ((this.config.mode ?? "simulation") === "live" && !this.config.rpcUrl) {
+      errors.push("RPC URL is required");
+    }
     if (errors.length > 0)
       throw new Error(`Configuration validation failed:\n${errors.join("\n")}`);
     return this.config as SDKConfig;

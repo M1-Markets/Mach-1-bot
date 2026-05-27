@@ -1115,6 +1115,7 @@ export class BacktestEngine extends BaseTradingMode {
       remainingQuantity: 0n,
       averageFillPrice: executionPrice,
       fees: commission,
+      feeCurrency: order.quoteToken,
       slippage,
       timestamp: Date.now(),
     });

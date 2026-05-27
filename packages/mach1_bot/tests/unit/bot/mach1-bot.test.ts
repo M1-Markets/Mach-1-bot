@@ -1,6 +1,9 @@
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Mach1Bot } from "@/domains/bot/mach1-bot";
+import type { Address, Portfolio, TradingPair } from "@/shared/types";
 import { BotConfig } from "@/shared/types/bot";
-import type { Address, TradingPair } from "@/shared/types";
 
 describe("Mach1Bot", () => {
   let bot: Mach1Bot;
@@ -87,10 +90,10 @@ describe("Mach1Bot", () => {
             getAllSymbols: () => string[];
             getPairBySymbol: (symbol: string) =>
               | {
-                  symbol: string;
-                  base_token_contract: Address;
-                  quote_token_contract: Address;
-                }
+                symbol: string;
+                base_token_contract: Address;
+                quote_token_contract: Address;
+              }
               | undefined;
           };
           parseSymbol: (symbol: string) => TradingPair;
@@ -102,12 +105,12 @@ describe("Mach1Bot", () => {
         getPairBySymbol: (symbol: string) =>
           symbol === "WETH-USDC"
             ? {
-                symbol: "WETH-USDC",
-                base_token_contract:
-                  "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                quote_token_contract:
-                  "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-              }
+              symbol: "WETH-USDC",
+              base_token_contract:
+                "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              quote_token_contract:
+                "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            }
             : undefined,
       };
 
@@ -333,6 +336,77 @@ describe("Mach1Bot", () => {
           await testBot.emergencyStop();
         }
       });
+
+      it("rejects live manual buy when live price unavailable", async () => {
+        const liveBot = new Mach1Bot({
+          ...mockConfig,
+          mode: "live",
+          enableEnhancedFeatures: false,
+        });
+        const placeOrder = vi.fn();
+
+        (
+          liveBot as unknown as {
+            liveEngine: {
+              getLivePrice: (pair: TradingPair) => Promise<bigint>;
+              placeOrder: typeof placeOrder;
+            };
+            tradingPairResolver: {
+              normalizeSymbol: (symbol: string) => string;
+              getAllSymbols: () => string[];
+              getPairBySymbol: (symbol: string) =>
+                | {
+                  symbol: string;
+                  base_token_contract: Address;
+                  quote_token_contract: Address;
+                }
+                | undefined;
+            };
+          }
+        ).liveEngine = {
+          getLivePrice: vi.fn().mockRejectedValue(new Error("no live price")),
+          placeOrder,
+        };
+        (
+          liveBot as unknown as {
+            tradingPairResolver: {
+              normalizeSymbol: (symbol: string) => string;
+              getAllSymbols: () => string[];
+              getPairBySymbol: (symbol: string) =>
+                | {
+                  symbol: string;
+                  base_token_contract: Address;
+                  quote_token_contract: Address;
+                }
+                | undefined;
+            };
+          }
+        ).tradingPairResolver = {
+          normalizeSymbol: (symbol: string) => symbol,
+          getAllSymbols: () => ["ETH/USDC"],
+          getPairBySymbol: (symbol: string) =>
+            symbol === "ETH/USDC"
+              ? {
+                symbol: "ETH/USDC",
+                base_token_contract:
+                  "0x1111111111111111111111111111111111111111",
+                quote_token_contract:
+                  "0x4444444444444444444444444444444444444444",
+              }
+              : undefined,
+        };
+
+        try {
+          await expect(
+            liveBot.buy("ETH/USDC", { amountUsd: 100 }),
+          ).rejects.toThrow(
+            /Live price lookup failed for ETH\/USDC: no live price/,
+          );
+          expect(placeOrder).not.toHaveBeenCalled();
+        } finally {
+          await liveBot.emergencyStop();
+        }
+      });
     });
 
     describe("sell", () => {
@@ -375,6 +449,77 @@ describe("Mach1Bot", () => {
           } catch (_error) {
             // Ignore cleanup errors
           }
+        }
+      });
+
+      it("rejects live manual sell when live price unavailable", async () => {
+        const liveBot = new Mach1Bot({
+          ...mockConfig,
+          mode: "live",
+          enableEnhancedFeatures: false,
+        });
+        const placeOrder = vi.fn();
+
+        (
+          liveBot as unknown as {
+            liveEngine: {
+              getLivePrice: (pair: TradingPair) => Promise<bigint>;
+              placeOrder: typeof placeOrder;
+            };
+            tradingPairResolver: {
+              normalizeSymbol: (symbol: string) => string;
+              getAllSymbols: () => string[];
+              getPairBySymbol: (symbol: string) =>
+                | {
+                  symbol: string;
+                  base_token_contract: Address;
+                  quote_token_contract: Address;
+                }
+                | undefined;
+            };
+          }
+        ).liveEngine = {
+          getLivePrice: vi.fn().mockRejectedValue(new Error("no live price")),
+          placeOrder,
+        };
+        (
+          liveBot as unknown as {
+            tradingPairResolver: {
+              normalizeSymbol: (symbol: string) => string;
+              getAllSymbols: () => string[];
+              getPairBySymbol: (symbol: string) =>
+                | {
+                  symbol: string;
+                  base_token_contract: Address;
+                  quote_token_contract: Address;
+                }
+                | undefined;
+            };
+          }
+        ).tradingPairResolver = {
+          normalizeSymbol: (symbol: string) => symbol,
+          getAllSymbols: () => ["ETH/USDC"],
+          getPairBySymbol: (symbol: string) =>
+            symbol === "ETH/USDC"
+              ? {
+                symbol: "ETH/USDC",
+                base_token_contract:
+                  "0x1111111111111111111111111111111111111111",
+                quote_token_contract:
+                  "0x4444444444444444444444444444444444444444",
+              }
+              : undefined,
+        };
+
+        try {
+          await expect(
+            liveBot.sell("ETH/USDC", { amountUsd: 100 }),
+          ).rejects.toThrow(
+            /Live price lookup failed for ETH\/USDC: no live price/,
+          );
+          expect(placeOrder).not.toHaveBeenCalled();
+        } finally {
+          await liveBot.emergencyStop();
         }
       });
     });
@@ -451,6 +596,72 @@ describe("Mach1Bot", () => {
         expect(result.side).toBe("sell");
         tracker.getPosition = originalGetPosition;
       });
+
+      it("should persist configured take-profit percent", async () => {
+        await bot.setTakeProfitPercent(7.5);
+
+        expect(
+          (
+            bot as unknown as {
+              config: BotConfig;
+              takeProfitPercent?: number;
+            }
+          ).config.takeProfitPercent,
+        ).toBe(7.5);
+        expect(
+          (
+            bot as unknown as {
+              config: BotConfig;
+              takeProfitPercent?: number;
+            }
+          ).takeProfitPercent,
+        ).toBe(7.5);
+      });
+
+      it("should create default take-profit trigger after buy", async () => {
+        await bot.setTakeProfitPercent(5);
+
+        vi.spyOn(
+          bot as unknown as { getPriceForMode: () => Promise<bigint> },
+          "getPriceForMode",
+        ).mockResolvedValue(300000n);
+        vi.spyOn(
+          bot as unknown as {
+            placeBotOrder: () => Promise<{ orderId: string; status: string }>;
+          },
+          "placeBotOrder",
+        ).mockResolvedValue({
+          orderId: "entry-1",
+          status: "filled",
+        });
+
+        const triggerSpy = vi
+          .spyOn(
+            bot as unknown as {
+              startTakeProfitTrigger: (
+                symbol: string,
+                options: { targetPrice: number; amountPercent: number },
+              ) => Promise<unknown>;
+            },
+            "startTakeProfitTrigger",
+          )
+          .mockResolvedValue({
+            id: "tp-1",
+            symbol: "ETH/USDC",
+            side: "sell",
+            type: "market",
+            price: 3150,
+            size: 100,
+            status: "filled",
+          });
+
+        await bot.buy("ETH/USDC", { amountUsd: 100 });
+
+        expect(triggerSpy).toHaveBeenCalledWith("ETH/USDC", {
+          targetPrice: 3150,
+          amountPercent: 100,
+        });
+      });
     });
   });
 
@@ -482,6 +693,8 @@ describe("Mach1Bot", () => {
         expect(typeof results.plotEquityCurve).toBe("function");
         expect(typeof results.plotDrawdown).toBe("function");
         expect(typeof results.exportTrades).toBe("function");
+        expect(Array.isArray(results.getEquityCurveData())).toBe(true);
+        expect(Array.isArray(results.getDrawdownData())).toBe(true);
       });
 
       it("should pass configured strategy interval to backtest engine", async () => {
@@ -526,6 +739,68 @@ describe("Mach1Bot", () => {
         } finally {
           vi.doUnmock("@/domains/execution/backtest-engine.js");
           await isolatedBot.emergencyStop();
+        }
+      });
+
+      it("should export trades csv and expose non-empty chart data", async () => {
+        const tempDir = await mkdtemp(join(tmpdir(), "mach1-backtest-"));
+        const csvPath = join(tempDir, "trades.csv");
+
+        vi.doMock("@/domains/execution/backtest-engine.js", () => ({
+          BacktestEngine: vi.fn().mockImplementation(() => ({
+            setStrategyCallback: vi.fn(),
+            generateReport: vi.fn().mockResolvedValue({
+              summary: {
+                totalReturn: 0.1,
+                sharpeRatio: 1.2,
+                maxDrawdown: 0.05,
+                winRate: 1,
+                totalTrades: 1,
+                trades: [
+                  {
+                    timestamp: Date.UTC(2024, 0, 2),
+                    pair: {
+                      base: "0x1111111111111111111111111111111111111111",
+                      quote: "0x4444444444444444444444444444444444444444",
+                      symbol: "ETH/USDC",
+                    },
+                    side: "buy",
+                    price: 300000n,
+                    quantity: 100n,
+                    pnl: 5000n,
+                  },
+                ],
+              },
+              dailyReturns: [0.02, -0.01],
+              drawdownCurve: [0, 0.01],
+            }),
+          })),
+        }));
+
+        const isolatedBot = new Mach1Bot({
+          ...mockConfig,
+          enableEnhancedFeatures: false,
+        });
+
+        try {
+          const results = await isolatedBot.backtest({
+            start: "2024-01-01",
+            end: "2024-01-03",
+            initialCapital: 10000,
+          });
+
+          expect(results.getEquityCurveData().length).toBeGreaterThan(0);
+          expect(results.getDrawdownData().length).toBeGreaterThan(0);
+
+          await results.exportTrades(csvPath);
+          const csv = await readFile(csvPath, "utf8");
+
+          expect(csv).toContain("timestamp,symbol,side,price,quantity,pnl");
+          expect(csv).toContain("ETH/USDC,buy,3000.00,100,50.00");
+        } finally {
+          vi.doUnmock("@/domains/execution/backtest-engine.js");
+          await isolatedBot.emergencyStop();
+          await rm(tempDir, { recursive: true, force: true });
         }
       });
     });
@@ -649,6 +924,32 @@ describe("Mach1Bot", () => {
         ).getOrCreateLiveEngine = original;
       });
 
+      it("rejects live isolated perps start when margin account state is unavailable", async () => {
+        const isolatedBot = new Mach1Bot({
+          ...mockConfig,
+          mode: "live",
+          marketMode: "isolated_perps",
+          perps: {
+            marginMode: "isolated",
+            leverage: 5,
+            liquidationThresholdPercent: 10,
+          },
+          enableEnhancedFeatures: false,
+        });
+
+        (
+          isolatedBot as unknown as {
+            getOrCreateLiveEngine: () => Promise<unknown>;
+          }
+        ).getOrCreateLiveEngine = vi
+          .fn()
+          .mockRejectedValue(new Error("No active isolated margin account available"));
+
+        await expect(isolatedBot.goLive()).rejects.toThrow(
+          "No active isolated margin account available",
+        );
+      });
+
       it("should start exactly one coordinator loop", async () => {
         vi.useFakeTimers();
         const testBot = new Mach1Bot({
@@ -709,16 +1010,212 @@ describe("Mach1Bot", () => {
 
     describe("rebalance", () => {
       it("should rebalance portfolio successfully", async () => {
-        const targets = {
+        const tracker = (
+          bot as unknown as {
+            positionTracker: { getPortfolio: () => Promise<Portfolio> };
+          }
+        ).positionTracker;
+        vi.spyOn(tracker, "getPortfolio").mockResolvedValue({
+          positions: new Map([
+            [
+              "0x1111111111111111111111111111111111111111" as Address,
+              {
+                token: "0x1111111111111111111111111111111111111111" as Address,
+                balance: 200n,
+                value: 60000n,
+                unrealizedPnL: 0n,
+              },
+            ],
+            [
+              "0x2222222222222222222222222222222222222222" as Address,
+              {
+                token: "0x2222222222222222222222222222222222222222" as Address,
+                balance: 100n,
+                value: 40000n,
+                unrealizedPnL: 0n,
+              },
+            ],
+          ]),
+          totalValue: 100000n,
+          unrealizedPnL: 0n,
+        });
+
+        const result = await bot.rebalance({
           "ETH/USDC": 0.6,
           "BTC/USDC": 0.4,
-        };
-
-        const result = await bot.rebalance(targets);
+        });
 
         expect(result).toBeDefined();
+        expect(result.executed).toBe(false);
+        expect(result.trades).toEqual([]);
+        expect(result.newAllocation).toEqual({
+          "BTC/USDC": 0.4,
+          "ETH/USDC": 0.6,
+        });
+      });
+
+      it("should sell overweight assets", async () => {
+        const tracker = (
+          bot as unknown as {
+            positionTracker: { getPortfolio: () => Promise<Portfolio> };
+          }
+        ).positionTracker;
+        vi.spyOn(tracker, "getPortfolio")
+          .mockResolvedValueOnce({
+            positions: new Map([
+              [
+                "0x1111111111111111111111111111111111111111" as Address,
+                {
+                  token:
+                    "0x1111111111111111111111111111111111111111" as Address,
+                  balance: 300n,
+                  value: 90000n,
+                  unrealizedPnL: 0n,
+                },
+              ],
+              [
+                "0x2222222222222222222222222222222222222222" as Address,
+                {
+                  token:
+                    "0x2222222222222222222222222222222222222222" as Address,
+                  balance: 100n,
+                  value: 10000n,
+                  unrealizedPnL: 0n,
+                },
+              ],
+            ]),
+            totalValue: 100000n,
+            unrealizedPnL: 0n,
+          })
+          .mockResolvedValueOnce({
+            positions: new Map([
+              [
+                "0x1111111111111111111111111111111111111111" as Address,
+                {
+                  token:
+                    "0x1111111111111111111111111111111111111111" as Address,
+                  balance: 200n,
+                  value: 60000n,
+                  unrealizedPnL: 0n,
+                },
+              ],
+              [
+                "0x2222222222222222222222222222222222222222" as Address,
+                {
+                  token:
+                    "0x2222222222222222222222222222222222222222" as Address,
+                  balance: 100n,
+                  value: 40000n,
+                  unrealizedPnL: 0n,
+                },
+              ],
+            ]),
+            totalValue: 100000n,
+            unrealizedPnL: 0n,
+          });
+
+        vi.spyOn(bot, "sell").mockResolvedValue({
+          id: "sell-1",
+          symbol: "ETH/USDC",
+          side: "sell",
+          type: "market",
+          price: 3000,
+          size: 100,
+          status: "filled",
+        });
+
+        const result = await bot.rebalance({
+          "ETH/USDC": 0.6,
+          "BTC/USDC": 0.4,
+        });
+
         expect(result.executed).toBe(true);
-        expect(result.newAllocation).toEqual(targets);
+        expect(result.trades).toEqual([
+          { symbol: "ETH/USDC", side: "sell", amount: 100 },
+          { symbol: "BTC/USDC", side: "buy", amount: 10 },
+        ]);
+      });
+
+      it("should buy underweight assets", async () => {
+        const tracker = (
+          bot as unknown as {
+            positionTracker: { getPortfolio: () => Promise<Portfolio> };
+          }
+        ).positionTracker;
+        vi.spyOn(tracker, "getPortfolio")
+          .mockResolvedValueOnce({
+            positions: new Map([
+              [
+                "0x1111111111111111111111111111111111111111" as Address,
+                {
+                  token:
+                    "0x1111111111111111111111111111111111111111" as Address,
+                  balance: 100n,
+                  value: 20000n,
+                  unrealizedPnL: 0n,
+                },
+              ],
+              [
+                "0x2222222222222222222222222222222222222222" as Address,
+                {
+                  token:
+                    "0x2222222222222222222222222222222222222222" as Address,
+                  balance: 200n,
+                  value: 80000n,
+                  unrealizedPnL: 0n,
+                },
+              ],
+            ]),
+            totalValue: 100000n,
+            unrealizedPnL: 0n,
+          })
+          .mockResolvedValueOnce({
+            positions: new Map([
+              [
+                "0x1111111111111111111111111111111111111111" as Address,
+                {
+                  token:
+                    "0x1111111111111111111111111111111111111111" as Address,
+                  balance: 300n,
+                  value: 60000n,
+                  unrealizedPnL: 0n,
+                },
+              ],
+              [
+                "0x2222222222222222222222222222222222222222" as Address,
+                {
+                  token:
+                    "0x2222222222222222222222222222222222222222" as Address,
+                  balance: 100n,
+                  value: 40000n,
+                  unrealizedPnL: 0n,
+                },
+              ],
+            ]),
+            totalValue: 100000n,
+            unrealizedPnL: 0n,
+          });
+
+        vi.spyOn(bot, "buy").mockResolvedValue({
+          id: "buy-1",
+          symbol: "ETH/USDC",
+          side: "buy",
+          type: "market",
+          price: 3000,
+          size: 100,
+          status: "filled",
+        });
+
+        const result = await bot.rebalance({
+          "ETH/USDC": 0.6,
+          "BTC/USDC": 0.4,
+        });
+
+        expect(result.executed).toBe(true);
+        expect(result.trades).toEqual([
+          { symbol: "ETH/USDC", side: "buy", amount: 100 },
+          { symbol: "BTC/USDC", side: "sell", amount: 100 },
+        ]);
       });
     });
 
@@ -865,6 +1362,79 @@ describe("Mach1Bot", () => {
         expect(typeof heatmap.display).toBe("function");
         expect(typeof heatmap.display()).toBe("string");
       });
+
+      it("should return deterministic empty portfolio heatmap", async () => {
+        const tracker = (
+          bot as unknown as {
+            positionTracker: { getPortfolio: () => Promise<Portfolio> };
+          }
+        ).positionTracker;
+        vi.spyOn(tracker, "getPortfolio").mockResolvedValue({
+          positions: new Map(),
+          totalValue: 0n,
+          unrealizedPnL: 0n,
+        });
+        vi.spyOn(bot, "getPerformanceStats").mockResolvedValue({
+          sharpeRatio: 0,
+          maxDrawdown: 0,
+        });
+
+        const heatmap = await bot.getRiskHeatmap();
+
+        expect(heatmap.display()).toBe(
+          [
+            "Risk Heatmap",
+            "Exposure: 0.00%",
+            "Drawdown: 0.00%",
+            "Concentration: 0.00%",
+            "Correlation: 0.00%",
+            "Overall: LOW",
+          ].join("\n"),
+        );
+      });
+
+      it("should highlight concentrated portfolios", async () => {
+        const tracker = (
+          bot as unknown as {
+            positionTracker: { getPortfolio: () => Promise<Portfolio> };
+          }
+        ).positionTracker;
+        vi.spyOn(tracker, "getPortfolio").mockResolvedValue({
+          positions: new Map([
+            [
+              "0x1111111111111111111111111111111111111111" as Address,
+              {
+                token: "0x1111111111111111111111111111111111111111" as Address,
+                balance: 250n,
+                value: 85000n,
+                unrealizedPnL: 0n,
+              },
+            ],
+            [
+              "0x2222222222222222222222222222222222222222" as Address,
+              {
+                token: "0x2222222222222222222222222222222222222222" as Address,
+                balance: 50n,
+                value: 15000n,
+                unrealizedPnL: 0n,
+              },
+            ],
+          ]),
+          totalValue: 100000n,
+          unrealizedPnL: 0n,
+        });
+        vi.spyOn(bot, "getPerformanceStats").mockResolvedValue({
+          sharpeRatio: 1,
+          maxDrawdown: 0.1,
+        });
+
+        const heatmap = await bot.getRiskHeatmap();
+        const display = heatmap.display();
+
+        expect(display).toContain("ETH/USDC exposure 85.00% HIGH");
+        expect(display).toContain("Concentration 74.50% HIGH");
+        expect(display).toContain("Overall: HIGH");
+      });
     });
   });
 
@@ -872,6 +1442,174 @@ describe("Mach1Bot", () => {
     describe("emergencyStop", () => {
       it("should execute emergency stop without error", async () => {
         await expect(bot.emergencyStop()).resolves.toBeUndefined();
+      });
+
+      it("stops live coordinator and does not leak active intervals across stop/start", async () => {
+        vi.useFakeTimers();
+        const testBot = new Mach1Bot({
+          ...mockConfig,
+          enableEnhancedFeatures: false,
+        });
+        const strategyCallback = vi.fn().mockResolvedValue(undefined);
+
+        testBot.strategy(strategyCallback);
+        (
+          testBot as unknown as {
+            getOrCreateLiveEngine: () => Promise<unknown>;
+          }
+        ).getOrCreateLiveEngine = vi.fn().mockResolvedValue({});
+        vi.spyOn(
+          testBot as unknown as { getRealMarketData: () => Promise<unknown> },
+          "getRealMarketData",
+        ).mockResolvedValue({
+          "ETH/USDC": {
+            open: 1,
+            high: 1,
+            low: 1,
+            close: 1,
+            volume: 1,
+            rsi: 50,
+            macdSignal: 0,
+            timestamp: 1,
+          },
+        });
+
+        try {
+          await testBot.goLive({ strategyExecutionIntervalMs: 50 });
+          expect(strategyCallback).toHaveBeenCalledTimes(1);
+          expect(
+            (
+              testBot as unknown as {
+                activeIntervals: Set<NodeJS.Timeout>;
+              }
+            ).activeIntervals.size,
+          ).toBe(0);
+
+          await testBot.emergencyStop();
+          await vi.advanceTimersByTimeAsync(120);
+          expect(strategyCallback).toHaveBeenCalledTimes(1);
+          expect(
+            (
+              testBot as unknown as {
+                strategyExecutionCoordinator?: unknown;
+              }
+            ).strategyExecutionCoordinator,
+          ).toBeUndefined();
+          expect(
+            (
+              testBot as unknown as {
+                activeIntervals: Set<NodeJS.Timeout>;
+              }
+            ).activeIntervals.size,
+          ).toBe(0);
+
+          await testBot.goLive({ strategyExecutionIntervalMs: 50 });
+          expect(strategyCallback).toHaveBeenCalledTimes(2);
+          await vi.advanceTimersByTimeAsync(120);
+          expect(strategyCallback).toHaveBeenCalledTimes(4);
+
+          await testBot.emergencyStop();
+          expect(
+            (
+              testBot as unknown as {
+                activeIntervals: Set<NodeJS.Timeout>;
+              }
+            ).activeIntervals.size,
+          ).toBe(0);
+        } finally {
+          await testBot.emergencyStop();
+          vi.useRealTimers();
+        }
+      });
+    });
+
+    describe("isolated perps liquidation pause", () => {
+      it("pauses live trading on critical liquidation risk events", async () => {
+        const onTradingPaused = vi.fn();
+        const isolatedBot = new Mach1Bot({
+          ...mockConfig,
+          mode: "live",
+          marketMode: "isolated_perps",
+          perps: {
+            marginMode: "isolated",
+            leverage: 5,
+            liquidationThresholdPercent: 10,
+          },
+          onTradingPaused,
+          enableEnhancedFeatures: false,
+        });
+        const coordinatorStop = vi.fn().mockResolvedValue(undefined);
+        const engineStop = vi.fn().mockResolvedValue(undefined);
+
+        (
+          isolatedBot as unknown as {
+            strategyExecutionCoordinator?: { stop: () => Promise<void> };
+            liveEngine?: { stopLiveTrading: () => Promise<void> };
+            riskManager: { emit: (eventName: string, event: unknown) => void };
+            liquidationRiskPaused: boolean;
+            placeBotOrder: (order: OrderRequest) => Promise<unknown>;
+          }
+        ).strategyExecutionCoordinator = {
+          stop: coordinatorStop,
+        };
+        (
+          isolatedBot as unknown as {
+            liveEngine?: {
+              stopLiveTrading: () => Promise<void>;
+              getAccountState: () => undefined;
+            };
+          }
+        ).liveEngine = {
+          stopLiveTrading: engineStop,
+          getAccountState: () => undefined,
+        };
+
+        (
+          isolatedBot as unknown as {
+            riskManager: { emit: (eventName: string, event: unknown) => void };
+          }
+        ).riskManager.emit("riskEvent", {
+          type: "liquidation_triggered",
+          severity: "critical",
+          message: "critical liquidation distance",
+          data: {},
+          timestamp: Date.now(),
+        });
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        await vi.waitFor(() => {
+          expect(coordinatorStop).toHaveBeenCalledTimes(1);
+          expect(engineStop).toHaveBeenCalledTimes(1);
+          expect(onTradingPaused).toHaveBeenCalledTimes(1);
+        });
+        expect(
+          (
+            isolatedBot as unknown as {
+              liquidationRiskPaused: boolean;
+            }
+          ).liquidationRiskPaused,
+        ).toBe(true);
+        await expect(
+          (
+            isolatedBot as unknown as {
+              placeBotOrder: (order: OrderRequest) => Promise<unknown>;
+            }
+          ).placeBotOrder({
+            baseToken: "0x1111111111111111111111111111111111111111",
+            quoteToken: "0x4444444444444444444444444444444444444444",
+            isBuy: true,
+            direction: "long",
+            price: 10000n,
+            quantity: 10n,
+            leverage: 2,
+          }),
+        ).rejects.toThrow(
+          "Live trading paused due to critical liquidation risk. Explicit operator action required before resuming.",
+        );
+
+        await isolatedBot.emergencyStop();
       });
     });
   });

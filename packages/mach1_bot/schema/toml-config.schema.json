@@ -39,9 +39,6 @@
                     "description": "Private key used by the bot."
                 }
             },
-            "required": [
-                "private_key"
-            ],
             "additionalProperties": false
         },
         "trading": {
@@ -53,9 +50,18 @@
                     "enum": [
                         "backtest",
                         "simulation",
-                        "live"
+                        "live",
+                        "paper"
                     ],
-                    "description": "Trading mode."
+                    "description": "Trading mode. \"paper\" accepted as input alias and normalized to \"simulation\"."
+                },
+                "market_mode": {
+                    "type": "string",
+                    "enum": [
+                        "spot",
+                        "isolated_perps"
+                    ],
+                    "description": "Live market surface. Use \"isolated_perps\" for isolated-margin perps discovery."
                 },
                 "base_currency": {
                     "type": "string"
@@ -77,6 +83,29 @@
                 "max_position_size",
                 "max_daily_loss"
             ],
+            "additionalProperties": false
+        },
+        "perps": {
+            "type": "object",
+            "description": "Optional isolated perps settings. Only supported when trading.market_mode is isolated_perps.",
+            "properties": {
+                "margin_mode": {
+                    "type": "string",
+                    "enum": [
+                        "isolated",
+                        "cross"
+                    ]
+                },
+                "leverage": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                },
+                "liquidation_threshold_percent": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "exclusiveMaximum": 100
+                }
+            },
             "additionalProperties": false
         },
         "strategy": {
@@ -132,10 +161,6 @@
                     "description": "Chain ID for the selected network."
                 }
             },
-            "required": [
-                "rpc_url",
-                "chain_id"
-            ],
             "additionalProperties": false
         },
         "ai_helper": {
@@ -169,10 +194,82 @@
         }
     },
     "required": [
-        "wallet",
         "trading",
-        "strategy",
-        "network"
+        "strategy"
     ],
-    "additionalProperties": false
+    "additionalProperties": false,
+    "allOf": [
+        {
+            "if": {
+                "required": [
+                    "trading"
+                ],
+                "properties": {
+                    "trading": {
+                        "required": [
+                            "mode"
+                        ],
+                        "properties": {
+                            "mode": {
+                                "const": "live"
+                            }
+                        }
+                    }
+                }
+            },
+            "then": {
+                "required": [
+                    "wallet",
+                    "network"
+                ],
+                "properties": {
+                    "wallet": {
+                        "required": [
+                            "private_key"
+                        ]
+                    },
+                    "network": {
+                        "required": [
+                            "rpc_url"
+                        ]
+                    }
+                }
+            }
+        },
+        {
+            "if": {
+                "required": [
+                    "trading"
+                ],
+                "properties": {
+                    "trading": {
+                        "required": [
+                            "mode",
+                            "market_mode"
+                        ],
+                        "properties": {
+                            "mode": {
+                                "const": "live"
+                            },
+                            "market_mode": {
+                                "const": "isolated_perps"
+                            }
+                        }
+                    }
+                }
+            },
+            "then": {
+                "required": [
+                    "perps"
+                ],
+                "properties": {
+                    "perps": {
+                        "required": [
+                            "leverage"
+                        ]
+                    }
+                }
+            }
+        }
+    ]
 }

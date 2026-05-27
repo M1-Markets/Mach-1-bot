@@ -275,7 +275,8 @@ export class LiveTradingEngine extends BaseTradingMode {
     });
 
     // Create or use provided managers
-    this.marketManager = marketManager || new MarketManager();
+    this.marketManager = marketManager || new MarketManager({ mode: "live" });
+    this.marketManager.setMode("live");
     this.marketManager.setDefaultOHLCVInterval(this.ohlcvInterval);
     this._realtimeManagerProvided = !!realtimeManager;
 
@@ -285,7 +286,15 @@ export class LiveTradingEngine extends BaseTradingMode {
       new RealtimeManager(
         this.marketManager,
         new OrderManager(this.marketManager),
+        undefined,
+        {
+          mode: "live",
+          rng: this.rng,
+          clock: this.clock,
+          orderEventEmitter: this.orderLifecycleStore.getEventEmitter(),
+        },
       );
+    this.realtimeManager.setMode("live");
   }
 
   /**
@@ -303,17 +312,25 @@ export class LiveTradingEngine extends BaseTradingMode {
       // Connect realtime manager with SDK
       const sdk = this.monacoSDK.getSDK();
       this.marketManager.setSDK(sdk);
+      this.marketManager.setMode("live");
       this.marketManager.setDefaultOHLCVInterval(this.ohlcvInterval);
 
       if (this._realtimeManagerProvided) {
         // Honour the injected manager: wire SDK in rather than replacing.
         this.realtimeManager.setSDK(sdk);
+        this.realtimeManager.setMode("live");
       } else {
         // Internal manager: replace with a fully-configured live instance.
         this.realtimeManager = new RealtimeManager(
           this.marketManager,
           new OrderManager(this.marketManager),
           sdk,
+          {
+            mode: "live",
+            rng: this.rng,
+            clock: this.clock,
+            orderEventEmitter: this.orderLifecycleStore.getEventEmitter(),
+          },
         );
       }
       await this.realtimeManager.connect();
@@ -1251,6 +1268,7 @@ export class LiveTradingEngine extends BaseTradingMode {
           remainingQuantity: orderData.remainingQuantity,
           averageFillPrice: orderData.executionPrice ?? orderData.order.price,
           fees: orderData.gasUsed ?? 0n,
+          feeCurrency: orderData.order.quoteToken,
           timestamp: Date.now(),
         });
       } else {

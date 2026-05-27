@@ -3,6 +3,10 @@
  */
 
 import type { ChainNetwork, MonacoEnvironment } from "./common";
+import type {
+  IsolatedPerpsConfig,
+  LiveTradingMarketMode,
+} from "./config";
 
 export type { CompletedTrade } from "./analytics";
 // Re-export for backward compatibility
@@ -15,6 +19,8 @@ export interface BotConfig {
 
   // Execution mode
   mode?: "backtest" | "simulation" | "live";
+  marketMode?: LiveTradingMarketMode;
+  perps?: IsolatedPerpsConfig;
 
   // Monaco Protocol settings
   network?: ChainNetwork;
@@ -29,6 +35,7 @@ export interface BotConfig {
   // Risk settings
   defaultSlippage?: number;
   stopLossPercent?: number;
+  takeProfitPercent?: number;
 
   // Rate limiting configuration
   rateLimitConfig?: Partial<RateLimitConfig>;
@@ -42,15 +49,15 @@ export interface BotConfig {
   // Optional settings
   chainId?: number;
   logLevel?:
-    | "DEBUG"
-    | "INFO"
-    | "WARN"
-    | "ERROR"
-    | "debug"
-    | "info"
-    | "warn"
-    | "error"
-    | "none";
+  | "DEBUG"
+  | "INFO"
+  | "WARN"
+  | "ERROR"
+  | "debug"
+  | "info"
+  | "warn"
+  | "error"
+  | "none";
 
   // Enhanced features
   enableEnhancedFeatures?: boolean;
@@ -117,6 +124,8 @@ export interface LiveOptions {
   confirmations?: number;
   gasPrice?: string;
   strategyExecutionIntervalMs?: number;
+  marketMode?: LiveTradingMarketMode;
+  perps?: IsolatedPerpsConfig;
 }
 
 export interface MarketData {
@@ -182,6 +191,8 @@ export interface BacktestResults {
   plotEquityCurve(): Promise<void>;
   plotDrawdown(): Promise<void>;
   exportTrades(filename: string): Promise<void>;
+  getEquityCurveData(): Array<{ timestamp: number; equity: number }>;
+  getDrawdownData(): Array<{ timestamp: number; drawdown: number }>;
 }
 
 export interface RiskLimits {
@@ -211,10 +222,14 @@ export interface BotOrder {
   id: string;
   symbol: string;
   side: "buy" | "sell";
+  direction?: "long" | "short";
   type: string;
   price: number;
   size: number;
   status: string;
+  leverage?: number;
+  reduceOnly?: boolean;
+  closeOnly?: boolean;
 }
 
 export interface DCAStrategy {

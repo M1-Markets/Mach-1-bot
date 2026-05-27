@@ -40,6 +40,7 @@ import {
   TomlConfig,
   validateDryRun,
 } from "@/cli/utils";
+import { writeConfigToFile } from "@/cli/utils/config-utils";
 import { resolveEnvironmentOption } from "@/cli/utils/monaco-session";
 import { Mach1Bot } from "@/domains/bot/mach1-bot";
 import type { StrategyFilter } from "@/domains/strategies/management/strategy-registry";
@@ -542,17 +543,17 @@ export const registerCliCommands = (target: Command): Command => {
             : {}),
         };
 
-        const { stringify } = await import("smol-toml");
-        const tomlContent = stringify(config);
-        fs.writeFileSync(configFile, tomlContent);
+        await writeConfigToFile(config, configFile);
+
+        const network = config.network;
 
         console.log(pc.green(`\n✅ Configuration file created: ${configFile}`));
         console.log(pc.cyan("📋 Configuration summary:"));
         console.log(pc.gray(`   Mode: ${pc.bold(config.trading.mode)}`));
-        console.log(pc.gray(`   Network: ${pc.bold(config.network.rpc_url)}`));
+        console.log(pc.gray(`   Network: ${pc.bold(network?.rpc_url ?? "")}`));
         console.log(
           pc.gray(
-            `   Chain ID: ${pc.bold(config.network.chain_id.toString())}`,
+            `   Chain ID: ${pc.bold((network?.chain_id ?? "").toString())}`,
           ),
         );
         console.log(

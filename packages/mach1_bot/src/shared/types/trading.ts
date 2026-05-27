@@ -18,6 +18,12 @@ export interface PositionData {
   unrealizedPnL: bigint;
   realizedPnL: bigint;
   totalFees: bigint;
+  collateral?: bigint;
+  maintenanceMargin?: bigint;
+  liquidationPrice?: bigint;
+  side?: "long" | "short";
+  fundingRate?: bigint;
+  accruedFunding?: bigint;
   lastUpdated: number;
 }
 
@@ -28,6 +34,7 @@ export interface TradeRecord {
   price: bigint;
   quantity: bigint;
   fees: bigint;
+  feeCurrency?: Address;
   timestamp: number;
   blockNumber?: number;
   transactionHash?: string;
@@ -84,11 +91,11 @@ export interface RiskCheckResult {
 
 export interface RiskBreach {
   type:
-    | "position_limit"
-    | "daily_loss"
-    | "max_drawdown"
-    | "correlation"
-    | "leverage";
+  | "position_limit"
+  | "daily_loss"
+  | "max_drawdown"
+  | "correlation"
+  | "leverage";
   severity: "warning" | "critical";
   message: string;
   currentValue: number;

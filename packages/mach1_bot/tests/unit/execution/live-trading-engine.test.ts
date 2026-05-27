@@ -5,6 +5,9 @@ import { PriceUnavailableError } from "@/shared/errors";
 
 vi.mock("@/domains/trading/market-manager", () => ({
   MarketManager: class {
+    setMode(): void {
+      return;
+    }
     setDefaultOHLCVInterval(): void {
       return;
     }
@@ -23,6 +26,9 @@ vi.mock("@/domains/trading/order-manager", () => ({
 
 vi.mock("@/domains/trading/realtime-manager", () => ({
   RealtimeManager: class {
+    setMode(): void {
+      return;
+    }
     setSDK(): void {
       return;
     }
@@ -219,6 +225,30 @@ describe("LiveTradingEngine order placement retries", () => {
 
     await expect(engine.placeOrder(order)).rejects.toBeInstanceOf(
       PriceUnavailableError,
+    );
+    expect(placeOrder).not.toHaveBeenCalled();
+  });
+
+  it("blocks order placement when Monaco auth pauses trading", async () => {
+    const engine = makeEngine();
+    const placeOrder = vi.fn();
+
+    (
+      engine as unknown as {
+        monacoSDK: {
+          isInitialized: () => boolean;
+          isPaused: () => boolean;
+          placeOrder: typeof placeOrder;
+        };
+      }
+    ).monacoSDK = {
+      isInitialized: () => true,
+      isPaused: () => true,
+      placeOrder,
+    };
+
+    await expect(engine.placeOrder(order)).rejects.toThrow(
+      "Trading is paused. Cannot place orders.",
     );
     expect(placeOrder).not.toHaveBeenCalled();
   });
@@ -803,5 +833,39 @@ describe("LiveTradingEngine order placement retries", () => {
       status: "rejected",
     });
     expect(events).toEqual(["submitted", "rejected"]);
+  });
+
+  it("emergencyStop cancels pending orders", async () => {
+    const engine = makeEngine();
+    const cancelOrder = vi.fn().mockResolvedValue(undefined);
+    const placeOrder = vi.fn().mockResolvedValue({
+      orderId: "sdk-order-pending",
+      status: "pending",
+      filledQuantity: 0n,
+      remainingQuantity: order.quantity,
+    });
+
+    (
+      engine as unknown as {
+        monacoSDK: {
+          isInitialized: () => boolean;
+          isPaused: () => boolean;
+          placeOrder: typeof placeOrder;
+          cancelOrder: typeof cancelOrder;
+        };
+      }
+    ).monacoSDK = {
+      isInitialized: () => true,
+      isPaused: () => false,
+      placeOrder,
+      cancelOrder,
+    };
+
+    const placed = await engine.placeOrder(order);
+
+    await engine.emergencyStop();
+
+    expect(placed.status).toBe("pending");
+    expect(cancelOrder).toHaveBeenCalledWith("sdk-order-pending");
   });
 });

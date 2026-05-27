@@ -51,6 +51,10 @@ export interface AiOrderSnapshot extends AiStrategySnapshot {
     quantity?: number;
     price?: number;
     orderType?: "market" | "limit" | "stop" | "stop_limit";
+    direction?: "long" | "short";
+    leverage?: number;
+    reduceOnly?: boolean;
+    closeOnly?: boolean;
     confidence?: number;
     reason?: string;
     metadata?: Record<string, unknown>;

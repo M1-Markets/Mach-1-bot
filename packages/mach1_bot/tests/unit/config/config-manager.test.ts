@@ -1,3 +1,6 @@
+import * as fs from "fs/promises";
+import * as os from "os";
+import * as path from "path";
 import { ConfigManager } from "@/domains/configuration/config-manager";
 import { Address } from "@/shared/types/common";
 
@@ -37,6 +40,7 @@ describe("ConfigManager", () => {
 
     it("should validate required fields", () => {
       const invalidConfig = {
+        mode: "live" as const,
         privateKey: "", // Missing
         rpcUrl: "https://test-rpc.sei.io",
       };
@@ -58,8 +62,82 @@ describe("ConfigManager", () => {
 
       const result = configManager.loadConfig(minimalConfig);
 
-      expect(result.mode).toBe("paper"); // Default value
+      expect(result.mode).toBe("simulation"); // Default value
       expect(result.maxRetries).toBe(3); // Default value
+      expect(result.marketMode).toBe("spot");
+    });
+
+    it("should normalize paper mode to simulation", () => {
+      const result = configManager.loadConfig({
+        privateKey: "0x" + "1".repeat(64),
+        rpcUrl: "https://test-rpc.sei.io",
+        mode: "paper" as never,
+        contractAddresses: {
+          clob: "0x1234567890123456789012345678901234567890" as Address,
+          book: "0x2345678901234567890123456789012345678901" as Address,
+          state: "0x3456789012345678901234567890123456789012" as Address,
+          vault: "0x4567890123456789012345678901234567890123" as Address,
+        },
+      });
+
+      expect(result.mode).toBe("simulation");
+    });
+
+    it("should load backtest config without private key", () => {
+      const result = configManager.loadConfig({
+        mode: "backtest",
+        contractAddresses: {
+          clob: "0x1234567890123456789012345678901234567890" as Address,
+          book: "0x2345678901234567890123456789012345678901" as Address,
+          state: "0x3456789012345678901234567890123456789012" as Address,
+          vault: "0x4567890123456789012345678901234567890123" as Address,
+        },
+      });
+
+      expect(result.mode).toBe("backtest");
+      expect(result.privateKey).toBeUndefined();
+    });
+
+    it("should load simulation config without private key", () => {
+      const result = configManager.loadConfig({
+        mode: "simulation",
+        contractAddresses: {
+          clob: "0x1234567890123456789012345678901234567890" as Address,
+          book: "0x2345678901234567890123456789012345678901" as Address,
+          state: "0x3456789012345678901234567890123456789012" as Address,
+          vault: "0x4567890123456789012345678901234567890123" as Address,
+        },
+      });
+
+      expect(result.mode).toBe("simulation");
+      expect(result.privateKey).toBeUndefined();
+    });
+
+    it("should load live isolated perps config", () => {
+      const result = configManager.loadConfig({
+        mode: "live",
+        marketMode: "isolated_perps",
+        privateKey: "0x" + "1".repeat(64),
+        rpcUrl: "https://test-rpc.sei.io",
+        perps: {
+          marginMode: "isolated",
+          leverage: 4,
+          liquidationThresholdPercent: 15,
+        },
+        contractAddresses: {
+          clob: "0x1234567890123456789012345678901234567890" as Address,
+          book: "0x2345678901234567890123456789012345678901" as Address,
+          state: "0x3456789012345678901234567890123456789012" as Address,
+          vault: "0x4567890123456789012345678901234567890123" as Address,
+        },
+      });
+
+      expect(result.marketMode).toBe("isolated_perps");
+      expect(result.perps).toEqual({
+        marginMode: "isolated",
+        leverage: 4,
+        liquidationThresholdPercent: 15,
+      });
     });
   });
 
@@ -77,6 +155,49 @@ describe("ConfigManager", () => {
       };
 
       expect(() => configManager.validateConfig(validConfig)).not.toThrow();
+    });
+
+    it("should allow backtest config without private key", () => {
+      expect(() =>
+        configManager.validateConfig({
+          mode: "backtest",
+          contractAddresses: {
+            clob: "0x1234567890123456789012345678901234567890" as Address,
+            book: "0x2345678901234567890123456789012345678901" as Address,
+            state: "0x3456789012345678901234567890123456789012" as Address,
+            vault: "0x4567890123456789012345678901234567890123" as Address,
+          },
+        }),
+      ).not.toThrow();
+    });
+
+    it("should allow simulation config without private key", () => {
+      expect(() =>
+        configManager.validateConfig({
+          mode: "simulation",
+          contractAddresses: {
+            clob: "0x1234567890123456789012345678901234567890" as Address,
+            book: "0x2345678901234567890123456789012345678901" as Address,
+            state: "0x3456789012345678901234567890123456789012" as Address,
+            vault: "0x4567890123456789012345678901234567890123" as Address,
+          },
+        }),
+      ).not.toThrow();
+    });
+
+    it("should reject live config without private key", () => {
+      expect(() =>
+        configManager.validateConfig({
+          mode: "live",
+          rpcUrl: "https://test-rpc.sei.io",
+          contractAddresses: {
+            clob: "0x1234567890123456789012345678901234567890" as Address,
+            book: "0x2345678901234567890123456789012345678901" as Address,
+            state: "0x3456789012345678901234567890123456789012" as Address,
+            vault: "0x4567890123456789012345678901234567890123" as Address,
+          },
+        }),
+      ).toThrow("Private key is required");
     });
 
     it("should reject invalid private key format", () => {
@@ -127,6 +248,29 @@ describe("ConfigManager", () => {
 
       expect(() => configManager.validateConfig(invalidConfig)).toThrow(
         "Invalid contract address for clob",
+      );
+    });
+
+    it("should reject cross-margin perps config", () => {
+      expect(() =>
+        configManager.validateConfig({
+          mode: "live",
+          marketMode: "isolated_perps",
+          privateKey: "0x" + "1".repeat(64),
+          rpcUrl: "https://test-rpc.sei.io",
+          perps: {
+            marginMode: "cross",
+            leverage: 3,
+          },
+          contractAddresses: {
+            clob: "0x1234567890123456789012345678901234567890" as Address,
+            book: "0x2345678901234567890123456789012345678901" as Address,
+            state: "0x3456789012345678901234567890123456789012" as Address,
+            vault: "0x4567890123456789012345678901234567890123" as Address,
+          },
+        }),
+      ).toThrow(
+        'Cross-margin perps mode is not supported in this phase; use perps.margin_mode = "isolated"',
       );
     });
   });
@@ -301,7 +445,7 @@ describe("ConfigManager", () => {
   });
 
   describe("saveToFile", () => {
-    it("should save configuration to file", async () => {
+    it("should save configuration to file without secrets by default", async () => {
       const config = {
         privateKey: "0x" + "1".repeat(64),
         rpcUrl: "https://test-rpc.sei.io",
@@ -314,12 +458,39 @@ describe("ConfigManager", () => {
       };
 
       configManager.loadConfig(config);
+      const filePath = path.join(
+        await fs.mkdtemp(path.join(os.tmpdir(), "mach1-config-")),
+        "test-config.json",
+      );
 
-      // This would normally test actual file saving
-      // For now, we test the method exists
-      await expect(
-        configManager.saveToFile("test-config.json"),
-      ).resolves.toBeUndefined();
+      await expect(configManager.saveToFile(filePath)).resolves.toBeUndefined();
+
+      const saved = JSON.parse(await fs.readFile(filePath, "utf8"));
+      expect(saved.privateKey).toBeUndefined();
+    });
+
+    it("should save configuration with secrets when explicitly requested", async () => {
+      const config = {
+        privateKey: "0x" + "1".repeat(64),
+        rpcUrl: "https://test-rpc.sei.io",
+        contractAddresses: {
+          clob: "0x1234567890123456789012345678901234567890" as Address,
+          book: "0x2345678901234567890123456789012345678901" as Address,
+          state: "0x3456789012345678901234567890123456789012" as Address,
+          vault: "0x4567890123456789012345678901234567890123" as Address,
+        },
+      };
+
+      configManager.loadConfig(config);
+      const filePath = path.join(
+        await fs.mkdtemp(path.join(os.tmpdir(), "mach1-config-")),
+        "test-config.json",
+      );
+
+      await configManager.saveToFile(filePath, { includeSecrets: true });
+
+      const saved = JSON.parse(await fs.readFile(filePath, "utf8"));
+      expect(saved.privateKey).toBe(config.privateKey);
     });
   });
 });
