@@ -115,8 +115,20 @@ describe("MarketDataService", () => {
       clock,
     });
 
-    expect(first.buildSimulationMarketData()).toEqual(
-      second.buildSimulationMarketData(),
+    expect(first.buildSimulationMarketData(["ETH/USDC", "BTC/USDC"])).toEqual(
+      second.buildSimulationMarketData(["ETH/USDC", "BTC/USDC"]),
     );
+  });
+
+  it("builds simulated ticks for configured SOL pair", () => {
+    const service = new MarketDataService({
+      rng: createSeededRng(7),
+      clock: { now: () => 1_700_000_000_000 },
+    });
+
+    const marketData = service.buildSimulationMarketData(["SOL/USDC"]);
+
+    expect(Object.keys(marketData)).toEqual(["SOL/USDC"]);
+    expect(marketData["SOL/USDC"]?.close).toBeGreaterThan(0);
   });
 });

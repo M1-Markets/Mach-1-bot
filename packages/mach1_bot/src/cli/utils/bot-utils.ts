@@ -168,10 +168,10 @@ const getPairBalanceSummary = async (
       : `no ${baseSymbol} position`;
     const quoteText = quotePosition
       ? formatTokenBalance(
-        quotePosition.balance,
-        quotePosition.value,
-        quoteSymbol,
-      )
+          quotePosition.balance,
+          quotePosition.value,
+          quoteSymbol,
+        )
       : `no ${quoteSymbol} position`;
 
     return `Balances: ${baseText} | ${quoteText}`;
@@ -486,6 +486,14 @@ function createStrategyUtils(logLevel?: BotConfig["logLevel"]): StrategyUtils {
         return sorted[index];
       },
     },
+    trading: {
+      getPositionQuantity: () => 0,
+      getPendingQuantity: () => 0,
+      getAvailableCapital: () => 0,
+      fullCloseQuantity: () => 0,
+      partialCloseQuantity: () => 0,
+      maxRiskPositionSize: () => 0,
+    },
   };
 }
 
@@ -498,7 +506,7 @@ function extractTradingPairs(
 ): string[] {
   const configuredPairs =
     Array.isArray(strategyConfig?.trading_pairs) &&
-      strategyConfig.trading_pairs.length > 0
+    strategyConfig.trading_pairs.length > 0
       ? strategyConfig.trading_pairs
       : undefined;
 
@@ -570,7 +578,8 @@ async function getAvailableTokenBalance(
     }
   } catch (error) {
     console.warn(
-      `⚠️  Unable to read profile balance for ${tokenSymbol}: ${error instanceof Error ? error.message : String(error)
+      `⚠️  Unable to read profile balance for ${tokenSymbol}: ${
+        error instanceof Error ? error.message : String(error)
       }`,
     );
   }
@@ -589,7 +598,8 @@ async function getAvailableTokenBalance(
         }
       } catch (error) {
         console.warn(
-          `⚠️  Unable to read balance for ${tokenSymbol}: ${error instanceof Error ? error.message : String(error)
+          `⚠️  Unable to read balance for ${tokenSymbol}: ${
+            error instanceof Error ? error.message : String(error)
           }`,
         );
       }
@@ -657,7 +667,7 @@ async function validateStrategyBalances(
       const baseBalance = await getAvailableTokenBalance(
         pairDetails.base_token,
         pairDetails.base_asset_id ||
-        getStringProp(pairDetailsRecord, "base_asset_id"),
+          getStringProp(pairDetailsRecord, "base_asset_id"),
         pairDetails.base_decimals,
         profileBalances,
         sdk.profile,
@@ -666,7 +676,7 @@ async function validateStrategyBalances(
       const quoteBalance = await getAvailableTokenBalance(
         pairDetails.quote_token,
         pairDetails.quote_asset_id ||
-        getStringProp(pairDetailsRecord, "quote_asset_id"),
+          getStringProp(pairDetailsRecord, "quote_asset_id"),
         pairDetails.quote_decimals,
         profileBalances,
         sdk.profile,
@@ -701,7 +711,8 @@ async function validateStrategyBalances(
       await monaco.shutdown();
     } catch (error) {
       console.warn(
-        `⚠️  Failed to shut down Monaco SDK after balance validation: ${error instanceof Error ? error.message : String(error)
+        `⚠️  Failed to shut down Monaco SDK after balance validation: ${
+          error instanceof Error ? error.message : String(error)
         }`,
       );
     }
@@ -776,11 +787,11 @@ export function convertToBotConfig(tomlConfig: TomlConfig): BotConfig {
     marketMode: tomlConfig.trading?.market_mode,
     perps: tomlConfig.perps
       ? {
-        marginMode: tomlConfig.perps.margin_mode,
-        leverage: tomlConfig.perps.leverage,
-        liquidationThresholdPercent:
-          tomlConfig.perps.liquidation_threshold_percent,
-      }
+          marginMode: tomlConfig.perps.margin_mode,
+          leverage: tomlConfig.perps.leverage,
+          liquidationThresholdPercent:
+            tomlConfig.perps.liquidation_threshold_percent,
+        }
       : undefined,
   });
 
@@ -793,11 +804,11 @@ export function convertToBotConfig(tomlConfig: TomlConfig): BotConfig {
     marketMode: tomlConfig.trading?.market_mode,
     perps: tomlConfig.perps
       ? {
-        marginMode: tomlConfig.perps.margin_mode,
-        leverage: tomlConfig.perps.leverage,
-        liquidationThresholdPercent:
-          tomlConfig.perps.liquidation_threshold_percent,
-      }
+          marginMode: tomlConfig.perps.margin_mode,
+          leverage: tomlConfig.perps.leverage,
+          liquidationThresholdPercent:
+            tomlConfig.perps.liquidation_threshold_percent,
+        }
       : undefined,
   });
 

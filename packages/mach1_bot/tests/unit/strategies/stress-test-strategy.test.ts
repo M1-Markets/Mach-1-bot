@@ -1,6 +1,6 @@
 import {
-  StressTestStrategy,
   type StressTestParameters,
+  StressTestStrategy,
 } from "@/domains/strategies/builtin/stress-test-strategy";
 import type { StrategyContext } from "@/domains/strategies/core/i-strategy";
 

@@ -204,10 +204,7 @@ export class RealtimeManager {
       logger.debug("WebSocket connection established");
     } catch (error) {
       this.lastConnectionError = error as Error;
-      throw new ConnectionError(
-        "Monaco SDK WebSocket client",
-        error as Error,
-      );
+      throw new ConnectionError("Monaco SDK WebSocket client", error as Error);
     }
   }
 
@@ -787,8 +784,14 @@ export class RealtimeManager {
       ...new Set([
         ...this.subscriptions.keys(),
         ...this.eventListeners.keys(),
-        ...Array.from(this.activeOrderbookUnsubs.keys(), (key) => `orderbook_ws:${key}`),
-        ...Array.from(this.activeOHLCVUnsubs.keys(), (key) => `ohlcv_ws:${key}`),
+        ...Array.from(
+          this.activeOrderbookUnsubs.keys(),
+          (key) => `orderbook_ws:${key}`,
+        ),
+        ...Array.from(
+          this.activeOHLCVUnsubs.keys(),
+          (key) => `ohlcv_ws:${key}`,
+        ),
       ]),
     ].sort();
 

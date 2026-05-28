@@ -1,6 +1,3 @@
-import { StatusCodes } from "http-status-codes";
-import { createPublicClient, http, type WalletClient } from "viem";
-import { sei, seiTestnet } from "viem/chains";
 import type {
   CancelOrderResponse,
   ClosePositionRequest,
@@ -25,6 +22,9 @@ import type {
   SimulateOrderRiskResponse,
   TimeInForce,
 } from "@0xmonaco/types";
+import { StatusCodes } from "http-status-codes";
+import { createPublicClient, http, type WalletClient } from "viem";
+import { sei, seiTestnet } from "viem/chains";
 import { ApplicationsAPIImpl } from "./api/applications/index";
 import { AuthAPIImpl } from "./api/auth/index";
 import { FeesAPIImpl } from "./api/fees/index";
@@ -97,7 +97,9 @@ export interface IsolatedMarginPerpsAPI {
   listMarginAccounts(
     params?: ListMarginAccountsParams,
   ): Promise<ListMarginAccountsResponse>;
-  getMarginAccountSummary(marginAccountId: string): Promise<MarginAccountSummary>;
+  getMarginAccountSummary(
+    marginAccountId: string,
+  ): Promise<MarginAccountSummary>;
   getAvailableCollateral(
     params?: GetAvailableCollateralParams,
   ): Promise<GetAvailableCollateralResponse>;

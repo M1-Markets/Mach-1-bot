@@ -9,7 +9,6 @@ import { vi } from "vitest";
 import {
   convertToBotConfig,
   displayConfigSummary,
-  isVerboseLogLevel,
   parseTomlConfig,
   TomlConfig,
   tomlConfigSchema,

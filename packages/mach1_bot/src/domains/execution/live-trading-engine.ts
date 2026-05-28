@@ -8,8 +8,9 @@ import type {
 } from "mach1_sdk";
 import { MonacoCoreSDK } from "mach1_sdk";
 import { parseUnits } from "viem";
-import { BaseTradingMode } from "@/domains/execution/trading-mode";
 import { OrderLifecycleStore } from "@/domains/execution/order-lifecycle-store";
+import { StrategyExecutionCoordinator } from "@/domains/execution/strategy-execution-coordinator";
+import { BaseTradingMode } from "@/domains/execution/trading-mode";
 import { MarketDataService } from "@/domains/trading/market-data-service";
 import { MarketManager } from "@/domains/trading/market-manager";
 import { OrderManager } from "@/domains/trading/order-manager";
@@ -18,6 +19,7 @@ import {
   type RiskCheckResult,
   RiskManager,
 } from "@/domains/trading/risk-manager";
+import { PriceUnavailableError } from "@/shared/errors";
 import type { LiveTradingConfig } from "@/shared/types";
 import {
   Address,
@@ -32,19 +34,18 @@ import {
   TradingPair,
   UnsubscribeFunction,
 } from "@/shared/types";
-import { createLogger } from "@/shared/utils/logger";
-import { retryWithBackoff } from "@/shared/utils/rate-limiter";
-import { getStringProp, isRecord } from "@/shared/utils/record-utils";
-import { StrategyExecutionCoordinator } from "@/domains/execution/strategy-execution-coordinator";
-import { PriceUnavailableError } from "@/shared/errors";
 import {
-  createIdGenerator,
   type Clock,
+  createIdGenerator,
   type IdGenerator,
   type Rng,
   realClock,
   realRng,
 } from "@/shared/utils/determinism";
+import { createLogger } from "@/shared/utils/logger";
+import { retryWithBackoff } from "@/shared/utils/rate-limiter";
+import { getStringProp, isRecord } from "@/shared/utils/record-utils";
+import { calculateScaledNotionalValue } from "@/shared/utils/trading-utils";
 
 const logger = createLogger("LiveTradingEngine");
 
@@ -366,6 +367,7 @@ export class LiveTradingEngine extends BaseTradingMode {
         order.quoteToken,
       ),
     };
+    const pairMetadata = this.resolveLivePairMetadata(pair);
     this.orderLifecycleStore.createSubmittedOrder({
       localId: orderId,
       strategyId: order.strategyId,
@@ -493,8 +495,10 @@ export class LiveTradingEngine extends BaseTradingMode {
         quantity: order.quantity.toString(),
       });
 
+      const sdkOrder = this.toSdkSpotOrder(order, pairMetadata);
+
       const result = await retryWithBackoff(
-        async () => this.monacoSDK.placeOrder(order),
+        async () => this.monacoSDK.placeOrder(sdkOrder),
         {
           maxRetries: this.config.maxRetries,
           baseDelayMs: this.config.retryDelay,
@@ -515,22 +519,27 @@ export class LiveTradingEngine extends BaseTradingMode {
       if (!orderData) {
         throw new Error(`Order data not found for ${orderId}`);
       }
-      orderData.status = result.status;
+      const normalizedResult = this.fromSdkSpotOrderResult(
+        result,
+        pairMetadata,
+      );
+      orderData.status = normalizedResult.status;
       orderData.engineOrderId = result.orderId;
       orderData.exchangeOrderId = result.orderId;
-      orderData.filledQuantity = result.filledQuantity;
-      orderData.remainingQuantity = result.remainingQuantity;
-      this.orderLifecycleStore.applyResult(orderId, result, {
+      orderData.filledQuantity = normalizedResult.filledQuantity;
+      orderData.remainingQuantity = normalizedResult.remainingQuantity;
+      this.orderLifecycleStore.applyResult(orderId, normalizedResult, {
         engineOrderId: result.orderId,
         exchangeOrderId: result.orderId,
-        averageFillPrice: result.filledQuantity > 0n ? order.price : undefined,
+        averageFillPrice:
+          normalizedResult.filledQuantity > 0n ? order.price : undefined,
         timestamp: Date.now(),
       });
 
       // Track statistics
-      if (result.status === "filled") {
+      if (normalizedResult.status === "filled") {
         this.successfulTrades++;
-        this.logTrade(order, result);
+        this.logTrade(order, normalizedResult);
       }
 
       logger.debug("Order placed successfully", {
@@ -540,7 +549,7 @@ export class LiveTradingEngine extends BaseTradingMode {
       });
 
       return {
-        ...result,
+        ...normalizedResult,
         orderId,
       };
     } catch (error) {
@@ -612,12 +621,18 @@ export class LiveTradingEngine extends BaseTradingMode {
 
   async getPosition(pair: TradingPair): Promise<Position> {
     try {
-      // TODO: Get balance from Monaco SDK vault or profile API
-      const balance = await this.getBalance(pair.base);
+      const pairMetadata = this.resolveLivePairMetadata(pair);
+      const balanceInBaseUnits = await this.getAvailableBalanceInTokenBaseUnits(
+        pair.base,
+      );
+      const balance = this.fromTokenBaseUnits(
+        balanceInBaseUnits,
+        pairMetadata.baseDecimals,
+      );
 
       // Get current market price
       const currentPrice = await this.getCurrentPrice(pair);
-      const value = (balance * currentPrice) / 100n;
+      const value = calculateScaledNotionalValue(currentPrice, balance);
 
       // Calculate unrealized P&L based on executed trades
       const unrealizedPnL = this.calculateUnrealizedPnL(
@@ -647,30 +662,19 @@ export class LiveTradingEngine extends BaseTradingMode {
   }
 
   async getBalance(token: Address): Promise<bigint> {
+    const resolver = this.monacoSDK.getTradingPairResolver();
+    const decimals = this.resolveTokenDecimals(token, resolver);
+
     try {
-      const sdk = this.monacoSDK.getSDK();
-      const resolver = this.monacoSDK.getTradingPairResolver();
-      const assetId = resolver.getAssetIdByTokenAddress(token);
-
-      if (!assetId) {
-        throw new Error(`Asset ID not found for token ${token}`);
-      }
-
-      const availableBalance = await this.getProfileAvailableBalance(
-        sdk,
-        assetId,
-      );
-      const decimals = this.resolveTokenDecimals(token, resolver);
-      const availableRaw = parseUnits(availableBalance, decimals);
+      const availableRaw =
+        await this.getAvailableBalanceInTokenBaseUnits(token);
 
       logger.debug("Fetched profile balance", {
         token,
-        assetId,
         amount: availableRaw.toString(),
-        formatted: availableBalance,
       });
 
-      return availableRaw;
+      return this.fromTokenBaseUnits(availableRaw, decimals);
     } catch (error) {
       logger.warn("Failed to get balance from profile", {
         token,
@@ -678,6 +682,27 @@ export class LiveTradingEngine extends BaseTradingMode {
       });
       throw error;
     }
+  }
+
+  private async getAvailableBalanceInTokenBaseUnits(
+    token: Address,
+  ): Promise<bigint> {
+    const sdk = this.monacoSDK.getSDK();
+    const resolver = this.monacoSDK.getTradingPairResolver();
+    const assetId = resolver.getAssetIdByTokenAddress(token);
+
+    if (!assetId) {
+      throw new Error(`Asset ID not found for token ${token}`);
+    }
+
+    const availableBalance = await this.getProfileAvailableBalance(
+      sdk,
+      assetId,
+    );
+    const decimals = this.resolveTokenDecimals(token, resolver);
+    const availableRaw = parseUnits(availableBalance, decimals);
+
+    return availableRaw;
   }
 
   private resolveTokenDecimals(
@@ -785,7 +810,11 @@ export class LiveTradingEngine extends BaseTradingMode {
     referencePriceInQuoteBaseUnits: bigint,
     baseDecimals: number,
   ): number {
-    let remainingQuantityInBaseUnits = order.quantity;
+    const orderQuantityInBaseUnits = this.toTokenBaseUnits(
+      order.quantity,
+      baseDecimals,
+    );
+    let remainingQuantityInBaseUnits = orderQuantityInBaseUnits;
     let totalNotionalInQuoteBaseUnits = 0n;
     const baseUnitScale = 10n ** BigInt(baseDecimals);
 
@@ -803,13 +832,14 @@ export class LiveTradingEngine extends BaseTradingMode {
       remainingQuantityInBaseUnits -= fillQuantityInBaseUnits;
     }
 
-    if (remainingQuantityInBaseUnits > 0n || order.quantity <= 0n) {
+    if (remainingQuantityInBaseUnits > 0n || orderQuantityInBaseUnits <= 0n) {
       // Order cannot be fully filled, high slippage
       return this.config.maxSlippage;
     }
 
     const avgExecutionPriceInQuoteBaseUnits =
-      (totalNotionalInQuoteBaseUnits * baseUnitScale) / order.quantity;
+      (totalNotionalInQuoteBaseUnits * baseUnitScale) /
+      orderQuantityInBaseUnits;
     if (referencePriceInQuoteBaseUnits <= 0n) {
       return this.config.maxSlippage;
     }
@@ -954,20 +984,24 @@ export class LiveTradingEngine extends BaseTradingMode {
       const pairMetadata = this.resolveLivePairMetadata(pair);
       const referencePrice =
         order.orderType === "market"
-          ? await this.getLivePrice(pair)
+          ? await this.getLivePriceInQuoteBaseUnits(pair)
           : order.price;
+      const referencePriceInQuoteBaseUnits =
+        order.orderType === "market"
+          ? referencePrice
+          : this.toTokenBaseUnits(referencePrice, pairMetadata.quoteDecimals);
 
       // Check if user has sufficient balance
       let balance: bigint;
       try {
-        balance = await this.getBalance(
+        balance = await this.getAvailableBalanceInTokenBaseUnits(
           order.isBuy ? order.quoteToken : order.baseToken,
         );
       } catch (error) {
         if (isAuthError(error)) {
           logger.warn("Auth error during pre-trade check, refreshing token");
           await this.monacoSDK.refreshAuthToken();
-          balance = await this.getBalance(
+          balance = await this.getAvailableBalanceInTokenBaseUnits(
             order.isBuy ? order.quoteToken : order.baseToken,
           );
         } else {
@@ -976,11 +1010,11 @@ export class LiveTradingEngine extends BaseTradingMode {
       }
       const requiredAmount = order.isBuy
         ? this.calculateQuoteNotional(
-            order.quantity,
-            referencePrice,
+            this.toTokenBaseUnits(order.quantity, pairMetadata.baseDecimals),
+            referencePriceInQuoteBaseUnits,
             pairMetadata.baseDecimals,
           )
-        : order.quantity;
+        : this.toTokenBaseUnits(order.quantity, pairMetadata.baseDecimals);
 
       const hasFunds = balance >= requiredAmount;
 
@@ -989,7 +1023,7 @@ export class LiveTradingEngine extends BaseTradingMode {
       const estimatedSlippage = await this.calculateSlippage(
         order,
         pairMetadata,
-        referencePrice,
+        referencePriceInQuoteBaseUnits,
       );
 
       // Check slippage limits
@@ -1096,6 +1130,16 @@ export class LiveTradingEngine extends BaseTradingMode {
   }
 
   async getLivePrice(pair: TradingPair): Promise<bigint> {
+    const metadata = this.resolveLivePairMetadata(pair);
+    return this.fromTokenBaseUnits(
+      await this.getLivePriceInQuoteBaseUnits(pair),
+      metadata.quoteDecimals,
+    );
+  }
+
+  private async getLivePriceInQuoteBaseUnits(
+    pair: TradingPair,
+  ): Promise<bigint> {
     const metadata = this.resolveLivePairMetadata(pair);
     const orderbook =
       this.orderbooks.get(metadata.symbol) ??
@@ -1819,6 +1863,45 @@ export class LiveTradingEngine extends BaseTradingMode {
   ): bigint {
     const baseUnitScale = 10n ** BigInt(baseDecimals);
     return (quantityInBaseUnits * priceInQuoteBaseUnits) / baseUnitScale;
+  }
+
+  private toTokenBaseUnits(value: bigint, decimals: number): bigint {
+    return (value * 10n ** BigInt(decimals)) / 100n;
+  }
+
+  private fromTokenBaseUnits(value: bigint, decimals: number): bigint {
+    return (value * 100n) / 10n ** BigInt(decimals);
+  }
+
+  private toSdkSpotOrder(
+    order: OrderRequest,
+    pairMetadata: LivePairMetadata,
+  ): OrderRequest {
+    return {
+      ...order,
+      price: this.toTokenBaseUnits(order.price, pairMetadata.quoteDecimals),
+      quantity: this.toTokenBaseUnits(
+        order.quantity,
+        pairMetadata.baseDecimals,
+      ),
+    };
+  }
+
+  private fromSdkSpotOrderResult(
+    result: OrderResult,
+    pairMetadata: LivePairMetadata,
+  ): OrderResult {
+    return {
+      ...result,
+      filledQuantity: this.fromTokenBaseUnits(
+        result.filledQuantity,
+        pairMetadata.baseDecimals,
+      ),
+      remainingQuantity: this.fromTokenBaseUnits(
+        result.remainingQuantity,
+        pairMetadata.baseDecimals,
+      ),
+    };
   }
 }
 

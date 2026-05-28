@@ -39,11 +39,10 @@ type OrderBookSnapshot = {
   };
 };
 
-const DEFAULT_SIMULATION_SYMBOLS = ["ETH/USDC", "BTC/USDC"] as const;
-
 const DEFAULT_SIMULATION_BASE_PRICES: Record<string, number> = {
   "ETH/USDC": 2500,
   "BTC/USDC": 50000,
+  "SOL/USDC": 150,
 };
 
 function toFiniteNumber(value: unknown): number | undefined {
@@ -226,9 +225,7 @@ export class MarketDataService {
     };
   }
 
-  buildSimulationMarketData(
-    symbols = [...DEFAULT_SIMULATION_SYMBOLS],
-  ): MarketData {
+  buildSimulationMarketData(symbols: readonly string[]): MarketData {
     const marketData: MarketData = {};
     const timestamp = this.clock.now();
 

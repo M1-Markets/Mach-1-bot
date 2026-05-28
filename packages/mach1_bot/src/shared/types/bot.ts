@@ -3,10 +3,7 @@
  */
 
 import type { ChainNetwork, MonacoEnvironment } from "./common";
-import type {
-  IsolatedPerpsConfig,
-  LiveTradingMarketMode,
-} from "./config";
+import type { IsolatedPerpsConfig, LiveTradingMarketMode } from "./config";
 
 export type { CompletedTrade } from "./analytics";
 // Re-export for backward compatibility
@@ -49,15 +46,15 @@ export interface BotConfig {
   // Optional settings
   chainId?: number;
   logLevel?:
-  | "DEBUG"
-  | "INFO"
-  | "WARN"
-  | "ERROR"
-  | "debug"
-  | "info"
-  | "warn"
-  | "error"
-  | "none";
+    | "DEBUG"
+    | "INFO"
+    | "WARN"
+    | "ERROR"
+    | "debug"
+    | "info"
+    | "warn"
+    | "error"
+    | "none";
 
   // Enhanced features
   enableEnhancedFeatures?: boolean;

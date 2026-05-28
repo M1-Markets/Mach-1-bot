@@ -1,7 +1,8 @@
+import type { Mach1SDK } from "mach1_sdk";
+import { vi } from "vitest";
 import { MarketManager } from "@/domains/trading/market-manager";
 import { MarketDataUnavailableError } from "@/shared/errors";
 import { Address, TradingPair } from "@/shared/types";
-import { vi } from "vitest";
 
 describe("MarketManager", () => {
   let marketManager: MarketManager;
@@ -49,6 +50,17 @@ describe("MarketManager", () => {
       symbol: "BTC/USDC",
     };
   });
+
+  type MarketManagerTestState = {
+    mockOrderBooks: Map<string, unknown>;
+    mockTrades: Map<string, unknown>;
+    mockPrices: Map<string, unknown>;
+    priceHistory: Map<string, unknown>;
+  };
+
+  const getMarketManagerState = (
+    manager: MarketManager,
+  ): MarketManagerTestState => manager as unknown as MarketManagerTestState;
 
   const createLiveSdk = (overrides?: Record<string, unknown>) =>
     ({
@@ -117,7 +129,7 @@ describe("MarketManager", () => {
         ]),
       },
       ...overrides,
-    }) as any;
+    }) as unknown as Mach1SDK;
 
   describe("constructor", () => {
     it("should initialize market manager", () => {
@@ -174,7 +186,7 @@ describe("MarketManager", () => {
         asks: [{ price: 64600000000n, quantity: 150000000n }],
       });
       expect(
-        (liveManager as any).mockOrderBooks.has(
+        getMarketManagerState(liveManager).mockOrderBooks.has(
           `${livePair.base}-${livePair.quote}`,
         ),
       ).toBe(false);
@@ -344,7 +356,9 @@ describe("MarketManager", () => {
         },
       ]);
       expect(
-        (liveManager as any).mockTrades.has(`${livePair.base}-${livePair.quote}`),
+        getMarketManagerState(liveManager).mockTrades.has(
+          `${livePair.base}-${livePair.quote}`,
+        ),
       ).toBe(false);
     });
   });
@@ -372,7 +386,9 @@ describe("MarketManager", () => {
       expect(ticker.high24h).toBe(65000000000n);
       expect(ticker.low24h).toBe(63000000000n);
       expect(
-        (liveManager as any).mockPrices.has(`${livePair.base}-${livePair.quote}`),
+        getMarketManagerState(liveManager).mockPrices.has(
+          `${livePair.base}-${livePair.quote}`,
+        ),
       ).toBe(false);
     });
   });
@@ -381,7 +397,12 @@ describe("MarketManager", () => {
     it("should return historical price candles in simulation mode", async () => {
       const start = new Date(Date.now() - 24 * 60 * 60 * 1000);
       const end = new Date();
-      const candles = await marketManager.getCandles(testPair, "1h", start, end);
+      const candles = await marketManager.getCandles(
+        testPair,
+        "1h",
+        start,
+        end,
+      );
 
       expect(Array.isArray(candles)).toBe(true);
       expect(candles.length).toBeGreaterThan(0);
@@ -409,7 +430,9 @@ describe("MarketManager", () => {
         },
       ]);
       expect(
-        (liveManager as any).priceHistory.has(`${livePair.base}-${livePair.quote}`),
+        getMarketManagerState(liveManager).priceHistory.has(
+          `${livePair.base}-${livePair.quote}`,
+        ),
       ).toBe(false);
     });
   });

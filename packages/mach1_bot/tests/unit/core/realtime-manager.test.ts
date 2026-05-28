@@ -1,3 +1,5 @@
+import type { Mach1SDK } from "mach1_sdk";
+import { vi } from "vitest";
 import { OrderLifecycleStore } from "@/domains/execution/order-lifecycle-store";
 import { MarketManager } from "@/domains/trading/market-manager";
 import { OrderManager } from "@/domains/trading/order-manager";
@@ -7,7 +9,6 @@ import {
   createSeededRng,
   createSteppingClock,
 } from "@/shared/utils/determinism";
-import { vi } from "vitest";
 
 const pair: TradingPair = {
   base: "0x1111111111111111111111111111111111111111",
@@ -24,6 +25,17 @@ const order: OrderRequest = {
   quantity: 200n,
   strategyId: "strategy-1",
 };
+
+type RealtimeManagerTestSdk = Pick<Mach1SDK, "ws">;
+type RealtimeManagerTestState = {
+  startMarketDataSimulation(): void;
+  emitMockTrade(pair: TradingPair): Promise<void>;
+};
+
+const asRealtimeManagerTestState = (
+  realtimeManager: RealtimeManager,
+): RealtimeManagerTestState =>
+  realtimeManager as unknown as RealtimeManagerTestState;
 
 describe("RealtimeManager", () => {
   afterEach(() => {
@@ -57,7 +69,7 @@ describe("RealtimeManager", () => {
           isConnected: () => false,
           connect: () => new Promise<void>(() => undefined),
         },
-      } as any,
+      } as unknown as RealtimeManagerTestSdk,
       { mode: "live" },
     );
 
@@ -81,7 +93,7 @@ describe("RealtimeManager", () => {
           isConnected: () => false,
           connect: vi.fn().mockResolvedValue(undefined),
         },
-      } as any,
+      } as unknown as RealtimeManagerTestSdk,
       { mode: "live" },
     );
 
@@ -106,7 +118,7 @@ describe("RealtimeManager", () => {
       { mode: "simulation" },
     );
     const startSimulationSpy = vi.spyOn(
-      realtimeManager as any,
+      asRealtimeManagerTestState(realtimeManager),
       "startMarketDataSimulation",
     );
 
@@ -132,7 +144,7 @@ describe("RealtimeManager", () => {
       { mode: "simulation" },
     );
     const startSimulationSpy = vi.spyOn(
-      realtimeManager as any,
+      asRealtimeManagerTestState(realtimeManager),
       "startMarketDataSimulation",
     );
 
@@ -192,8 +204,8 @@ describe("RealtimeManager", () => {
     });
 
     for (let index = 0; index < 6; index++) {
-      await (manager1 as any).emitMockTrade(pair);
-      await (manager2 as any).emitMockTrade(pair);
+      await asRealtimeManagerTestState(manager1).emitMockTrade(pair);
+      await asRealtimeManagerTestState(manager2).emitMockTrade(pair);
     }
 
     expect(trades1).toEqual(trades2);
@@ -343,7 +355,9 @@ describe("RealtimeManager", () => {
     const tradeStream = await realtimeManager.subscribeTrades(pair);
     const tradeUnsub = tradeStream.subscribe(() => undefined);
 
-    expect(realtimeManager.getConnectionStatus().activeSubscriptionKeys).toEqual(
+    expect(
+      realtimeManager.getConnectionStatus().activeSubscriptionKeys,
+    ).toEqual(
       expect.arrayContaining([
         "price_simulation",
         `price:${pair.base}-${pair.quote}`,

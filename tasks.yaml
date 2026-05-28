@@ -20,4 +20,19 @@ tasks:
             node:24-bookworm bash
         interactive: true
     description: Spawn a development environment.
-
+  format:
+    commands:
+      - npm run format -w packages/mach1_bot -w packages/mach1_sdk
+    description: Format code in all packages.
+  lint:
+    commands:
+      - npm run lint -w packages/mach1_bot -w packages/mach1_sdk
+    description: Lint code in all packages.
+  test:
+    commands:
+      - npm run test -w packages/mach1_bot -w packages/mach1_sdk
+    description: Run tests in all packages.
+  typecheck:
+    commands:
+      - npm run typecheck -w packages/mach1_bot -w packages/mach1_sdk
+    description: Run type checks in all packages.

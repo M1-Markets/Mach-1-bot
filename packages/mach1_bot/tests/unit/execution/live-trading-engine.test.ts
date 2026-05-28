@@ -1,7 +1,7 @@
 import { APIError } from "mach1_sdk";
 import { parseUnits } from "viem";
-import type { OrderRequest } from "@/shared/types";
 import { PriceUnavailableError } from "@/shared/errors";
+import type { OrderRequest } from "@/shared/types";
 
 vi.mock("@/domains/trading/market-manager", () => ({
   MarketManager: class {
@@ -49,6 +49,19 @@ vi.mock("@/domains/trading/realtime-manager", () => ({
 
 describe("LiveTradingEngine order placement retries", () => {
   let LiveTradingEngine: typeof import("@/domains/execution/live-trading-engine").LiveTradingEngine;
+
+  const createResolver = (overrides?: {
+    symbol?: string;
+    baseDecimals?: number;
+    quoteDecimals?: number;
+  }) => ({
+    normalizeSymbol: (symbol: string) => symbol,
+    getPairByContracts: () => ({
+      symbol: overrides?.symbol ?? "ETH/USDC",
+      base_decimals: overrides?.baseDecimals ?? 18,
+      quote_decimals: overrides?.quoteDecimals ?? 6,
+    }),
+  });
 
   const order: OrderRequest = {
     baseToken: "0x1111111111111111111111111111111111111111",
@@ -113,6 +126,7 @@ describe("LiveTradingEngine order placement retries", () => {
     ).monacoSDK = {
       isInitialized: () => true,
       isPaused: () => false,
+      getTradingPairResolver: () => createResolver(),
       placeOrder,
     };
 
@@ -143,6 +157,7 @@ describe("LiveTradingEngine order placement retries", () => {
     ).monacoSDK = {
       isInitialized: () => true,
       isPaused: () => false,
+      getTradingPairResolver: () => createResolver(),
       placeOrder,
     };
 
@@ -175,6 +190,7 @@ describe("LiveTradingEngine order placement retries", () => {
     ).monacoSDK = {
       isInitialized: () => true,
       isPaused: () => false,
+      getTradingPairResolver: () => createResolver(),
       placeOrder,
     };
 
@@ -213,14 +229,7 @@ describe("LiveTradingEngine order placement retries", () => {
       isInitialized: () => true,
       isPaused: () => false,
       placeOrder,
-      getTradingPairResolver: () => ({
-        normalizeSymbol: (symbol: string) => symbol,
-        getPairByContracts: () => ({
-          symbol: "ETH/USDC",
-          base_decimals: 18,
-          quote_decimals: 6,
-        }),
-      }),
+      getTradingPairResolver: () => createResolver(),
     };
 
     await expect(engine.placeOrder(order)).rejects.toBeInstanceOf(
@@ -381,9 +390,270 @@ describe("LiveTradingEngine order placement retries", () => {
       }),
     };
 
-    await expect(engine.getBalance(token)).resolves.toBe(parseUnits("1.5", 18));
+    await expect(engine.getBalance(token)).resolves.toBe(150n);
     expect(getUserBalanceByAssetId).toHaveBeenCalledWith("eth-asset-id");
     expect(getUserBalances).not.toHaveBeenCalled();
+  });
+
+  it("converts shared spot units to Monaco decimals and fills back for non-2-decimal assets", async () => {
+    const engine = makeEngine();
+    const precisionOrder: OrderRequest = {
+      ...order,
+      price: 45678n,
+      quantity: 123n,
+    };
+    const placeOrder = vi.fn().mockResolvedValue({
+      orderId: "sdk-order-precision",
+      status: "filled",
+      filledQuantity: parseUnits("1.23", 9),
+      remainingQuantity: 0n,
+    });
+
+    (
+      engine as unknown as {
+        monacoSDK: {
+          isInitialized: () => boolean;
+          isPaused: () => boolean;
+          placeOrder: typeof placeOrder;
+          getTradingPairResolver: () => {
+            normalizeSymbol: (symbol: string) => string;
+            getPairByContracts: () => {
+              symbol: string;
+              base_decimals: number;
+              quote_decimals: number;
+            };
+          };
+        };
+      }
+    ).monacoSDK = {
+      isInitialized: () => true,
+      isPaused: () => false,
+      placeOrder,
+      getTradingPairResolver: () =>
+        createResolver({
+          baseDecimals: 9,
+          quoteDecimals: 6,
+          symbol: "SOL/USDC",
+        }),
+    };
+
+    const result = await engine.placeOrder(precisionOrder);
+
+    expect(placeOrder).toHaveBeenCalledWith(
+      expect.objectContaining({
+        price: parseUnits("456.78", 6),
+        quantity: parseUnits("1.23", 9),
+      }),
+    );
+    expect(result).toMatchObject({
+      status: "filled",
+      filledQuantity: 123n,
+      remainingQuantity: 0n,
+    });
+  });
+
+  it("keeps buy-side live balance and slippage checks correct for 9-decimal base assets", async () => {
+    const engine = new LiveTradingEngine({
+      privateKey: "0x" + "1".repeat(64),
+      network: "testnet",
+      maxSlippage: 0.01,
+    });
+    const precisionOrder: OrderRequest = {
+      baseToken: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      quoteToken: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      isBuy: true,
+      orderType: "market",
+      price: 250n,
+      quantity: 150n,
+    };
+
+    (
+      engine as unknown as {
+        monacoSDK: {
+          getSDK: () => {
+            profile: {
+              getUserBalanceByAssetId: (assetId: string) => Promise<{
+                available_balance: string;
+              }>;
+            };
+          };
+          getTradingPairResolver: () => {
+            normalizeSymbol: (symbol: string) => string;
+            getPairByContracts: () => {
+              symbol: string;
+              base_decimals: number;
+              quote_decimals: number;
+            };
+            getAssetIdByTokenAddress: (address: string) => string | undefined;
+            getAllPairs: () => Array<{
+              base_token_contract: string;
+              quote_token_contract: string;
+              base_decimals: number;
+              quote_decimals: number;
+            }>;
+          };
+        };
+        realtimeManager: {
+          getOrderbookSnapshot: () => Promise<{
+            bids: never[];
+            asks: Array<{ price: string; quantity: string }>;
+          }>;
+        };
+      }
+    ).monacoSDK = {
+      getSDK: () => ({
+        profile: {
+          getUserBalanceByAssetId: async () => ({
+            available_balance: "10.0",
+          }),
+        },
+      }),
+      getTradingPairResolver: () => ({
+        normalizeSymbol: (symbol: string) => symbol,
+        getPairByContracts: () => ({
+          symbol: "SOL/USDC",
+          base_decimals: 9,
+          quote_decimals: 6,
+        }),
+        getAssetIdByTokenAddress: (address: string) =>
+          address.toLowerCase() === precisionOrder.quoteToken.toLowerCase()
+            ? "usdc-asset-id"
+            : undefined,
+        getAllPairs: () => [
+          {
+            base_token_contract: precisionOrder.baseToken,
+            quote_token_contract: precisionOrder.quoteToken,
+            base_decimals: 9,
+            quote_decimals: 6,
+          },
+        ],
+      }),
+    };
+    (
+      engine as unknown as {
+        realtimeManager: {
+          getOrderbookSnapshot: () => Promise<{
+            bids: never[];
+            asks: Array<{ price: string; quantity: string }>;
+          }>;
+        };
+      }
+    ).realtimeManager = {
+      getOrderbookSnapshot: async () => ({
+        bids: [],
+        asks: [{ price: "2.5", quantity: "1.5" }],
+      }),
+    };
+
+    await expect(
+      engine.checkPreTradeConditions(precisionOrder),
+    ).resolves.toMatchObject({
+      hasFunds: true,
+      withinLimits: true,
+      estimatedSlippage: 0,
+    });
+  });
+
+  it("keeps sell-side live balance checks correct for 9-decimal base assets", async () => {
+    const engine = new LiveTradingEngine({
+      privateKey: "0x" + "1".repeat(64),
+      network: "testnet",
+      maxSlippage: 0.01,
+    });
+    const precisionOrder: OrderRequest = {
+      baseToken: "0xcccccccccccccccccccccccccccccccccccccccc",
+      quoteToken: "0xdddddddddddddddddddddddddddddddddddddddd",
+      isBuy: false,
+      orderType: "market",
+      price: 250n,
+      quantity: 150n,
+    };
+
+    (
+      engine as unknown as {
+        monacoSDK: {
+          getSDK: () => {
+            profile: {
+              getUserBalanceByAssetId: (assetId: string) => Promise<{
+                available_balance: string;
+              }>;
+            };
+          };
+          getTradingPairResolver: () => {
+            normalizeSymbol: (symbol: string) => string;
+            getPairByContracts: () => {
+              symbol: string;
+              base_decimals: number;
+              quote_decimals: number;
+            };
+            getAssetIdByTokenAddress: (address: string) => string | undefined;
+            getAllPairs: () => Array<{
+              base_token_contract: string;
+              quote_token_contract: string;
+              base_decimals: number;
+              quote_decimals: number;
+            }>;
+          };
+        };
+        realtimeManager: {
+          getOrderbookSnapshot: () => Promise<{
+            bids: Array<{ price: string; quantity: string }>;
+            asks: never[];
+          }>;
+        };
+      }
+    ).monacoSDK = {
+      getSDK: () => ({
+        profile: {
+          getUserBalanceByAssetId: async () => ({
+            available_balance: "1.75",
+          }),
+        },
+      }),
+      getTradingPairResolver: () => ({
+        normalizeSymbol: (symbol: string) => symbol,
+        getPairByContracts: () => ({
+          symbol: "SOL/USDC",
+          base_decimals: 9,
+          quote_decimals: 6,
+        }),
+        getAssetIdByTokenAddress: (address: string) =>
+          address.toLowerCase() === precisionOrder.baseToken.toLowerCase()
+            ? "sol-asset-id"
+            : undefined,
+        getAllPairs: () => [
+          {
+            base_token_contract: precisionOrder.baseToken,
+            quote_token_contract: precisionOrder.quoteToken,
+            base_decimals: 9,
+            quote_decimals: 6,
+          },
+        ],
+      }),
+    };
+    (
+      engine as unknown as {
+        realtimeManager: {
+          getOrderbookSnapshot: () => Promise<{
+            bids: Array<{ price: string; quantity: string }>;
+            asks: never[];
+          }>;
+        };
+      }
+    ).realtimeManager = {
+      getOrderbookSnapshot: async () => ({
+        bids: [{ price: "2.5", quantity: "1.75" }],
+        asks: [],
+      }),
+    };
+
+    await expect(
+      engine.checkPreTradeConditions(precisionOrder),
+    ).resolves.toMatchObject({
+      hasFunds: true,
+      withinLimits: true,
+      estimatedSlippage: 0,
+    });
   });
 
   it("startLiveTrading cannot create two active loops", async () => {
@@ -778,6 +1048,7 @@ describe("LiveTradingEngine order placement retries", () => {
     ).monacoSDK = {
       isInitialized: () => true,
       isPaused: () => false,
+      getTradingPairResolver: () => createResolver(),
       placeOrder,
       cancelOrder,
     };
@@ -820,6 +1091,7 @@ describe("LiveTradingEngine order placement retries", () => {
     ).monacoSDK = {
       isInitialized: () => true,
       isPaused: () => false,
+      getTradingPairResolver: () => createResolver(),
     };
     vi.spyOn(engine, "checkPreTradeConditions").mockResolvedValue({
       hasPermission: true,
@@ -857,6 +1129,7 @@ describe("LiveTradingEngine order placement retries", () => {
     ).monacoSDK = {
       isInitialized: () => true,
       isPaused: () => false,
+      getTradingPairResolver: () => createResolver(),
       placeOrder,
       cancelOrder,
     };

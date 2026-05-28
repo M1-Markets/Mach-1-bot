@@ -745,3 +745,41 @@
   - [x] Run targeted Vitest files for touched perps areas.
   - [x] Run `npm run typecheck` from repo root before checking off final item.
   - [x] Keep spot regression suites green before merge.
+
+## Phase 24: Execution Findings And Strategy Gaps
+
+- [x] Unify live spot order units with shared execution contract.
+  - [x] Remove mixed use of cents-scaled bot units and token-decimal base units across `Mach1Bot`, `StrategyManager`, and `LiveTradingEngine`.
+  - [x] Keep one explicit internal contract for `OrderRequest.price` and `OrderRequest.quantity`, or add conversion boundary helpers where live spot requires token-decimal units.
+  - [x] Re-audit live balance checks, slippage estimation, quote notional math, and fill accounting after unit fix.
+  - [x] Add regression tests proving live spot buy/sell, slippage, and risk notional stay correct for assets with non-2-decimal token precision.
+
+- [x] Fix strategy exit sizing for builtin and example strategies.
+  - [x] Update strategies that emit `sell` without `quantity`, including `multi_indicator_v1`, RSI example, MA crossover example, and pairs-trading exit paths.
+  - [x] Decide one canonical exit behavior: explicit quantity from strategy, full-position close helper, or reduce-only/close action semantics.
+  - [x] Keep signal validation fail-closed when neither explicit quantity nor valid close semantics exist.
+  - [x] Add tests proving exit signals place orders instead of being skipped by validation.
+
+- [x] Scope backtest data loading to configured strategy pairs.
+  - [x] Pass configured trading pairs into `BacktestEngine.filterDataFiles()` instead of filtering only by date range.
+  - [x] Prevent unrelated CSV files in `backtest-data` from being loaded for single-pair runs such as `SOL/USDC`.
+  - [x] Keep multi-pair backtests working when config intentionally requests multiple markets.
+  - [x] Add tests proving single-pair backtests ignore unrelated BTC/ETH datasets.
+
+- [x] Align simulation market data with configured pair universe.
+  - [x] Stop hardcoding simulation output to `ETH/USDC` and `BTC/USDC` only.
+  - [x] Feed preferred or configured trading pairs into `MarketDataService.buildSimulationMarketData()`.
+  - [x] Preserve canonical fallback symbol table in one place only.
+  - [x] Add tests proving `SOL/USDC` strategies receive simulation ticks without custom patching.
+
+- [x] Harden strategy execution against overtrading and stale exposure state.
+  - [x] Add position-aware sizing helpers so strategies can size entries and exits from current holdings, pending orders, and available capital.
+  - [x] Add cooldown or duplicate-signal suppression so repeated ticks do not stack identical orders in choppy markets.
+  - [x] Expose reusable helpers for full-close, partial-close, and max-risk-per-trade sizing.
+  - [x] Add tests for repeated confluence signals, pending-order overlap, and position-aware exit behavior.
+
+- [x] Strengthen `multi_indicator_v1` beyond raw confluence count.
+  - [x] Add trend or regime filter so mean-reversion entries do not fire blindly in strong directional moves.
+  - [x] Add spread, liquidity, or volatility guardrails before signal execution.
+  - [x] Add warmup-quality checks based on candle count and indicator stability, not only minimum sample count.
+  - [x] Add backtest coverage for trend regime, low-liquidity skip, and high-volatility skip behavior.

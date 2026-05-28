@@ -4,9 +4,9 @@ import { createLogger } from "@/shared/utils/logger";
 const logger = createLogger("BacktestEngine");
 
 import * as path from "path";
+import { OrderLifecycleStore } from "@/domains/execution/order-lifecycle-store";
 import { StrategyExecutionCoordinator } from "@/domains/execution/strategy-execution-coordinator";
 import { BaseTradingMode } from "@/domains/execution/trading-mode";
-import { OrderLifecycleStore } from "@/domains/execution/order-lifecycle-store";
 import { MarketDataService } from "@/domains/trading/market-data-service";
 import {
   Address,
@@ -28,8 +28,8 @@ import {
   TradingPair,
 } from "@/shared/types";
 import {
-  createIdGenerator,
   type Clock,
+  createIdGenerator,
   createSeededRng,
   type IdGenerator,
   type Rng,
@@ -291,16 +291,26 @@ export class BacktestEngine extends BaseTradingMode {
     endDate?: Date,
     tradingPairs?: string[],
   ): DataFileInfo[] {
+    const normalizedTradingPairs = new Set(
+      (tradingPairs ?? []).map((pair) =>
+        this.normalizeBacktestTradingPair(pair),
+      ),
+    );
+
     return dataFiles.filter((file) => {
       // Filter by date range
       if (startDate && file.date < startDate) return false;
       if (endDate && file.date > endDate) return false;
 
       // Filter by trading pairs
-      if (tradingPairs && tradingPairs.length > 0) {
-        const normalizedPairs = tradingPairs.map((pair) => pair.toUpperCase());
-        if (!normalizedPairs.includes(file.tradingPair.toUpperCase()))
+      if (normalizedTradingPairs.size > 0) {
+        if (
+          !normalizedTradingPairs.has(
+            this.normalizeBacktestTradingPair(file.tradingPair),
+          )
+        ) {
           return false;
+        }
       }
 
       return true;
@@ -375,6 +385,7 @@ export class BacktestEngine extends BaseTradingMode {
         allDataFiles,
         startDate,
         endDate,
+        this.config.tradingPairs,
       );
 
       if (filteredFiles.length === 0) {
@@ -820,6 +831,12 @@ export class BacktestEngine extends BaseTradingMode {
    * Format trading pair from internal format to expected format
    */
   private formatTradingPair(pair: string): string {
+    return this.normalizeBacktestTradingPair(pair);
+  }
+
+  private normalizeBacktestTradingPair(pair: string): string {
+    const compactPair = pair.toUpperCase().replace(/[^A-Z0-9]/g, "");
+
     // Convert common formats to ETH/USDC, BTC/USDC etc.
     const pairMappings: Record<string, string> = {
       SOLUSDT: "SOL/USDC",
@@ -830,7 +847,15 @@ export class BacktestEngine extends BaseTradingMode {
       BTCUSDC: "BTC/USDC",
     };
 
-    return pairMappings[pair.toUpperCase()] || `${pair}/USDC`;
+    if (pairMappings[compactPair]) {
+      return pairMappings[compactPair];
+    }
+
+    if (compactPair.endsWith("USDT") || compactPair.endsWith("USDC")) {
+      return `${compactPair.slice(0, -4)}/USDC`;
+    }
+
+    return `${compactPair}/USDC`;
   }
 
   /**

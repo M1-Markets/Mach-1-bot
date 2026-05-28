@@ -1,6 +1,6 @@
 import type { ResolvedTradingPair } from "mach1_sdk";
-import type { Address } from "@/shared/types";
 import { TradingPairService } from "@/domains/trading/trading-pair-service";
+import type { Address } from "@/shared/types";
 
 const resolvedPair: ResolvedTradingPair = {
   id: "pair-eth-usdc",

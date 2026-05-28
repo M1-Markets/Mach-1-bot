@@ -1,5 +1,6 @@
-import { BaseTradingMode } from "@/domains/execution/trading-mode";
 import { OrderLifecycleStore } from "@/domains/execution/order-lifecycle-store";
+import { StrategyExecutionCoordinator } from "@/domains/execution/strategy-execution-coordinator";
+import { BaseTradingMode } from "@/domains/execution/trading-mode";
 import { MarketManager } from "@/domains/trading/market-manager";
 import { RealtimeManager } from "@/domains/trading/realtime-manager";
 import { TradingPairService } from "@/domains/trading/trading-pair-service";
@@ -16,10 +17,9 @@ import {
   Position,
   TradingPair,
 } from "@/shared/types";
-import { StrategyExecutionCoordinator } from "@/domains/execution/strategy-execution-coordinator";
 import {
-  createIdGenerator,
   type Clock,
+  createIdGenerator,
   type IdGenerator,
   type Rng,
   realClock,

@@ -90,10 +90,10 @@ describe("Mach1Bot", () => {
             getAllSymbols: () => string[];
             getPairBySymbol: (symbol: string) =>
               | {
-                symbol: string;
-                base_token_contract: Address;
-                quote_token_contract: Address;
-              }
+                  symbol: string;
+                  base_token_contract: Address;
+                  quote_token_contract: Address;
+                }
               | undefined;
           };
           parseSymbol: (symbol: string) => TradingPair;
@@ -105,12 +105,12 @@ describe("Mach1Bot", () => {
         getPairBySymbol: (symbol: string) =>
           symbol === "WETH-USDC"
             ? {
-              symbol: "WETH-USDC",
-              base_token_contract:
-                "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-              quote_token_contract:
-                "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-            }
+                symbol: "WETH-USDC",
+                base_token_contract:
+                  "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                quote_token_contract:
+                  "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              }
             : undefined,
       };
 
@@ -356,10 +356,10 @@ describe("Mach1Bot", () => {
               getAllSymbols: () => string[];
               getPairBySymbol: (symbol: string) =>
                 | {
-                  symbol: string;
-                  base_token_contract: Address;
-                  quote_token_contract: Address;
-                }
+                    symbol: string;
+                    base_token_contract: Address;
+                    quote_token_contract: Address;
+                  }
                 | undefined;
             };
           }
@@ -374,10 +374,10 @@ describe("Mach1Bot", () => {
               getAllSymbols: () => string[];
               getPairBySymbol: (symbol: string) =>
                 | {
-                  symbol: string;
-                  base_token_contract: Address;
-                  quote_token_contract: Address;
-                }
+                    symbol: string;
+                    base_token_contract: Address;
+                    quote_token_contract: Address;
+                  }
                 | undefined;
             };
           }
@@ -387,12 +387,12 @@ describe("Mach1Bot", () => {
           getPairBySymbol: (symbol: string) =>
             symbol === "ETH/USDC"
               ? {
-                symbol: "ETH/USDC",
-                base_token_contract:
-                  "0x1111111111111111111111111111111111111111",
-                quote_token_contract:
-                  "0x4444444444444444444444444444444444444444",
-              }
+                  symbol: "ETH/USDC",
+                  base_token_contract:
+                    "0x1111111111111111111111111111111111111111",
+                  quote_token_contract:
+                    "0x4444444444444444444444444444444444444444",
+                }
               : undefined,
         };
 
@@ -471,10 +471,10 @@ describe("Mach1Bot", () => {
               getAllSymbols: () => string[];
               getPairBySymbol: (symbol: string) =>
                 | {
-                  symbol: string;
-                  base_token_contract: Address;
-                  quote_token_contract: Address;
-                }
+                    symbol: string;
+                    base_token_contract: Address;
+                    quote_token_contract: Address;
+                  }
                 | undefined;
             };
           }
@@ -489,10 +489,10 @@ describe("Mach1Bot", () => {
               getAllSymbols: () => string[];
               getPairBySymbol: (symbol: string) =>
                 | {
-                  symbol: string;
-                  base_token_contract: Address;
-                  quote_token_contract: Address;
-                }
+                    symbol: string;
+                    base_token_contract: Address;
+                    quote_token_contract: Address;
+                  }
                 | undefined;
             };
           }
@@ -502,12 +502,12 @@ describe("Mach1Bot", () => {
           getPairBySymbol: (symbol: string) =>
             symbol === "ETH/USDC"
               ? {
-                symbol: "ETH/USDC",
-                base_token_contract:
-                  "0x1111111111111111111111111111111111111111",
-                quote_token_contract:
-                  "0x4444444444444444444444444444444444444444",
-              }
+                  symbol: "ETH/USDC",
+                  base_token_contract:
+                    "0x1111111111111111111111111111111111111111",
+                  quote_token_contract:
+                    "0x4444444444444444444444444444444444444444",
+                }
               : undefined,
         };
 
@@ -873,6 +873,25 @@ describe("Mach1Bot", () => {
           await testBot.emergencyStop();
         }
       });
+      it("uses preferred simulation pairs for generated ticks", async () => {
+        const testBot = new Mach1Bot({
+          ...mockConfig,
+          enableEnhancedFeatures: false,
+        });
+        testBot.setPreferredTradingPairs(["SOL/USDC"]);
+
+        try {
+          const marketData = await (
+            testBot as unknown as {
+              generateMockMarketData: () => Promise<Record<string, unknown>>;
+            }
+          ).generateMockMarketData();
+
+          expect(Object.keys(marketData)).toEqual(["SOL/USDC"]);
+        } finally {
+          await testBot.emergencyStop();
+        }
+      });
     });
 
     describe("goLive", () => {
@@ -943,7 +962,9 @@ describe("Mach1Bot", () => {
           }
         ).getOrCreateLiveEngine = vi
           .fn()
-          .mockRejectedValue(new Error("No active isolated margin account available"));
+          .mockRejectedValue(
+            new Error("No active isolated margin account available"),
+          );
 
         await expect(isolatedBot.goLive()).rejects.toThrow(
           "No active isolated margin account available",

@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-
 import { TradingPairResolver } from "../dist/monaco/trading-pair-resolver.js";
 
 test("TradingPairResolver normalizes nested Monaco API responses", async () => {

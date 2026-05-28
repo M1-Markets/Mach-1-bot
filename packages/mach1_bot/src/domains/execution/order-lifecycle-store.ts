@@ -1,3 +1,4 @@
+import { OrderEventEmitter } from "@/domains/execution/order-event-emitter";
 import type {
   OrderLifecycleEvent,
   OrderLifecycleEventType,
@@ -7,7 +8,6 @@ import type {
   OrderResult,
   TradingPair,
 } from "@/shared/types";
-import { OrderEventEmitter } from "@/domains/execution/order-event-emitter";
 
 export interface CreateOrderRecordInput {
   localId: string;

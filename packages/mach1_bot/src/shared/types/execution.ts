@@ -13,10 +13,7 @@ import type {
   Position,
   TradingPair,
 } from "./common";
-import type {
-  IsolatedPerpsConfig,
-  LiveTradingMarketMode,
-} from "./config";
+import type { IsolatedPerpsConfig, LiveTradingMarketMode } from "./config";
 
 export type ExecutionOrderStatus = NormalizedOrderStatus;
 

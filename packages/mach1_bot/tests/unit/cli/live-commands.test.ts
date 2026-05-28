@@ -145,6 +145,12 @@ vi.mock("@/cli/utils/monaco-session", () => ({
           listMarginAccounts: async () => ({
             accounts: [{ margin_account_id: "margin-1" }],
           }),
+          getAvailableCollateral: async () => ({
+            asset: "usdc-asset",
+            wallet_available: "1000",
+            wallet_locked: "0",
+            margin_transferable: "25",
+          }),
           getMarginAccountSummary: async () => ({
             equity: "1500",
             free_collateral: "1200",
@@ -199,6 +205,44 @@ vi.mock("@/cli/utils/monaco-session", () => ({
             status: "confirmed",
             hash: "0xwith",
             nonce: 1n,
+          }),
+        },
+        marginAccounts: {
+          createMarginAccount: async (request?: {
+            label?: string;
+            collateralAsset?: string;
+          }) => ({
+            margin_account_id: "margin-2",
+            label: request?.label,
+            account_state: "ACTIVE",
+            collateral_asset: request?.collateralAsset ?? "USDC",
+            created_at: "2026-05-28T00:00:00.000Z",
+          }),
+          transferCollateralToMarginAccount: async (
+            marginAccountId: string,
+            request: { asset: string; amount: string },
+          ) => ({
+            movement_id: "movement-in-1",
+            margin_account_id: marginAccountId,
+            asset: request.asset,
+            amount: request.amount,
+            status: "SUCCESS",
+            new_equity: "1600",
+            new_total_collateral_value: "1600",
+            new_withdrawable_collateral: "1200",
+          }),
+          transferCollateralFromMarginAccount: async (
+            marginAccountId: string,
+            request: { asset: string; amount: string },
+          ) => ({
+            movement_id: "movement-out-1",
+            margin_account_id: marginAccountId,
+            asset: request.asset,
+            amount: request.amount,
+            status: "SUCCESS",
+            new_equity: "1400",
+            new_total_collateral_value: "1400",
+            new_withdrawable_collateral: "1000",
           }),
         },
         trading: {
@@ -498,11 +542,124 @@ describe("live subcommands", () => {
     expect(code).toBe(0);
   });
 
+  it("runs live deposit directly to perps", async () => {
+    const program = new Command("live");
+    registerLiveCommands(program);
+    const code = await runCommand(program, [
+      "deposit",
+      "--to",
+      "perps",
+      "--token",
+      "USDC",
+      "--amount",
+      "0.001",
+    ]);
+    expect(code).toBe(0);
+    expect(logSpy).toHaveBeenCalledWith("✅ Perps transfer processed");
+  });
+
   it("runs live withdraw", async () => {
     const program = new Command("live");
     registerLiveCommands(program);
     const code = await runCommand(program, ["withdraw"]);
     expect(code).toBe(0);
+  });
+
+  it("runs live withdraw directly from perps", async () => {
+    const program = new Command("live");
+    registerLiveCommands(program);
+    const code = await runCommand(program, [
+      "withdraw",
+      "--from",
+      "perps",
+      "--token",
+      "USDC",
+      "--amount",
+      "1",
+    ]);
+    expect(code).toBe(0);
+    expect(logSpy).toHaveBeenCalledWith("✅ Perps transfer processed");
+  });
+
+  it("runs live transfer spot to perps", async () => {
+    const program = new Command("live");
+    registerLiveCommands(program);
+    const code = await runCommand(program, [
+      "transfer",
+      "--direction",
+      "spot-to-perps",
+      "--token",
+      "USDC",
+      "--amount",
+      "1",
+    ]);
+    expect(code).toBe(0);
+    expect(logSpy).toHaveBeenCalledWith("✅ Transfer processed");
+    expect(logSpy).toHaveBeenCalledWith("   Direction: spot -> perps");
+  });
+
+  it("runs live transfer perps to spot", async () => {
+    const program = new Command("live");
+    registerLiveCommands(program);
+    const code = await runCommand(program, [
+      "transfer",
+      "--direction",
+      "perps-to-spot",
+      "--token",
+      "USDC",
+      "--amount",
+      "1",
+    ]);
+    expect(code).toBe(0);
+    expect(logSpy).toHaveBeenCalledWith("✅ Transfer processed");
+    expect(logSpy).toHaveBeenCalledWith("   Direction: perps -> spot");
+  });
+
+  it("runs live margin-account list", async () => {
+    const program = new Command("live");
+    registerLiveCommands(program);
+    const code = await runCommand(program, ["margin-account", "list"]);
+    expect(code).toBe(0);
+    expect(logSpy).toHaveBeenCalledWith("Margin Accounts");
+    expect(logSpy).toHaveBeenCalledWith(
+      JSON.stringify({
+        marginAccountId: "margin-1",
+        label: "",
+        state: "unknown",
+        collateralAsset: "unavailable",
+        equity: "0",
+        freeCollateral: "0",
+        withdrawableCollateral: "0",
+        updatedAt: "unavailable",
+      }),
+    );
+  });
+
+  it("runs live margin-account create", async () => {
+    const program = new Command("live");
+    registerLiveCommands(program);
+    const code = await runCommand(program, [
+      "margin-account",
+      "create",
+      "--label",
+      "main",
+      "--collateral-asset",
+      "USDC",
+    ]);
+    expect(code).toBe(0);
+    expect(logSpy).toHaveBeenCalledWith("Created Margin Account");
+    expect(logSpy).toHaveBeenCalledWith(
+      JSON.stringify({
+        marginAccountId: "margin-2",
+        label: "main",
+        state: "ACTIVE",
+        collateralAsset: "USDC",
+        equity: "0",
+        freeCollateral: "0",
+        withdrawableCollateral: "0",
+        updatedAt: "2026-05-28T00:00:00.000Z",
+      }),
+    );
   });
 
   it("runs live swap", async () => {

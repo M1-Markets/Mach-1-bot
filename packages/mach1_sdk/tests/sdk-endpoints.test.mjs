@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-
 import { createMach1SDK } from "../dist/sdk.js";
 
 test("SDK honors explicit API endpoint overrides", () => {

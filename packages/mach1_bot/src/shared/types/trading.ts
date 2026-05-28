@@ -91,11 +91,11 @@ export interface RiskCheckResult {
 
 export interface RiskBreach {
   type:
-  | "position_limit"
-  | "daily_loss"
-  | "max_drawdown"
-  | "correlation"
-  | "leverage";
+    | "position_limit"
+    | "daily_loss"
+    | "max_drawdown"
+    | "correlation"
+    | "leverage";
   severity: "warning" | "critical";
   message: string;
   currentValue: number;

@@ -8,14 +8,14 @@ import type {
 } from "@/shared/types/config";
 import { getDefaultAiPrompt } from "@/shared/utils/ai-utils";
 import {
-  normalizeLiveMarketConfig,
-  validateLiveMarketConfig,
-} from "@/shared/utils/live-market-config";
-import {
   isConfigModeInput,
   isLiveMode,
   normalizeConfigMode,
 } from "@/shared/utils/config-mode";
+import {
+  normalizeLiveMarketConfig,
+  validateLiveMarketConfig,
+} from "@/shared/utils/live-market-config";
 import { getNumber, getRecord, getString } from "@/shared/utils/record-utils";
 
 export interface ConfigResponse {
@@ -113,16 +113,16 @@ export function createConfigFromResponse(response: ConfigResponse): TomlConfig {
       chain_id: response.chainId,
     },
     ...(response.enableAiHelper &&
-      response.aiHelperType &&
-      response.aiHelperApiKey
+    response.aiHelperType &&
+    response.aiHelperApiKey
       ? {
-        ai_helper: {
-          enabled: true,
-          provider: response.aiHelperType,
-          api_key: response.aiHelperApiKey,
-          prompt: getDefaultAiPrompt(),
-        },
-      }
+          ai_helper: {
+            enabled: true,
+            provider: response.aiHelperType,
+            api_key: response.aiHelperApiKey,
+            prompt: getDefaultAiPrompt(),
+          },
+        }
       : {}),
   };
 }
@@ -140,14 +140,14 @@ export async function writeConfigToFile(
     options?.includeSecrets
       ? config
       : {
-        ...config,
-        wallet: config.wallet
-          ? {
-            ...config.wallet,
-            private_key: undefined,
-          }
-          : undefined,
-      },
+          ...config,
+          wallet: config.wallet
+            ? {
+                ...config.wallet,
+                private_key: undefined,
+              }
+            : undefined,
+        },
   );
   fs.writeFileSync(filePath, tomlContent);
 }
@@ -206,12 +206,12 @@ export function validateConfig(tomlConfig: unknown): void {
     marketMode: getString(trading?.market_mode),
     perps: perps
       ? {
-        marginMode: getString(perps.margin_mode),
-        leverage: getNumber(perps.leverage),
-        liquidationThresholdPercent: getNumber(
-          perps.liquidation_threshold_percent,
-        ),
-      }
+          marginMode: getString(perps.margin_mode),
+          leverage: getNumber(perps.leverage),
+          liquidationThresholdPercent: getNumber(
+            perps.liquidation_threshold_percent,
+          ),
+        }
       : undefined,
   });
 
@@ -234,12 +234,12 @@ export function toBotConfig(tomlConfig: unknown): BotConfig {
     marketMode: getString(trading?.market_mode),
     perps: perps
       ? {
-        marginMode: getString(perps.margin_mode),
-        leverage: getNumber(perps.leverage),
-        liquidationThresholdPercent: getNumber(
-          perps.liquidation_threshold_percent,
-        ),
-      }
+          marginMode: getString(perps.margin_mode),
+          leverage: getNumber(perps.leverage),
+          liquidationThresholdPercent: getNumber(
+            perps.liquidation_threshold_percent,
+          ),
+        }
       : undefined,
   });
 

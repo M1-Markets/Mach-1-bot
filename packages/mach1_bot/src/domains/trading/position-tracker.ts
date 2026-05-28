@@ -1,5 +1,5 @@
-import { MarketManager } from "@/domains/trading/market-manager";
 import { OrderEventEmitter } from "@/domains/execution/order-event-emitter";
+import { MarketManager } from "@/domains/trading/market-manager";
 import { OrderManager } from "@/domains/trading/order-manager";
 import {
   Address,
@@ -104,7 +104,10 @@ export class PositionTracker {
     string,
     { filledQuantity: bigint; fees: bigint; slippage: bigint }
   > = new Map();
-  private readonly mode: Extract<MarketDataMode, "live" | "simulation" | "test">;
+  private readonly mode: Extract<
+    MarketDataMode,
+    "live" | "simulation" | "test"
+  >;
   private tradingPairMetadataPromise?: Promise<
     Map<string, TradingPairMetadata>
   >;
@@ -149,7 +152,9 @@ export class PositionTracker {
       return;
     }
 
-    for (const [token, balance] of Object.entries(DEFAULT_SIMULATION_BALANCES)) {
+    for (const [token, balance] of Object.entries(
+      DEFAULT_SIMULATION_BALANCES,
+    )) {
       this.balances.set(token as Address, balance);
     }
   }
@@ -164,21 +169,20 @@ export class PositionTracker {
       timestamp?: number;
     },
   ): Promise<void> {
-    const { amount: fees, currency: feeCurrency } =
-      await this.resolveFillFees(
-        {
-          pair: {
-            base: order.baseToken,
-            quote: order.quoteToken,
-            symbol: `${order.baseToken}/${order.quoteToken}`,
-          },
-          type: order.orderType === "LIMIT" ? "limit" : "market",
+    const { amount: fees, currency: feeCurrency } = await this.resolveFillFees(
+      {
+        pair: {
+          base: order.baseToken,
+          quote: order.quoteToken,
+          symbol: `${order.baseToken}/${order.quoteToken}`,
         },
-        fillPrice,
-        fillQuantity,
-        options?.feeAmount,
-        options?.feeCurrency,
-      );
+        type: order.orderType === "LIMIT" ? "limit" : "market",
+      },
+      fillPrice,
+      fillQuantity,
+      options?.feeAmount,
+      options?.feeCurrency,
+    );
     const syntheticOrder: OrderLifecycleRecord = {
       localId: order.id,
       pair: {
@@ -411,10 +415,9 @@ export class PositionTracker {
     try {
       const currentPrice = await this.marketManager.getCurrentPrice(pair);
       const currentValue = (balance * currentPrice) / BigInt(100);
-      const unrealizedPnL =
-        position
-          ? currentValue - (position.balance * position.averagePrice) / 100n
-          : 0n;
+      const unrealizedPnL = position
+        ? currentValue - (position.balance * position.averagePrice) / 100n
+        : 0n;
 
       return {
         token: pair.base,
@@ -477,7 +480,10 @@ export class PositionTracker {
       if (balance > 0n && !portfolio.has(token)) {
         const tokenMetadata = metadataByToken.get(token);
         let value = tokenMetadata?.isCash
-          ? this.convertRawBalanceToPortfolioValue(balance, tokenMetadata.decimals)
+          ? this.convertRawBalanceToPortfolioValue(
+              balance,
+              tokenMetadata.decimals,
+            )
           : balance;
 
         if (tokenMetadata && !tokenMetadata.isCash) {
@@ -488,20 +494,17 @@ export class PositionTracker {
             ) ?? this.getBuiltInTradingPairForToken(token);
 
           if (pair) {
-            value = await this.estimateBalanceValue(
-              balance,
-              {
-                base:
-                  "base_token_contract" in pair
-                    ? (pair.base_token_contract as Address)
-                    : pair.base,
-                quote:
-                  "quote_token_contract" in pair
-                    ? (pair.quote_token_contract as Address)
-                    : pair.quote,
-                symbol: pair.symbol,
-              },
-            );
+            value = await this.estimateBalanceValue(balance, {
+              base:
+                "base_token_contract" in pair
+                  ? (pair.base_token_contract as Address)
+                  : pair.base,
+              quote:
+                "quote_token_contract" in pair
+                  ? (pair.quote_token_contract as Address)
+                  : pair.quote,
+              symbol: pair.symbol,
+            });
           }
         }
 
@@ -792,8 +795,8 @@ export class PositionTracker {
     const metadata = await this.getTradingPairMetadata(order.pair);
     const feeBps =
       order.type === "limit"
-        ? metadata?.makerFeeBps ?? 0n
-        : metadata?.takerFeeBps ?? 0n;
+        ? (metadata?.makerFeeBps ?? 0n)
+        : (metadata?.takerFeeBps ?? 0n);
 
     return {
       amount:
@@ -927,7 +930,9 @@ export class PositionTracker {
 
   private async getTradingPairMetadataByToken(
     token: Address,
-  ): Promise<{ symbol: string; decimals: number; isCash: boolean } | undefined> {
+  ): Promise<
+    { symbol: string; decimals: number; isCash: boolean } | undefined
+  > {
     const pairs = await this.marketManager.getAllTradingPairs();
 
     for (const pair of pairs) {

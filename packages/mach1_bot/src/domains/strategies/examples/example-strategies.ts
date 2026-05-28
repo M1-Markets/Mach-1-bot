@@ -23,6 +23,12 @@ const isNumber = (value: unknown): value is number =>
 const getNumberParam = (value: unknown, fallback: number): number =>
   isNumber(value) ? value : fallback;
 
+type MultiIndicatorMarketConditions = {
+  allowed: boolean;
+  trendBias: "bull" | "bear" | "neutral";
+  trendStrength: number;
+};
+
 // =============================================================================
 // Example 1: Simple RSI Strategy
 // =============================================================================
@@ -79,6 +85,7 @@ export class RSIStrategy implements IStrategy {
   };
 
   private priceHistory: Map<string, number[]> = new Map();
+  private openQuantities: Map<string, number> = new Map();
 
   async initialize(context: StrategyContext): Promise<void> {
     context.utils.log.info("RSI Strategy initialized", {
@@ -158,15 +165,6 @@ export class RSIStrategy implements IStrategy {
         shouldContinue: true,
         nextExecutionTime: Date.now() + 30000, // Execute every 30 seconds
         errors: errors.length > 0 ? errors : undefined,
-        state: {
-          lastExecution: Date.now(),
-          priceHistoryLengths: Object.fromEntries(
-            Array.from(this.priceHistory.entries()).map(([pair, prices]) => [
-              pair,
-              prices.length,
-            ]),
-          ),
-        },
       };
     } catch (error) {
       return {
@@ -225,6 +223,7 @@ export class RSIStrategy implements IStrategy {
 
   async cleanup(context: StrategyContext): Promise<void> {
     this.priceHistory.clear();
+    this.openQuantities.clear();
     context.utils.log.info("RSI Strategy cleaned up");
   }
 
@@ -248,10 +247,12 @@ export class RSIStrategy implements IStrategy {
 
     // Buy signal: RSI oversold
     if (rsi < oversoldThreshold) {
+      const quantity = positionSize / currentPrice;
+      this.openQuantities.set(pair, quantity);
       return {
         action: "buy",
         pair,
-        quantity: positionSize / currentPrice,
+        quantity,
         price: currentPrice,
         orderType: "market",
         confidence: Math.max(0, (oversoldThreshold - rsi) / oversoldThreshold),
@@ -262,9 +263,15 @@ export class RSIStrategy implements IStrategy {
 
     // Sell signal: RSI overbought
     if (rsi > overboughtThreshold) {
+      const quantity = this.openQuantities.get(pair);
+      if (!(quantity && quantity > 0)) {
+        return null;
+      }
+      this.openQuantities.delete(pair);
       return {
         action: "sell",
         pair,
+        quantity,
         orderType: "market",
         confidence: Math.max(
           0,
@@ -336,6 +343,7 @@ export class MovingAverageCrossoverStrategy implements IStrategy {
 
   private priceHistory: Map<string, number[]> = new Map();
   private lastCrossover: Map<string, "bull" | "bear" | null> = new Map();
+  private openQuantities: Map<string, number> = new Map();
 
   async initialize(context: StrategyContext): Promise<void> {
     for (const pair of this.config.supportedPairs) {
@@ -428,6 +436,7 @@ export class MovingAverageCrossoverStrategy implements IStrategy {
   async cleanup(context: StrategyContext): Promise<void> {
     this.priceHistory.clear();
     this.lastCrossover.clear();
+    this.openQuantities.clear();
   }
 
   private checkCrossover(
@@ -449,10 +458,12 @@ export class MovingAverageCrossoverStrategy implements IStrategy {
 
       if (currentCrossover === "bull" && lastCrossover === "bear") {
         // Bullish crossover - buy signal
+        const quantity = positionSize / currentPrice;
+        this.openQuantities.set(pair, quantity);
         return {
           action: "buy",
           pair,
-          quantity: positionSize / currentPrice,
+          quantity,
           orderType: "market",
           confidence: Math.abs(fastMA - slowMA) / slowMA,
           reason: `Bullish crossover: Fast MA (${fastMA.toFixed(2)}) > Slow MA (${slowMA.toFixed(2)})`,
@@ -460,9 +471,15 @@ export class MovingAverageCrossoverStrategy implements IStrategy {
         };
       } else if (currentCrossover === "bear" && lastCrossover === "bull") {
         // Bearish crossover - sell signal
+        const quantity = this.openQuantities.get(pair);
+        if (!(quantity && quantity > 0)) {
+          return null;
+        }
+        this.openQuantities.delete(pair);
         return {
           action: "sell",
           pair,
+          quantity,
           orderType: "market",
           confidence: Math.abs(fastMA - slowMA) / slowMA,
           reason: `Bearish crossover: Fast MA (${fastMA.toFixed(2)}) < Slow MA (${slowMA.toFixed(2)})`,
@@ -550,6 +567,43 @@ export class MultiIndicatorStrategy implements IStrategy {
         max: 3,
         description: "Minimum number of indicators for confluence",
       },
+      trendStrengthThreshold: {
+        type: "number",
+        default: 0.03,
+        min: 0.005,
+        max: 0.2,
+        description:
+          "Skip mean-reversion entries against strong directional regimes",
+      },
+      maxSpreadRatio: {
+        type: "number",
+        default: 0.005,
+        min: 0.0001,
+        max: 0.05,
+        description: "Maximum acceptable bid/ask spread ratio before skipping",
+      },
+      minLiquidityDepth: {
+        type: "number",
+        default: 3,
+        min: 1,
+        max: 20,
+        description: "Minimum order-book depth count required on both sides",
+      },
+      maxVolatilityRatio: {
+        type: "number",
+        default: 0.04,
+        min: 0.005,
+        max: 0.25,
+        description: "Maximum recent return volatility ratio before skipping",
+      },
+      warmupBuffer: {
+        type: "number",
+        default: 10,
+        min: 5,
+        max: 50,
+        description:
+          "Additional candles required beyond indicator minimum for stable warmup",
+      },
     },
   };
 
@@ -562,6 +616,7 @@ export class MultiIndicatorStrategy implements IStrategy {
       bbSignal: "buy" | "sell" | "neutral";
     }
   > = new Map();
+  private openQuantities: Map<string, number> = new Map();
 
   async initialize(context: StrategyContext): Promise<void> {
     for (const pair of this.config.supportedPairs) {
@@ -601,6 +656,7 @@ export class MultiIndicatorStrategy implements IStrategy {
       const rsiPeriod = getNumberParam(context.parameters.rsiPeriod, 14);
       const macdSlow = getNumberParam(context.parameters.macdSlow, 26);
       const bbPeriod = getNumberParam(context.parameters.bbPeriod, 20);
+      const warmupBuffer = getNumberParam(context.parameters.warmupBuffer, 10);
 
       if (currentPrice > 0) {
         state.prices.push(currentPrice);
@@ -612,11 +668,27 @@ export class MultiIndicatorStrategy implements IStrategy {
       // Calculate indicators
       const minRequiredPrices = Math.max(rsiPeriod, macdSlow, bbPeriod);
 
-      if (state.prices.length >= minRequiredPrices) {
+      if (state.prices.length >= minRequiredPrices + warmupBuffer) {
         this.updateIndicatorSignals(state, context);
 
+        const marketConditions = this.evaluateMarketConditions(
+          state,
+          marketData[pair],
+          currentPrice,
+          context,
+        );
+        if (!marketConditions.allowed) {
+          continue;
+        }
+
         // Check for confluence
-        const signal = this.checkConfluence(pair, state, currentPrice, context);
+        const signal = this.checkConfluence(
+          pair,
+          state,
+          currentPrice,
+          context,
+          marketConditions,
+        );
         if (signal) {
           signals.push(signal);
         }
@@ -672,6 +744,7 @@ export class MultiIndicatorStrategy implements IStrategy {
 
   async cleanup(context: StrategyContext): Promise<void> {
     this.marketState.clear();
+    this.openQuantities.clear();
   }
 
   async onMarketEvent(
@@ -762,6 +835,7 @@ export class MultiIndicatorStrategy implements IStrategy {
     },
     currentPrice: number,
     context: StrategyContext,
+    marketConditions: MultiIndicatorMarketConditions,
   ): StrategySignal | null {
     const buySignals = [
       state.rsiSignal,
@@ -775,12 +849,32 @@ export class MultiIndicatorStrategy implements IStrategy {
     ].filter((s) => s === "sell").length;
 
     const threshold = getNumberParam(context.parameters.confluenceThreshold, 2);
+    const trendStrengthThreshold = getNumberParam(
+      context.parameters.trendStrengthThreshold,
+      0.03,
+    );
 
     if (buySignals >= threshold) {
+      if (
+        marketConditions.trendBias === "bear" &&
+        marketConditions.trendStrength >= trendStrengthThreshold
+      ) {
+        return null;
+      }
+      const availableCapital = context.utils.trading.getAvailableCapital();
+      const notional = Math.min(
+        availableCapital,
+        context.portfolio.totalValue * 0.15,
+      );
+      const quantity = notional / currentPrice;
+      if (!(quantity > 0)) {
+        return null;
+      }
+      this.openQuantities.set(pair, quantity);
       return {
         action: "buy",
         pair,
-        quantity: (context.portfolio.totalValue * 0.15) / currentPrice, // 15% of portfolio
+        quantity, // 15% of portfolio
         orderType: "market",
         confidence: buySignals / 3,
         reason: `Buy confluence: ${buySignals}/3 indicators bullish`,
@@ -794,9 +888,23 @@ export class MultiIndicatorStrategy implements IStrategy {
     }
 
     if (sellSignals >= threshold) {
+      if (
+        marketConditions.trendBias === "bull" &&
+        marketConditions.trendStrength >= trendStrengthThreshold
+      ) {
+        return null;
+      }
+      const quantity =
+        context.utils.trading.fullCloseQuantity(pair) ||
+        this.openQuantities.get(pair);
+      if (!(quantity && quantity > 0)) {
+        return null;
+      }
+      this.openQuantities.delete(pair);
       return {
         action: "sell",
         pair,
+        quantity,
         orderType: "market",
         confidence: sellSignals / 3,
         reason: `Sell confluence: ${sellSignals}/3 indicators bearish`,
@@ -810,6 +918,77 @@ export class MultiIndicatorStrategy implements IStrategy {
     }
 
     return null;
+  }
+
+  private evaluateMarketConditions(
+    state: {
+      prices: number[];
+      rsiSignal: "buy" | "sell" | "neutral";
+      macdSignal: "buy" | "sell" | "neutral";
+      bbSignal: "buy" | "sell" | "neutral";
+    },
+    marketTick:
+      | {
+          spread?: number;
+          orderBookDepth?: { bids: number; asks: number };
+        }
+      | undefined,
+    currentPrice: number,
+    context: StrategyContext,
+  ): MultiIndicatorMarketConditions {
+    const maxSpreadRatio = getNumberParam(
+      context.parameters.maxSpreadRatio,
+      0.005,
+    );
+    const minLiquidityDepth = getNumberParam(
+      context.parameters.minLiquidityDepth,
+      3,
+    );
+    const maxVolatilityRatio = getNumberParam(
+      context.parameters.maxVolatilityRatio,
+      0.04,
+    );
+
+    if (currentPrice <= 0 || state.prices.length < 30) {
+      return {
+        allowed: false,
+        trendBias: "neutral",
+        trendStrength: 0,
+      };
+    }
+
+    const recentPrices = state.prices.slice(-20);
+    const returns = recentPrices.slice(1).map((price, index) => {
+      const previous = recentPrices[index];
+      return previous > 0 ? (price - previous) / previous : 0;
+    });
+    const volatility = returns.length > 0 ? context.utils.math.std(returns) : 0;
+    const spreadRatio =
+      marketTick?.spread && currentPrice > 0
+        ? marketTick.spread / currentPrice
+        : 0;
+    const liquidityDepth = Math.min(
+      marketTick?.orderBookDepth?.bids ?? 0,
+      marketTick?.orderBookDepth?.asks ?? 0,
+    );
+
+    const fastTrend = context.utils.indicators.ema(state.prices, 10);
+    const slowTrend = context.utils.indicators.ema(state.prices, 30);
+    const trendStrength =
+      slowTrend > 0 ? Math.abs(fastTrend - slowTrend) / slowTrend : 0;
+    const trendBias =
+      trendStrength === 0 ? "neutral" : fastTrend > slowTrend ? "bull" : "bear";
+
+    return {
+      allowed:
+        returns.length >= 10 &&
+        volatility > 0 &&
+        spreadRatio <= maxSpreadRatio &&
+        liquidityDepth >= minLiquidityDepth &&
+        volatility <= maxVolatilityRatio,
+      trendBias,
+      trendStrength,
+    };
   }
 }
 
@@ -875,10 +1054,12 @@ export class PairsTradingStrategy implements IStrategy {
     | "long_btc_short_eth"
     | "long_eth_short_btc"
     | "neutral" = "neutral";
+  private legQuantities: Map<string, number> = new Map();
 
   async initialize(context: StrategyContext): Promise<void> {
     this.ratioHistory = [];
     this.currentPosition = "neutral";
+    this.legQuantities.clear();
     context.utils.log.info("Pairs Trading Strategy initialized");
   }
 
@@ -980,6 +1161,7 @@ export class PairsTradingStrategy implements IStrategy {
   async cleanup(context: StrategyContext): Promise<void> {
     this.ratioHistory = [];
     this.currentPosition = "neutral";
+    this.legQuantities.clear();
   }
 
   private generatePairSignals(
@@ -1000,33 +1182,38 @@ export class PairsTradingStrategy implements IStrategy {
     if (this.currentPosition === "neutral") {
       if (zScore > entryThreshold) {
         // Ratio too high: short BTC, long ETH
+        const btcQuantity = positionValue / btcPrice;
+        const ethQuantity = positionValue / ethPrice;
         signals.push({
           action: "sell",
           pair: "BTC/USDC",
-          quantity: positionValue / btcPrice,
+          quantity: btcQuantity,
           orderType: "market",
           confidence: Math.min(1, Math.abs(zScore) / 3),
           reason: `Pairs entry: BTC/ETH ratio too high (z-score: ${zScore.toFixed(2)})`,
           metadata: { zScore, strategy: "pairs", leg: "short_btc" },
         });
-
         signals.push({
           action: "buy",
           pair: "ETH/USDC",
-          quantity: positionValue / ethPrice,
+          quantity: ethQuantity,
           orderType: "market",
           confidence: Math.min(1, Math.abs(zScore) / 3),
           reason: `Pairs entry: ETH undervalued vs BTC (z-score: ${zScore.toFixed(2)})`,
           metadata: { zScore, strategy: "pairs", leg: "long_eth" },
         });
 
+        this.legQuantities.set("BTC/USDC", btcQuantity);
+        this.legQuantities.set("ETH/USDC", ethQuantity);
         this.currentPosition = "long_eth_short_btc";
       } else if (zScore < -entryThreshold) {
         // Ratio too low: long BTC, short ETH
+        const btcQuantity = positionValue / btcPrice;
+        const ethQuantity = positionValue / ethPrice;
         signals.push({
           action: "buy",
           pair: "BTC/USDC",
-          quantity: positionValue / btcPrice,
+          quantity: btcQuantity,
           orderType: "market",
           confidence: Math.min(1, Math.abs(zScore) / 3),
           reason: `Pairs entry: BTC undervalued vs ETH (z-score: ${zScore.toFixed(2)})`,
@@ -1036,23 +1223,33 @@ export class PairsTradingStrategy implements IStrategy {
         signals.push({
           action: "sell",
           pair: "ETH/USDC",
-          quantity: positionValue / ethPrice,
+          quantity: ethQuantity,
           orderType: "market",
           confidence: Math.min(1, Math.abs(zScore) / 3),
           reason: `Pairs entry: ETH/BTC ratio too low (z-score: ${zScore.toFixed(2)})`,
           metadata: { zScore, strategy: "pairs", leg: "short_eth" },
         });
 
+        this.legQuantities.set("BTC/USDC", btcQuantity);
+        this.legQuantities.set("ETH/USDC", ethQuantity);
         this.currentPosition = "long_btc_short_eth";
       }
     }
 
     // Exit signals
     else if (Math.abs(zScore) < exitThreshold) {
+      const btcQuantity = this.legQuantities.get("BTC/USDC");
+      const ethQuantity = this.legQuantities.get("ETH/USDC");
       if (this.currentPosition === "long_btc_short_eth") {
+        if (
+          !(btcQuantity && btcQuantity > 0 && ethQuantity && ethQuantity > 0)
+        ) {
+          return signals;
+        }
         signals.push({
           action: "sell",
           pair: "BTC/USDC",
+          quantity: btcQuantity,
           orderType: "market",
           confidence: 1,
           reason: `Pairs exit: Ratio normalized (z-score: ${zScore.toFixed(2)})`,
@@ -1062,15 +1259,22 @@ export class PairsTradingStrategy implements IStrategy {
         signals.push({
           action: "buy",
           pair: "ETH/USDC",
+          quantity: ethQuantity,
           orderType: "market",
           confidence: 1,
           reason: `Pairs exit: Close short ETH position`,
           metadata: { zScore, strategy: "pairs", action: "close_short_eth" },
         });
       } else if (this.currentPosition === "long_eth_short_btc") {
+        if (
+          !(btcQuantity && btcQuantity > 0 && ethQuantity && ethQuantity > 0)
+        ) {
+          return signals;
+        }
         signals.push({
           action: "buy",
           pair: "BTC/USDC",
+          quantity: btcQuantity,
           orderType: "market",
           confidence: 1,
           reason: `Pairs exit: Close short BTC position`,
@@ -1080,6 +1284,7 @@ export class PairsTradingStrategy implements IStrategy {
         signals.push({
           action: "sell",
           pair: "ETH/USDC",
+          quantity: ethQuantity,
           orderType: "market",
           confidence: 1,
           reason: `Pairs exit: Ratio normalized (z-score: ${zScore.toFixed(2)})`,
@@ -1087,6 +1292,8 @@ export class PairsTradingStrategy implements IStrategy {
         });
       }
 
+      this.legQuantities.delete("BTC/USDC");
+      this.legQuantities.delete("ETH/USDC");
       this.currentPosition = "neutral";
     }
 

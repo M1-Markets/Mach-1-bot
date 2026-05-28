@@ -14,10 +14,8 @@ describe("RiskManager", () => {
   let mockPositionTracker: PositionTracker;
   let mockMarketManager: MarketManager;
   let mockOrderManager: OrderManager;
-  const baseToken =
-    "0x1234567890123456789012345678901234567890" as Address;
-  const quoteToken =
-    "0x0987654321098765432109876543210987654321" as Address;
+  const baseToken = "0x1234567890123456789012345678901234567890" as Address;
+  const quoteToken = "0x0987654321098765432109876543210987654321" as Address;
 
   const createPerpsContext = (
     overrides: Partial<PerpsRiskContext> = {},
@@ -41,7 +39,8 @@ describe("RiskManager", () => {
     }),
     funding: {
       status: "unsupported",
-      warning: "Funding rate unavailable from Monaco; skipping funding adjustment.",
+      warning:
+        "Funding rate unavailable from Monaco; skipping funding adjustment.",
     },
     ...overrides,
   });
@@ -440,7 +439,11 @@ describe("RiskManager", () => {
       });
 
       expect(result.approved).toBe(true);
-      expect(result.warnings.some((warning) => warning.includes("Liquidation distance"))).toBe(true);
+      expect(
+        result.warnings.some((warning) =>
+          warning.includes("Liquidation distance"),
+        ),
+      ).toBe(true);
       expect(receivedTypes).toEqual(
         expect.arrayContaining(["liquidation_warning", "margin_warning"]),
       );
@@ -477,7 +480,11 @@ describe("RiskManager", () => {
       });
 
       expect(result.approved).toBe(false);
-      expect(result.rejectionReasons.some((reason) => reason.includes("Liquidation distance"))).toBe(true);
+      expect(
+        result.rejectionReasons.some((reason) =>
+          reason.includes("Liquidation distance"),
+        ),
+      ).toBe(true);
       expect(receivedTypes).toContain("liquidation_triggered");
     });
 

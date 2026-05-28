@@ -5,6 +5,7 @@ import { OrderEventEmitter, OrderLifecycleStore } from "@/domains/execution";
 import type { BacktestEngine } from "@/domains/execution/backtest-engine";
 import type { PaperTradingEngine } from "@/domains/execution/paper-trading-engine";
 import { StrategyExecutionCoordinator } from "@/domains/execution/strategy-execution-coordinator";
+import type { RiskEvent as StrategyRiskEvent } from "@/domains/strategies/core/i-strategy";
 import { EXAMPLE_STRATEGIES } from "@/domains/strategies/examples/example-strategies";
 import type { StrategyPerformanceReport } from "@/domains/strategies/management/strategy-manager";
 // Enhanced strategy system imports (optional dependencies)
@@ -12,7 +13,6 @@ import {
   type StrategyInstance,
   StrategyManager,
 } from "@/domains/strategies/management/strategy-manager";
-import type { RiskEvent as StrategyRiskEvent } from "@/domains/strategies/core/i-strategy";
 import {
   type StrategyExample,
   strategyRegistry,
@@ -193,25 +193,28 @@ type ActiveLiveExecutionEngine = ExecutionEngine & {
 type PerpsRiskAwareLiveEngine = ActiveLiveExecutionEngine & {
   getAccountState():
     | {
-      equity: bigint;
-      freeCollateral: bigint;
-      maintenanceMargin: bigint;
-      updatedAt: number;
-    }
+        equity: bigint;
+        freeCollateral: bigint;
+        maintenanceMargin: bigint;
+        updatedAt: number;
+      }
     | undefined;
-  getFundingState?: (pair: TradingPair) => {
-    status: "available" | "unsupported" | "missing" | "stale";
-    rate?: bigint;
-    accruedFunding?: bigint;
-    updatedAt?: number;
-    warning?: string;
-  } | undefined;
+  getFundingState?: (pair: TradingPair) =>
+    | {
+        status: "available" | "unsupported" | "missing" | "stale";
+        rate?: bigint;
+        accruedFunding?: bigint;
+        updatedAt?: number;
+        warning?: string;
+      }
+    | undefined;
 };
 
 const isPerpsRiskAwareLiveEngine = (
   engine: ActiveLiveExecutionEngine | undefined,
 ): engine is PerpsRiskAwareLiveEngine =>
-  !!engine && typeof (engine as PerpsRiskAwareLiveEngine).getAccountState === "function";
+  !!engine &&
+  typeof (engine as PerpsRiskAwareLiveEngine).getAccountState === "function";
 
 export class Mach1Bot {
   private strategyCallback?: (data: MarketData) => Promise<void>;
@@ -274,11 +277,11 @@ export class Mach1Bot {
       config.mode === "live"
         ? undefined
         : {
-          mode: "simulation",
-          startingBalances: {
-            [SIMULATION_CASH_TOKEN]: SIMULATION_STARTING_BALANCE,
+            mode: "simulation",
+            startingBalances: {
+              [SIMULATION_CASH_TOKEN]: SIMULATION_STARTING_BALANCE,
+            },
           },
-        },
     );
     this.orderEventEmitter = new OrderEventEmitter();
     this.orderLifecycleStore = new OrderLifecycleStore(this.orderEventEmitter);
@@ -326,15 +329,17 @@ export class Mach1Bot {
         };
       }
 
+      const liveEngine = this.liveEngine;
+
       return {
         marketMode: "isolated_perps" as const,
         maxConfiguredLeverage: this.config.perps?.leverage,
         liquidationThresholdPercent:
           this.config.perps?.liquidationThresholdPercent,
-        accountState: this.liveEngine.getAccountState(),
+        accountState: liveEngine.getAccountState(),
         getPosition: async (requestedPair: TradingPair) =>
-          this.liveEngine!.getPosition(requestedPair),
-        funding: this.liveEngine.getFundingState?.(pair),
+          liveEngine.getPosition(requestedPair),
+        funding: liveEngine.getFundingState?.(pair),
       };
     });
     this.riskManager.on("riskEvent", (event: StrategyRiskEvent) => {
@@ -484,7 +489,7 @@ export class Mach1Bot {
         env.MACH1_MODE === "paper"
           ? ("simulation" as BotConfig["mode"]) // normalize 'paper' to 'simulation'
           : (env.MACH1_MODE as BotConfig["mode"]) ||
-          ("simulation" as BotConfig["mode"]),
+            ("simulation" as BotConfig["mode"]),
       chainId: env.MACH1_CHAIN_ID ? parseInt(env.MACH1_CHAIN_ID) : undefined,
       logLevel: env.MACH1_LOG_LEVEL || "info",
     };
@@ -637,7 +642,12 @@ export class Mach1Bot {
 
   private async awaitOrderSettlement(
     executionEngine: Awaited<ReturnType<Mach1Bot["getActiveExecutionEngine"]>>,
-    result: { orderId: string; status: string; filledQuantity?: bigint; remainingQuantity?: bigint },
+    result: {
+      orderId: string;
+      status: string;
+      filledQuantity?: bigint;
+      remainingQuantity?: bigint;
+    },
   ) {
     if (this.config.mode === "live" || result.status !== "pending") {
       return result;
@@ -720,7 +730,9 @@ export class Mach1Bot {
           throw new Error("Live trading engine unavailable");
         }
         if (typeof this.liveEngine.getLivePrice !== "function") {
-          throw new Error("Active live engine does not expose live price lookup");
+          throw new Error(
+            "Active live engine does not expose live price lookup",
+          );
         }
         return await this.liveEngine.getLivePrice(pair);
       } catch (error) {
@@ -760,8 +772,8 @@ export class Mach1Bot {
           orderType: limitPrice ? "limit" : "market",
           ...(limitPrice
             ? {
-              amountUsd: Number((position.balance * limitPrice) / 100n) / 100,
-            }
+                amountUsd: Number((position.balance * limitPrice) / 100n) / 100,
+              }
             : {}),
         });
       },
@@ -799,8 +811,8 @@ export class Mach1Bot {
           const amountToSell =
             options.amountPercent && options.amountPercent > 0
               ? (position.balance *
-                BigInt(Math.floor(options.amountPercent * 100))) /
-              BigInt(10000)
+                  BigInt(Math.floor(options.amountPercent * 100))) /
+                BigInt(10000)
               : position.balance;
 
           return this.sell(symbol, {
@@ -1345,18 +1357,18 @@ export class Mach1Bot {
     const liveEngine: ActiveLiveExecutionEngine =
       this.config.marketMode === "isolated_perps"
         ? new IsolatedPerpsLiveTradingEngine(
-          liveConfig,
-          this.marketManager,
-          this.realtimeManager,
-          this.orderLifecycleStore,
-        )
+            liveConfig,
+            this.marketManager,
+            this.realtimeManager,
+            this.orderLifecycleStore,
+          )
         : new LiveTradingEngine(
-          liveConfig,
-          this.marketManager,
-          this.realtimeManager,
-          undefined,
-          this.orderLifecycleStore,
-        );
+            liveConfig,
+            this.marketManager,
+            this.realtimeManager,
+            undefined,
+            this.orderLifecycleStore,
+          );
     await liveEngine.initialize();
     // Replace the realtime manager with the live, SDK-backed instance
     this.realtimeManager = liveEngine.getRealtimeManager();
@@ -1523,7 +1535,19 @@ export class Mach1Bot {
   }
 
   private async generateMockMarketData(): Promise<MarketData> {
-    return this.marketDataService.buildSimulationMarketData();
+    return this.marketDataService.buildSimulationMarketData(
+      this.getTargetSymbolsForSimulationData(),
+    );
+  }
+
+  private getTargetSymbolsForSimulationData(): string[] {
+    if (this.preferredTradingPairs.length > 0) {
+      return this.preferredTradingPairs.map((symbol) =>
+        this.tradingPairService.normalizeSymbol(symbol),
+      );
+    }
+
+    return this.tradingPairService.getAllSymbols();
   }
 
   private async getRealMarketData(): Promise<MarketData> {
@@ -1852,32 +1876,32 @@ export class Mach1Bot {
     const lines =
       entries.length === 0
         ? [
-          "Risk Heatmap",
-          "Exposure: 0.00%",
-          "Drawdown: 0.00%",
-          "Concentration: 0.00%",
-          "Correlation: 0.00%",
-          "Overall: LOW",
-        ]
+            "Risk Heatmap",
+            "Exposure: 0.00%",
+            "Drawdown: 0.00%",
+            "Concentration: 0.00%",
+            "Correlation: 0.00%",
+            "Overall: LOW",
+          ]
         : [
-          "Risk Heatmap",
-          ...entries.map(
-            ([symbol, weight]) =>
-              `${symbol} exposure ${(weight * 100).toFixed(2)}% ${this.labelRisk(weight)}`,
-          ),
-          `Exposure ${(totalExposure * 100).toFixed(2)}%`,
-          `Drawdown ${(performance.maxDrawdown * 100).toFixed(2)}% ${this.labelRisk(performance.maxDrawdown)}`,
-          `Concentration ${(concentrationRisk * 100).toFixed(2)}% ${this.labelRisk(concentrationRisk)}`,
-          `Correlation ${(correlationRisk * 100).toFixed(2)}% ${this.labelRisk(correlationRisk)}`,
-          `Overall: ${this.labelRisk(
-            Math.max(
-              largestWeight,
-              concentrationRisk,
-              correlationRisk,
-              performance.maxDrawdown,
+            "Risk Heatmap",
+            ...entries.map(
+              ([symbol, weight]) =>
+                `${symbol} exposure ${(weight * 100).toFixed(2)}% ${this.labelRisk(weight)}`,
             ),
-          )}`,
-        ];
+            `Exposure ${(totalExposure * 100).toFixed(2)}%`,
+            `Drawdown ${(performance.maxDrawdown * 100).toFixed(2)}% ${this.labelRisk(performance.maxDrawdown)}`,
+            `Concentration ${(concentrationRisk * 100).toFixed(2)}% ${this.labelRisk(concentrationRisk)}`,
+            `Correlation ${(correlationRisk * 100).toFixed(2)}% ${this.labelRisk(correlationRisk)}`,
+            `Overall: ${this.labelRisk(
+              Math.max(
+                largestWeight,
+                concentrationRisk,
+                correlationRisk,
+                performance.maxDrawdown,
+              ),
+            )}`,
+          ];
 
     return {
       display: () => lines.join("\n"),
@@ -2020,8 +2044,8 @@ export class Mach1Bot {
         spread:
           event.orderBook.asks.length > 0 && event.orderBook.bids.length > 0
             ? Number(
-              event.orderBook.asks[0].price - event.orderBook.bids[0].price,
-            ) / 100
+                event.orderBook.asks[0].price - event.orderBook.bids[0].price,
+              ) / 100
             : 0,
       };
       handler(book);
@@ -2316,7 +2340,7 @@ export class Mach1Bot {
     const endDate = new Date();
     const startDate = new Date(
       endDate.getTime() -
-      (options.totalPeriodDays || 365) * 24 * 60 * 60 * 1000,
+        (options.totalPeriodDays || 365) * 24 * 60 * 60 * 1000,
     );
 
     return await this.requireStrategyOptimizer().walkForwardAnalysis(

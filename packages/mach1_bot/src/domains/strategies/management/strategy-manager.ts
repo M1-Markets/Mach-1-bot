@@ -6,9 +6,10 @@
  */
 
 import { EventEmitter } from "events";
-import type { TradingPair as MonacoTradingPair } from "mach1_sdk";
+import type { TradingPairResolver } from "mach1_sdk";
 import { AIAgent } from "@/domains/bot/ai-agent";
 import { OrderEventEmitter } from "@/domains/execution/order-event-emitter";
+import { StrategyExecutionCoordinator } from "@/domains/execution/strategy-execution-coordinator";
 import {
   IStrategy,
   MarketEvent,
@@ -21,16 +22,14 @@ import {
   StrategySignal,
   StrategyUtils,
 } from "@/domains/strategies/core/i-strategy";
-import { MarketManager } from "@/domains/trading/market-manager";
 import { MarketDataService } from "@/domains/trading/market-data-service";
+import { MarketManager } from "@/domains/trading/market-manager";
 import { OrderManager } from "@/domains/trading/order-manager";
 import { PositionTracker } from "@/domains/trading/position-tracker";
 import { RealtimeManager } from "@/domains/trading/realtime-manager";
 import { RiskManager } from "@/domains/trading/risk-manager";
 import { TradingPairService } from "@/domains/trading/trading-pair-service";
-import { StrategyExecutionCoordinator } from "@/domains/execution/strategy-execution-coordinator";
 import {
-  Address,
   MarketData,
   type OrderLifecycleEvent,
   type OrderLifecycleRecord,
@@ -47,7 +46,7 @@ import type {
   AiStrategySnapshot,
 } from "@/shared/types/ai";
 import type { BotConfig } from "@/shared/types/bot";
-import type { TradingPairResolver } from "mach1_sdk";
+import { calculateScaledNotionalValue } from "@/shared/utils/trading-utils";
 import { RegisteredStrategy, StrategyRegistry } from "./strategy-registry";
 
 export interface StrategyInstance {
@@ -116,33 +115,32 @@ export interface StrategyPerformanceReport {
   };
 }
 
-type StrategySignalAction = StrategySignal["action"];
 type SupportedExecutableOrderType = NonNullable<OrderRequest["orderType"]>;
 
 interface StrategySignalValidationError {
   code:
-  | "unsupported_action"
-  | "unsupported_order_type"
-  | "unsupported_pair"
-  | "invalid_confidence"
-  | "missing_quantity"
-  | "invalid_quantity"
-  | "missing_price"
-  | "invalid_price"
-  | "invalid_direction"
-  | "invalid_leverage"
-  | "missing_perps_direction";
+    | "unsupported_action"
+    | "unsupported_order_type"
+    | "unsupported_pair"
+    | "invalid_confidence"
+    | "missing_quantity"
+    | "invalid_quantity"
+    | "missing_price"
+    | "invalid_price"
+    | "invalid_direction"
+    | "invalid_leverage"
+    | "missing_perps_direction";
   field:
-  | "action"
-  | "orderType"
-  | "pair"
-  | "confidence"
-  | "quantity"
-  | "price"
-  | "direction"
-  | "leverage"
-  | "reduceOnly"
-  | "closeOnly";
+    | "action"
+    | "orderType"
+    | "pair"
+    | "confidence"
+    | "quantity"
+    | "price"
+    | "direction"
+    | "leverage"
+    | "reduceOnly"
+    | "closeOnly";
   message: string;
 }
 
@@ -169,6 +167,8 @@ export class StrategyManager extends EventEmitter {
   private readonly marketDataService: MarketDataService;
   private detachOrderEventEmitter?: () => void;
   private detachRiskEventEmitter?: () => void;
+  private pendingOrders: Map<string, OrderLifecycleRecord> = new Map();
+  private recentSignalTimestamps: Map<string, number> = new Map();
 
   constructor(
     private registry: StrategyRegistry,
@@ -567,7 +567,7 @@ export class StrategyManager extends EventEmitter {
       parameters: instance.parameters,
       state: instance.state,
       metrics: instance.metrics,
-      utils: this.createStrategyUtils(instance),
+      utils: this.createStrategyUtils(instance, corePositions, portfolio),
     };
   }
 
@@ -710,21 +710,83 @@ export class StrategyManager extends EventEmitter {
     return "approve";
   }
 
-  private createStrategyUtils(instance: StrategyInstance): StrategyUtils {
+  private createStrategyUtils(
+    instance: StrategyInstance,
+    corePositions: Map<string, Position>,
+    portfolio: SdkPortfolio,
+  ): StrategyUtils {
+    const resolvePositionQuantity = (pair: string): number => {
+      try {
+        const tradingPair = this.tradingPairService.resolveSymbol(pair);
+        const position = corePositions.get(tradingPair.base);
+        return position ? Number(position.balance) / 100 : 0;
+      } catch {
+        return 0;
+      }
+    };
+
+    const resolvePendingQuantity = (
+      pair: string,
+      side?: "buy" | "sell",
+    ): number => {
+      const normalizedPair = this.tradingPairService.normalizeSymbol(pair);
+      let total = 0;
+      for (const pendingOrder of this.pendingOrders.values()) {
+        if (pendingOrder.strategyId !== instance.id) {
+          continue;
+        }
+        if (
+          this.tradingPairService.normalizeSymbol(pendingOrder.pair.symbol) !==
+          normalizedPair
+        ) {
+          continue;
+        }
+        if (side && pendingOrder.side !== side) {
+          continue;
+        }
+        total += Number(pendingOrder.remainingQuantity) / 100;
+      }
+      return total;
+    };
+
+    const pendingBuyNotional = (): number => {
+      let total = 0;
+      for (const pendingOrder of this.pendingOrders.values()) {
+        if (
+          pendingOrder.strategyId !== instance.id ||
+          pendingOrder.side !== "buy"
+        ) {
+          continue;
+        }
+        total +=
+          Number(
+            calculateScaledNotionalValue(
+              pendingOrder.requestedPrice,
+              pendingOrder.remainingQuantity,
+            ),
+          ) / 100;
+      }
+      return total;
+    };
+
+    const sma = (data: number[], period: number): number => {
+      if (data.length < period) return 0;
+      const sum = data.slice(-period).reduce((a, b) => a + b, 0);
+      return sum / period;
+    };
+
+    const ema = (data: number[], period: number): number => {
+      if (data.length === 0) return 0;
+      const multiplier = 2 / (period + 1);
+      return data.reduce((emaValue, price, index) => {
+        return index === 0 ? price : (price - emaValue) * multiplier + emaValue;
+      });
+    };
+
     return {
       indicators: {
-        sma: (data: number[], period: number) => {
-          if (data.length < period) return 0;
-          const sum = data.slice(-period).reduce((a, b) => a + b, 0);
-          return sum / period;
-        },
-        ema: (data: number[], period: number) => {
-          if (data.length === 0) return 0;
-          const multiplier = 2 / (period + 1);
-          return data.reduce((ema, price, index) => {
-            return index === 0 ? price : (price - ema) * multiplier + ema;
-          });
-        },
+        sma,
+        ema,
         rsi: (data: number[], period: number) => {
           if (data.length < period + 1) return 50;
 
@@ -742,14 +804,8 @@ export class StrategyManager extends EventEmitter {
           return 100 - 100 / (1 + rs);
         },
         macd: (data: number[], fast: number, slow: number, signal: number) => {
-          const fastEma = this.createStrategyUtils(instance).indicators.ema(
-            data,
-            fast,
-          );
-          const slowEma = this.createStrategyUtils(instance).indicators.ema(
-            data,
-            slow,
-          );
+          const fastEma = ema(data, fast);
+          const slowEma = ema(data, slow);
           const macdLine = fastEma - slowEma;
 
           // Simplified signal line calculation
@@ -759,20 +815,17 @@ export class StrategyManager extends EventEmitter {
           return { macd: macdLine, signal: signalLine, histogram };
         },
         bollingerBands: (data: number[], period: number, stdDev: number) => {
-          const sma = this.createStrategyUtils(instance).indicators.sma(
-            data,
-            period,
-          );
+          const average = sma(data, period);
           const variance =
             data.slice(-period).reduce((sum, price) => {
-              return sum + Math.pow(price - sma, 2);
+              return sum + Math.pow(price - average, 2);
             }, 0) / period;
           const std = Math.sqrt(variance);
 
           return {
-            upper: sma + std * stdDev,
-            middle: sma,
-            lower: sma - std * stdDev,
+            upper: average + std * stdDev,
+            middle: average,
+            lower: average - std * stdDev,
           };
         },
         stochastic: (
@@ -844,6 +897,45 @@ export class StrategyManager extends EventEmitter {
           nextOpen: 0,
           nextClose: 0,
         }),
+      },
+      trading: {
+        getPositionQuantity: (pair: string) => resolvePositionQuantity(pair),
+        getPendingQuantity: (pair: string, side?: "buy" | "sell") =>
+          resolvePendingQuantity(pair, side),
+        getAvailableCapital: () =>
+          Math.max(0, portfolio.totalValue - pendingBuyNotional()),
+        fullCloseQuantity: (pair: string) => resolvePositionQuantity(pair),
+        partialCloseQuantity: (pair: string, fraction: number) => {
+          if (!Number.isFinite(fraction) || fraction <= 0) {
+            return 0;
+          }
+          const boundedFraction = Math.min(1, fraction);
+          return resolvePositionQuantity(pair) * boundedFraction;
+        },
+        maxRiskPositionSize: (
+          entryPrice: number,
+          stopPrice: number,
+          maxRiskFraction: number,
+        ) => {
+          if (
+            !Number.isFinite(entryPrice) ||
+            !Number.isFinite(stopPrice) ||
+            !Number.isFinite(maxRiskFraction) ||
+            entryPrice <= 0 ||
+            stopPrice <= 0 ||
+            maxRiskFraction <= 0
+          ) {
+            return 0;
+          }
+
+          const unitRisk = Math.abs(entryPrice - stopPrice);
+          if (unitRisk === 0) {
+            return 0;
+          }
+
+          const maxRiskCapital = portfolio.totalValue * maxRiskFraction;
+          return Math.max(0, maxRiskCapital / unitRisk);
+        },
       },
       log: {
         info: (message: string, data?: unknown) => {
@@ -1021,6 +1113,15 @@ export class StrategyManager extends EventEmitter {
         if (signal.action === "hold") {
           continue;
         }
+        const suppressionReason = this.getSignalSuppressionReason(
+          instance,
+          signal,
+          context,
+        );
+        if (suppressionReason) {
+          warnings.push(suppressionReason);
+          continue;
+        }
         const orderDecision = await this.getAiOrderDecision(
           instance,
           context,
@@ -1036,6 +1137,7 @@ export class StrategyManager extends EventEmitter {
           }
         }
         await this.executeSignal(instance, signal, validation);
+        this.recordSignalExecution(instance, signal, context);
       } catch (error) {
         this.addError(instance, error as Error, "warning");
         console.warn(`Failed to execute signal for ${instance.id}:`, error);
@@ -1049,10 +1151,15 @@ export class StrategyManager extends EventEmitter {
     signal: StrategySignal,
     validation: StrategySignalValidationResult,
   ): Promise<void> {
-    const tradingPair = validation.tradingPair!;
-    const executionOrderType = validation.executionOrderType ?? "market";
-
     if (signal.action === "buy" || signal.action === "sell") {
+      const tradingPair = validation.tradingPair;
+      if (!tradingPair) {
+        throw new Error(
+          `Missing trading pair for executable signal ${signal.action}`,
+        );
+      }
+
+      const executionOrderType = validation.executionOrderType ?? "market";
       const currentPrice =
         await this.marketManager.getCurrentPrice(tradingPair);
       const orderPrice =
@@ -1342,6 +1449,8 @@ export class StrategyManager extends EventEmitter {
   private async handleOrderLifecycleEvent(
     lifecycleEvent: OrderLifecycleEvent,
   ): Promise<void> {
+    this.updatePendingOrders(lifecycleEvent);
+
     const strategyOrderEvent: OrderEvent = {
       type: lifecycleEvent.type,
       orderId: lifecycleEvent.order.localId,
@@ -1459,6 +1568,88 @@ export class StrategyManager extends EventEmitter {
       instance.status = "error";
     }
   }
+
+  private getSignalSuppressionReason(
+    instance: StrategyInstance,
+    signal: StrategySignal,
+    context: StrategyContext,
+  ): string | null {
+    if (signal.action !== "buy" && signal.action !== "sell") {
+      return null;
+    }
+
+    const pendingQuantity = context.utils.trading.getPendingQuantity(
+      signal.pair,
+      signal.action,
+    );
+    if (pendingQuantity > 0) {
+      return `Strategy signal suppressed for ${signal.pair}: pending_${signal.action}_order_overlap`;
+    }
+
+    const fingerprint = this.buildSignalFingerprint(instance, signal);
+    const lastEmittedAt = this.recentSignalTimestamps.get(fingerprint);
+    const cooldownMs = Math.max(
+      1_000,
+      this.executionOptions.get(instance.id)?.executeInterval ?? 5_000,
+    );
+    if (
+      lastEmittedAt !== undefined &&
+      Date.now() - lastEmittedAt < cooldownMs
+    ) {
+      return `Strategy signal suppressed for ${signal.pair}: duplicate_signal_cooldown`;
+    }
+
+    return null;
+  }
+
+  private recordSignalExecution(
+    instance: StrategyInstance,
+    signal: StrategySignal,
+    context: StrategyContext,
+  ): void {
+    if (signal.action !== "buy" && signal.action !== "sell") {
+      return;
+    }
+
+    const fingerprint = this.buildSignalFingerprint(instance, signal);
+    this.recentSignalTimestamps.set(
+      fingerprint,
+      context.utils.time.getCurrentTimestamp(),
+    );
+  }
+
+  private buildSignalFingerprint(
+    instance: StrategyInstance,
+    signal: StrategySignal,
+  ): string {
+    return [
+      instance.id,
+      signal.action,
+      this.tradingPairService.normalizeSymbol(signal.pair),
+      signal.orderType ?? "market",
+      signal.quantity?.toFixed(8) ?? "0",
+      signal.price?.toFixed(8) ?? "market",
+      signal.direction ?? "spot",
+      signal.reduceOnly === true ? "reduce" : "open",
+      signal.closeOnly === true ? "close" : "noclose",
+    ].join("|");
+  }
+
+  private updatePendingOrders(lifecycleEvent: OrderLifecycleEvent): void {
+    const order = lifecycleEvent.order;
+    const isPendingStatus =
+      order.status === "submitted" ||
+      order.status === "accepted" ||
+      order.status === "pending" ||
+      order.status === "partially_filled";
+
+    if (isPendingStatus && order.remainingQuantity > 0n) {
+      this.pendingOrders.set(order.localId, order);
+      return;
+    }
+
+    this.pendingOrders.delete(order.localId);
+  }
 }
 
 /**
@@ -1507,7 +1698,7 @@ class PerformanceTracker {
       position.averagePrice =
         totalQuantity > 0
           ? (position.quantity * position.averagePrice + quantity * price) /
-          totalQuantity
+            totalQuantity
           : 0;
       position.quantity = totalQuantity;
       this.positions.set(pair, position);
@@ -1518,8 +1709,8 @@ class PerformanceTracker {
     const pnl =
       realizedQuantity > 0
         ? (price - position.averagePrice) * realizedQuantity -
-        commission -
-        slippage
+          commission -
+          slippage
         : 0;
     position.quantity = Math.max(0, position.quantity - realizedQuantity);
     if (position.quantity === 0) {
@@ -1562,12 +1753,12 @@ class PerformanceTracker {
     const avgWin =
       winningTrades.length > 0
         ? winningTrades.reduce((sum, win) => sum + win, 0) /
-        winningTrades.length
+          winningTrades.length
         : 0;
     const avgLoss =
       losingTrades.length > 0
         ? Math.abs(losingTrades.reduce((sum, loss) => sum + loss, 0)) /
-        losingTrades.length
+          losingTrades.length
         : 0;
     const profitFactor = avgLoss > 0 ? avgWin / avgLoss : 0;
 
@@ -1577,12 +1768,12 @@ class PerformanceTracker {
     const returnStd =
       this.returns.length > 1
         ? Math.sqrt(
-          this.returns.reduce(
-            (sum, ret) => sum + Math.pow(ret - avgReturn, 2),
-            0,
-          ) /
-          (this.returns.length - 1),
-        )
+            this.returns.reduce(
+              (sum, ret) => sum + Math.pow(ret - avgReturn, 2),
+              0,
+            ) /
+              (this.returns.length - 1),
+          )
         : 0;
     const sharpeRatio = returnStd > 0 ? avgReturn / returnStd : 0;
 

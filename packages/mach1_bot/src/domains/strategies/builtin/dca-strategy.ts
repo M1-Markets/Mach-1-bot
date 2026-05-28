@@ -5,9 +5,8 @@
  * to reduce the impact of volatility on large purchases.
  */
 
-import type { OrderResult } from "@/shared/types";
+import type { OrderLifecycleRecord, OrderResult } from "@/shared/types";
 import type { BotOrder } from "@/shared/types/bot";
-import type { OrderLifecycleRecord } from "@/shared/types";
 import {
   IStrategy,
   IStrategyFactory,

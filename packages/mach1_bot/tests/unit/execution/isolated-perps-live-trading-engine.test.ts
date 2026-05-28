@@ -1,5 +1,5 @@
-import type { OrderRequest } from "@/shared/types";
 import { OrderLifecycleStore } from "@/domains/execution/order-lifecycle-store";
+import type { OrderRequest } from "@/shared/types";
 
 const mockListMarginAccounts = vi.fn();
 const mockGetMarginAccountSummary = vi.fn();
@@ -71,7 +71,7 @@ vi.mock("@/domains/trading/market-manager", () => ({
 }));
 
 vi.mock("@/domains/trading/order-manager", () => ({
-  OrderManager: class { },
+  OrderManager: class {},
 }));
 
 vi.mock("@/domains/trading/realtime-manager", () => ({
@@ -175,10 +175,14 @@ describe("IsolatedPerpsLiveTradingEngine", () => {
 
   const makeEngineWithFunding = (
     provider: Parameters<
-      ConstructorParameters<typeof IsolatedPerpsLiveTradingEngine>[4]["fundingStateProvider"]
+      ConstructorParameters<
+        typeof IsolatedPerpsLiveTradingEngine
+      >[4]["fundingStateProvider"]
     >[0] extends never
       ? never
-      : ConstructorParameters<typeof IsolatedPerpsLiveTradingEngine>[4]["fundingStateProvider"],
+      : ConstructorParameters<
+          typeof IsolatedPerpsLiveTradingEngine
+        >[4]["fundingStateProvider"],
   ) =>
     new IsolatedPerpsLiveTradingEngine(
       {
@@ -515,9 +519,11 @@ describe("IsolatedPerpsLiveTradingEngine", () => {
   });
 
   it("tracks funding updates on open positions and reflects accrued funding in unrealized pnl", async () => {
-    const fundingProvider = vi
-      .fn()
-      .mockResolvedValue({ rate: 25n, accruedFunding: 150n, updatedAt: Date.now() });
+    const fundingProvider = vi.fn().mockResolvedValue({
+      rate: 25n,
+      accruedFunding: 150n,
+      updatedAt: Date.now(),
+    });
     const engine = makeEngineWithFunding(fundingProvider);
 
     await engine.initialize();
@@ -558,7 +564,8 @@ describe("IsolatedPerpsLiveTradingEngine", () => {
       }),
     ).toMatchObject({
       status: "unsupported",
-      warning: "Funding rate unavailable from Monaco; skipping funding adjustment.",
+      warning:
+        "Funding rate unavailable from Monaco; skipping funding adjustment.",
     });
   });
 });

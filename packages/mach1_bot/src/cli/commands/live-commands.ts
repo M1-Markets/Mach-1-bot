@@ -1,9 +1,12 @@
 import type { Command } from "commander";
 import type {
+  CreateMarginAccountResponse,
+  GetAvailableCollateralResponse,
   GetUserBalancesResponse,
   ListMarginAccountsResponse,
   ListPositionsResponse,
   MarginAccountSummary,
+  TransferCollateralResponse,
   UserProfile,
 } from "mach1_sdk";
 import pc from "picocolors";
@@ -113,6 +116,17 @@ type IsolatedPerpsPositionRow = {
 type LivePerpsResult = {
   summary?: IsolatedPerpsSummaryRow;
   positions: IsolatedPerpsPositionRow[];
+};
+
+type MarginAccountListRow = {
+  marginAccountId: string;
+  label: string;
+  state: string;
+  collateralAsset: string;
+  equity: string;
+  freeCollateral: string;
+  withdrawableCollateral: string;
+  updatedAt: string;
 };
 
 const shouldTraceMonacoApi = (): boolean =>
@@ -319,6 +333,168 @@ const parseMarginAccountId = (
   return undefined;
 };
 
+const parseMarginAccountRows = (
+  response: ListMarginAccountsResponse,
+): MarginAccountListRow[] => {
+  if (!Array.isArray(response?.accounts)) {
+    throw new Error("Margin accounts response missing accounts array.");
+  }
+
+  return response.accounts.flatMap((account) => {
+    if (!isRecord(account)) {
+      return [];
+    }
+
+    const marginAccountId = getStringProp(account, "margin_account_id");
+    if (!marginAccountId) {
+      return [];
+    }
+
+    return [
+      {
+        marginAccountId,
+        label: getStringProp(account, "label") ?? "",
+        state: getStringProp(account, "account_state") ?? "unknown",
+        collateralAsset:
+          getStringProp(account, "collateral_asset") ?? "unavailable",
+        equity: getStringProp(account, "equity") ?? "0",
+        freeCollateral: getStringProp(account, "free_collateral") ?? "0",
+        withdrawableCollateral:
+          getStringProp(account, "withdrawable_collateral") ?? "0",
+        updatedAt: getStringProp(account, "updated_at") ?? "unavailable",
+      },
+    ];
+  });
+};
+
+const parseCreatedMarginAccount = (
+  response: CreateMarginAccountResponse,
+): MarginAccountListRow => {
+  traceMonacoApiPayload("marginAccounts.createMarginAccount", response);
+  if (!isRecord(response)) {
+    throw new Error("Create margin account response is not an object.");
+  }
+
+  const marginAccountId = getStringProp(response, "margin_account_id");
+  if (!marginAccountId) {
+    throw new Error(
+      "Create margin account response missing margin_account_id.",
+    );
+  }
+
+  return {
+    marginAccountId,
+    label: getStringProp(response, "label") ?? "",
+    state: getStringProp(response, "account_state") ?? "unknown",
+    collateralAsset:
+      getStringProp(response, "collateral_asset") ?? "unavailable",
+    equity: "0",
+    freeCollateral: "0",
+    withdrawableCollateral: "0",
+    updatedAt: getStringProp(response, "created_at") ?? "unavailable",
+  };
+};
+
+const parseTransferCollateral = (
+  response: TransferCollateralResponse,
+): TransferCollateralResponse => {
+  traceMonacoApiPayload("marginAccounts.transferCollateral", response);
+  if (!isRecord(response)) {
+    throw new Error("Transfer collateral response is not an object.");
+  }
+
+  const movementId = getStringProp(response, "movement_id");
+  const marginAccountId = getStringProp(response, "margin_account_id");
+  const asset = getStringProp(response, "asset");
+  const amount = getStringProp(response, "amount");
+  const status = getStringProp(response, "status");
+  const newEquity = getStringProp(response, "new_equity");
+  const newTotalCollateralValue = getStringProp(
+    response,
+    "new_total_collateral_value",
+  );
+  const newWithdrawableCollateral = getStringProp(
+    response,
+    "new_withdrawable_collateral",
+  );
+
+  if (
+    !movementId ||
+    !marginAccountId ||
+    !asset ||
+    !amount ||
+    !status ||
+    !newEquity ||
+    !newTotalCollateralValue ||
+    !newWithdrawableCollateral
+  ) {
+    throw new Error(
+      "Transfer collateral response missing required Monaco fields.",
+    );
+  }
+
+  return {
+    movement_id: movementId,
+    margin_account_id: marginAccountId,
+    asset,
+    amount,
+    status,
+    new_equity: newEquity,
+    new_total_collateral_value: newTotalCollateralValue,
+    new_withdrawable_collateral: newWithdrawableCollateral,
+  };
+};
+
+const parseAvailableCollateral = (
+  response: GetAvailableCollateralResponse,
+): GetAvailableCollateralResponse => {
+  traceMonacoApiPayload("perps.getAvailableCollateral", response);
+  if (!isRecord(response)) {
+    throw new Error("Available collateral response is not an object.");
+  }
+
+  const asset = getStringProp(response, "asset");
+  const walletAvailable = getStringProp(response, "wallet_available");
+  const walletLocked = getStringProp(response, "wallet_locked");
+  if (!asset || !walletAvailable || !walletLocked) {
+    throw new Error(
+      "Available collateral response missing required Monaco fields.",
+    );
+  }
+
+  return {
+    asset,
+    wallet_available: walletAvailable,
+    wallet_locked: walletLocked,
+    margin_transferable:
+      getStringProp(response, "margin_transferable") ?? undefined,
+  };
+};
+
+const resolveMarginAccountId = async (
+  sdk: {
+    perps: {
+      listMarginAccounts: (params?: {
+        state?: string;
+      }) => Promise<ListMarginAccountsResponse>;
+    };
+  },
+  requestedMarginAccountId: string | undefined,
+): Promise<string> => {
+  if (requestedMarginAccountId) {
+    return requestedMarginAccountId;
+  }
+
+  const rawAccounts = await sdk.perps.listMarginAccounts({ state: "ACTIVE" });
+  traceMonacoApiPayload("perps.listMarginAccounts", rawAccounts);
+  const marginAccountId = parseMarginAccountId(rawAccounts);
+  if (!marginAccountId) {
+    throw new Error("No active isolated margin account available");
+  }
+
+  return marginAccountId;
+};
+
 const parseMarginAccountSummary = (
   marginAccountId: string,
   summary: MarginAccountSummary,
@@ -374,8 +550,7 @@ const parsePerpsPositions = (
         unrealizedPnl: getStringProp(position, "unrealized_pnl") ?? "0",
         liquidationPrice:
           getStringProp(position, "liquidation_price") ?? "unavailable",
-        fundingRate:
-          getStringProp(position, "funding_rate") ?? "unavailable",
+        fundingRate: getStringProp(position, "funding_rate") ?? "unavailable",
         accruedFunding:
           getStringProp(position, "accrued_funding") ?? "unavailable",
       },
@@ -386,9 +561,9 @@ const parsePerpsPositions = (
 const fetchLivePerpsResult = async (
   sdk: {
     perps: {
-      listMarginAccounts: (
-        params?: { state?: string },
-      ) => Promise<ListMarginAccountsResponse>;
+      listMarginAccounts: (params?: {
+        state?: string;
+      }) => Promise<ListMarginAccountsResponse>;
       getMarginAccountSummary: (
         marginAccountId: string,
       ) => Promise<MarginAccountSummary>;
@@ -543,7 +718,8 @@ export const registerLiveCommands = (liveCommand: Command): void => {
         }
         console.error(
           pc.red(
-            `❌ Failed to fetch live balances: ${error instanceof Error ? error.message : String(error)
+            `❌ Failed to fetch live balances: ${
+              error instanceof Error ? error.message : String(error)
             }`,
           ),
         );
@@ -615,7 +791,291 @@ export const registerLiveCommands = (liveCommand: Command): void => {
         logBalanceStatus("Perps fetch failed");
         console.error(
           pc.red(
-            `❌ Failed to fetch isolated perps state: ${error instanceof Error ? error.message : String(error)
+            `❌ Failed to fetch isolated perps state: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          ),
+        );
+      } finally {
+        process.exit(exitCode);
+      }
+    });
+
+  const marginAccountCommand = liveCommand
+    .command("margin-account")
+    .description("Manage isolated perps margin accounts");
+
+  marginAccountCommand
+    .command("list")
+    .description("List isolated perps margin accounts")
+    .option(
+      "-c, --config <file>",
+      "Configuration file path",
+      "mach-one-bot.toml",
+    )
+    .option(
+      "--env <environment>",
+      "Environment: mainnet, staging, development, or local",
+    )
+    .action(async (options) => {
+      let exitCode = 0;
+      try {
+        const prepared = await loadBotConfigWithEnv(
+          options.config,
+          options.env,
+          "staging",
+        );
+
+        logBalanceStatus("Connecting to Monaco");
+        await withMonacoSession(
+          prepared,
+          async ({ sdk }) => {
+            logBalanceStatus("Fetching isolated margin accounts");
+            const rawAccounts = await sdk.perps.listMarginAccounts();
+            traceMonacoApiPayload("perps.listMarginAccounts", rawAccounts);
+            const rows = parseMarginAccountRows(rawAccounts);
+
+            console.log(pc.cyan("Margin Accounts"));
+            if (rows.length === 0) {
+              console.log(pc.gray("  none"));
+              return;
+            }
+
+            for (const row of rows) {
+              console.log(JSON.stringify(row));
+            }
+          },
+          logBalanceStatus,
+          {
+            connectWebSocket: false,
+            traceProfileOnInitialize: false,
+          },
+        );
+      } catch (error) {
+        exitCode = 1;
+        logBalanceStatus("Margin account list failed");
+        console.error(
+          pc.red(
+            `❌ Failed to list margin accounts: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          ),
+        );
+      } finally {
+        process.exit(exitCode);
+      }
+    });
+
+  marginAccountCommand
+    .command("create")
+    .description("Create isolated perps margin account")
+    .option("--label <label>", "Optional account label")
+    .option(
+      "--collateral-asset <asset>",
+      "Optional collateral asset symbol or asset id",
+    )
+    .option(
+      "-c, --config <file>",
+      "Configuration file path",
+      "mach-one-bot.toml",
+    )
+    .option(
+      "--env <environment>",
+      "Environment: mainnet, staging, development, or local",
+    )
+    .action(async (options) => {
+      let exitCode = 0;
+      try {
+        const prepared = await loadBotConfigWithEnv(
+          options.config,
+          options.env,
+          "staging",
+        );
+
+        logBalanceStatus("Connecting to Monaco");
+        await withMonacoSession(
+          prepared,
+          async ({ sdk }) => {
+            logBalanceStatus("Creating isolated margin account");
+            const created = parseCreatedMarginAccount(
+              await sdk.marginAccounts.createMarginAccount({
+                label: options.label,
+                collateralAsset: options.collateralAsset,
+              }),
+            );
+
+            console.log(pc.cyan("Created Margin Account"));
+            console.log(JSON.stringify(created));
+          },
+          logBalanceStatus,
+          {
+            connectWebSocket: false,
+            traceProfileOnInitialize: false,
+          },
+        );
+      } catch (error) {
+        exitCode = 1;
+        logBalanceStatus("Margin account create failed");
+        console.error(
+          pc.red(
+            `❌ Failed to create margin account: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          ),
+        );
+      } finally {
+        process.exit(exitCode);
+      }
+    });
+
+  liveCommand
+    .command("transfer")
+    .description("Transfer collateral between spot vault and isolated perps")
+    .option(
+      "--direction <direction>",
+      "Transfer direction: spot-to-perps or perps-to-spot",
+    )
+    .option("-t, --token <token>", "Token address or symbol to transfer")
+    .option("-a, --amount <amount>", "Amount to transfer (human-readable)")
+    .option(
+      "--margin-account-id <marginAccountId>",
+      "Target isolated margin account id",
+    )
+    .option(
+      "-d, --decimals <decimals>",
+      "Token decimals (override auto-detected)",
+      parseInt,
+    )
+    .option(
+      "-c, --config <file>",
+      "Configuration file path",
+      "mach-one-bot.toml",
+    )
+    .option(
+      "--env <environment>",
+      "Environment: mainnet, staging, development, or local",
+    )
+    .action(async (options) => {
+      if (
+        options.decimals !== undefined &&
+        (Number.isNaN(options.decimals) || options.decimals < 0)
+      ) {
+        console.error(pc.red("❌ Decimals must be a non-negative integer"));
+        process.exit(1);
+      }
+
+      const direction = String(options.direction ?? "").toLowerCase();
+      if (direction !== "spot-to-perps" && direction !== "perps-to-spot") {
+        console.error(
+          pc.red("❌ Direction must be one of: spot-to-perps, perps-to-spot"),
+        );
+        process.exit(1);
+      }
+
+      let exitCode = 0;
+      try {
+        const prepared = await loadBotConfigWithEnv(
+          options.config,
+          options.env,
+          "staging",
+        );
+
+        console.log(pc.cyan("🔗 Connecting to Monaco..."));
+        await withMonacoSession(prepared, async ({ sdk, resolver, client }) => {
+          const pairs = resolver.getAllPairs() as TokenLikePair[];
+          const catalog = buildTokenCatalog(pairs);
+          const tokenInfo = await resolveTokenInfoFromSelection(
+            options.token,
+            pairs,
+            client,
+            options.decimals,
+            catalog,
+          );
+          const decimals = tokenInfo.decimals;
+
+          if (decimals === undefined) {
+            throw new Error(
+              `Unable to determine decimals for token ${options.token}. Provide --decimals explicitly.`,
+            );
+          }
+
+          assertPositiveAmountInput(options.amount);
+          const amount = parseUnits(options.amount, decimals);
+          const assetId = resolveAssetIdFromPairs(tokenInfo.address, pairs);
+          if (!assetId) {
+            throw new Error(
+              `Unable to resolve asset ID for token ${
+                tokenInfo.symbol || tokenInfo.address
+              }`,
+            );
+          }
+
+          const marginAccountId = await resolveMarginAccountId(
+            sdk,
+            options.marginAccountId,
+          );
+          const tokenLabel = tokenInfo.symbol || tokenInfo.address;
+
+          if (direction === "spot-to-perps") {
+            console.log(pc.cyan("📤 Transferring collateral to perps..."));
+            const transferResult = parseTransferCollateral(
+              await sdk.marginAccounts.transferCollateralToMarginAccount(
+                marginAccountId,
+                {
+                  asset: assetId,
+                  amount: amount.toString(),
+                },
+              ),
+            );
+            console.log(pc.green("✅ Transfer processed"));
+            console.log(pc.gray(`   Direction: spot -> perps`));
+            console.log(pc.gray(`   Token: ${tokenLabel}`));
+            console.log(pc.gray(`   Amount: ${options.amount}`));
+            console.log(pc.gray(`   Asset ID: ${assetId}`));
+            console.log(pc.gray(`   Margin Account: ${marginAccountId}`));
+            console.log(
+              pc.gray(`   Movement ID: ${transferResult.movement_id}`),
+            );
+            console.log(pc.gray(`   Status: ${transferResult.status}`));
+            return;
+          }
+
+          const collateral = parseAvailableCollateral(
+            await sdk.perps.getAvailableCollateral({ asset: assetId }),
+          );
+          const transferable = collateral.margin_transferable ?? "0";
+          const transferableRaw = parseUnits(transferable, decimals);
+          if (transferableRaw < amount) {
+            throw new Error(
+              `Insufficient perps collateral. Requested ${options.amount}, transferable: ${transferable}`,
+            );
+          }
+
+          console.log(pc.cyan("📥 Transferring collateral to spot..."));
+          const transferResult = parseTransferCollateral(
+            await sdk.marginAccounts.transferCollateralFromMarginAccount(
+              marginAccountId,
+              {
+                asset: assetId,
+                amount: amount.toString(),
+              },
+            ),
+          );
+          console.log(pc.green("✅ Transfer processed"));
+          console.log(pc.gray(`   Direction: perps -> spot`));
+          console.log(pc.gray(`   Token: ${tokenLabel}`));
+          console.log(pc.gray(`   Amount: ${options.amount}`));
+          console.log(pc.gray(`   Asset ID: ${assetId}`));
+          console.log(pc.gray(`   Margin Account: ${marginAccountId}`));
+          console.log(pc.gray(`   Movement ID: ${transferResult.movement_id}`));
+          console.log(pc.gray(`   Status: ${transferResult.status}`));
+        });
+      } catch (error) {
+        exitCode = 1;
+        console.error(
+          pc.red(
+            `❌ Failed to transfer collateral: ${
+              error instanceof Error ? error.message : String(error)
             }`,
           ),
         );
@@ -692,11 +1152,11 @@ export const registerLiveCommands = (liveCommand: Command): void => {
           if (!response.ok) {
             const message = isRecord(responseBody)
               ? getStringProp(responseBody, "message") ||
-              getStringProp(responseBody, "error")
+                getStringProp(responseBody, "error")
               : undefined;
             throw new Error(
               message ||
-              `Faucet request failed with status ${response.status} ${response.statusText}`,
+                `Faucet request failed with status ${response.status} ${response.statusText}`,
             );
           }
 
@@ -729,7 +1189,8 @@ export const registerLiveCommands = (liveCommand: Command): void => {
         }
         console.error(
           pc.red(
-            `❌ Faucet request failed: ${error instanceof Error ? error.message : String(error)
+            `❌ Faucet request failed: ${
+              error instanceof Error ? error.message : String(error)
             }`,
           ),
         );
@@ -744,6 +1205,11 @@ export const registerLiveCommands = (liveCommand: Command): void => {
     .option("-t, --token <token>", "Token address or symbol to deposit")
     .option("-a, --amount <amount>", "Amount to deposit (human-readable)")
     .option("--all", "Deposit full balances of all tokens with wallet balance")
+    .option("--to <destination>", "Deposit destination: spot or perps", "spot")
+    .option(
+      "--margin-account-id <marginAccountId>",
+      "Target isolated margin account id when depositing to perps",
+    )
     .option(
       "-d, --decimals <decimals>",
       "Token decimals (override auto-detected)",
@@ -771,6 +1237,11 @@ export const registerLiveCommands = (liveCommand: Command): void => {
       let depositUi: DepositUiController | undefined;
 
       try {
+        const destination = String(options.to ?? "spot").toLowerCase();
+        if (destination !== "spot" && destination !== "perps") {
+          throw new Error("Deposit destination must be one of: spot, perps");
+        }
+
         const prepared = await loadBotConfigWithEnv(
           options.config,
           options.env,
@@ -799,12 +1270,14 @@ export const registerLiveCommands = (liveCommand: Command): void => {
           };
           const inputResult = options.all
             ? { tokenInput: "all", amountInput: "all" }
-            : await promptForDepositInput({
-              tokenOptions,
-              initialToken: options.token,
-              initialAmount: options.amount,
-              viewport,
-            });
+            : options.token && options.amount
+              ? { tokenInput: options.token, amountInput: options.amount }
+              : await promptForDepositInput({
+                  tokenOptions,
+                  initialToken: options.token,
+                  initialAmount: options.amount,
+                  viewport,
+                });
           const { tokenInput, amountInput } = inputResult;
           const trimmedTokenInput = tokenInput.trim();
           const normalizedTokenInput = trimmedTokenInput.toLowerCase();
@@ -843,7 +1316,8 @@ export const registerLiveCommands = (liveCommand: Command): void => {
 
             console.log(
               pc.cyan(
-                `📦 Depositing ${balancesToDeposit.length} token balance${balancesToDeposit.length === 1 ? "" : "s"
+                `📦 Depositing ${balancesToDeposit.length} token balance${
+                  balancesToDeposit.length === 1 ? "" : "s"
                 }...`,
               ),
             );
@@ -943,6 +1417,29 @@ export const registerLiveCommands = (liveCommand: Command): void => {
 
               if (depositResult.status !== "confirmed") {
                 exitCode = 1;
+                continue;
+              }
+
+              if (destination === "perps") {
+                const marginAccountId = await resolveMarginAccountId(
+                  sdk,
+                  options.marginAccountId,
+                );
+                const transferResult = parseTransferCollateral(
+                  await sdk.marginAccounts.transferCollateralToMarginAccount(
+                    marginAccountId,
+                    {
+                      asset: assetId,
+                      amount: depositBalance.toString(),
+                    },
+                  ),
+                );
+                console.log(pc.green("✅ Perps transfer processed"));
+                console.log(pc.gray(`   Margin Account: ${marginAccountId}`));
+                console.log(
+                  pc.gray(`   Movement ID: ${transferResult.movement_id}`),
+                );
+                console.log(pc.gray(`   Status: ${transferResult.status}`));
               }
             }
 
@@ -972,7 +1469,8 @@ export const registerLiveCommands = (liveCommand: Command): void => {
 
           if (walletBalance <= 0n) {
             throw new Error(
-              `Wallet balance is zero for ${tokenInfo.symbol || tokenInfo.address
+              `Wallet balance is zero for ${
+                tokenInfo.symbol || tokenInfo.address
               }.`,
             );
           }
@@ -1015,7 +1513,8 @@ export const registerLiveCommands = (liveCommand: Command): void => {
 
           if (!assetId) {
             throw new Error(
-              `Unable to resolve asset ID for token ${tokenInfo.symbol || tokenInfo.address
+              `Unable to resolve asset ID for token ${
+                tokenInfo.symbol || tokenInfo.address
               }`,
             );
           }
@@ -1069,7 +1568,10 @@ export const registerLiveCommands = (liveCommand: Command): void => {
           depositUi.update({
             ...baseUiState,
             stage: "depositing",
-            status: "Submitting deposit",
+            status:
+              destination === "perps"
+                ? "Submitting deposit and perps transfer"
+                : "Submitting deposit",
           });
           console.log(pc.cyan("📤 Submitting deposit..."));
           const depositResult = await vault.deposit(assetId, amount, true);
@@ -1082,6 +1584,7 @@ export const registerLiveCommands = (liveCommand: Command): void => {
           console.log(
             pc.gray(`   Token: ${tokenInfo.symbol || tokenInfo.address}`),
           );
+          console.log(pc.gray(`   Destination: ${destination}`));
           console.log(
             pc.gray(`   Amount: ${amountInput} (raw: ${amount.toString()})`),
           );
@@ -1090,6 +1593,30 @@ export const registerLiveCommands = (liveCommand: Command): void => {
             pc.gray(`   Tx Url: ${buildSeiscanTxUrl(depositResult.hash)}`),
           );
           console.log(pc.gray(`   Status: ${depositResult.status}`));
+
+          if (depositResult.status === "confirmed" && destination === "perps") {
+            const marginAccountId = await resolveMarginAccountId(
+              sdk,
+              options.marginAccountId,
+            );
+            const transferResult = parseTransferCollateral(
+              await sdk.marginAccounts.transferCollateralToMarginAccount(
+                marginAccountId,
+                {
+                  asset: assetId,
+                  amount: amount.toString(),
+                },
+              ),
+            );
+            console.log(pc.cyan("📤 Moving deposited collateral to perps..."));
+            console.log(pc.green("✅ Perps transfer processed"));
+            console.log(pc.gray(`   Margin Account: ${marginAccountId}`));
+            console.log(
+              pc.gray(`   Movement ID: ${transferResult.movement_id}`),
+            );
+            console.log(pc.gray(`   Status: ${transferResult.status}`));
+          }
+
           depositUi.update({
             ...baseUiState,
             stage: depositResult.status === "confirmed" ? "done" : "error",
@@ -1121,7 +1648,8 @@ export const registerLiveCommands = (liveCommand: Command): void => {
         }
         console.error(
           pc.red(
-            `❌ Failed to deposit funds: ${error instanceof Error ? error.message : String(error)
+            `❌ Failed to deposit funds: ${
+              error instanceof Error ? error.message : String(error)
             }`,
           ),
         );
@@ -1136,6 +1664,11 @@ export const registerLiveCommands = (liveCommand: Command): void => {
     .description("Withdraw funds from your live trading account")
     .option("-t, --token <token>", "Token address or symbol to withdraw")
     .option("-a, --amount <amount>", "Amount to withdraw (human-readable)")
+    .option("--from <source>", "Withdraw source: spot or perps", "spot")
+    .option(
+      "--margin-account-id <marginAccountId>",
+      "Source isolated margin account id when withdrawing from perps",
+    )
     .option(
       "-d, --decimals <decimals>",
       "Token decimals (override auto-detected)",
@@ -1163,6 +1696,11 @@ export const registerLiveCommands = (liveCommand: Command): void => {
       let withdrawUi: WithdrawUiController | undefined;
 
       try {
+        const source = String(options.from ?? "spot").toLowerCase();
+        if (source !== "spot" && source !== "perps") {
+          throw new Error("Withdraw source must be one of: spot, perps");
+        }
+
         const prepared = await loadBotConfigWithEnv(
           options.config,
           options.env,
@@ -1199,12 +1737,15 @@ export const registerLiveCommands = (liveCommand: Command): void => {
             width: Math.max(40, process.stdout.columns ?? 80),
             height: Math.max(12, process.stdout.rows ?? 24),
           };
-          const { tokenInput, amountInput } = await promptForWithdrawInput({
-            tokenOptions,
-            initialToken: options.token,
-            initialAmount: options.amount,
-            viewport,
-          });
+          const { tokenInput, amountInput } =
+            options.token && options.amount
+              ? { tokenInput: options.token, amountInput: options.amount }
+              : await promptForWithdrawInput({
+                  tokenOptions,
+                  initialToken: options.token,
+                  initialAmount: options.amount,
+                  viewport,
+                });
           const tokenInfo = await resolveTokenInfoFromSelection(
             tokenInput,
             pairs,
@@ -1225,40 +1766,71 @@ export const registerLiveCommands = (liveCommand: Command): void => {
 
           if (!assetId) {
             throw new Error(
-              `Unable to resolve asset ID for token ${tokenInfo.symbol || tokenInfo.address
+              `Unable to resolve asset ID for token ${
+                tokenInfo.symbol || tokenInfo.address
               }`,
             );
           }
 
-          console.log(pc.cyan("💰 Checking profile balance..."));
-          const balanceEntry = balanceByAssetId.get(assetId);
-          if (!balanceEntry) {
-            throw new Error(
-              `No balance data returned for asset ${assetId} from Monaco profile.`,
-            );
-          }
-
-          const availableRaw = parseUnits(balanceEntry.available, decimals);
-          if (availableRaw <= 0n) {
-            throw new Error(
-              `Vault balance is zero for ${tokenInfo.symbol || tokenInfo.address
-              }.`,
-            );
-          }
-
-          const maxFormatted = balanceEntry.available;
-
           assertPositiveAmountInput(amountInput);
           const amount = parseUnits(amountInput, decimals);
+          let maxFormatted = "0";
 
-          if (availableRaw < amount) {
-            console.error(
-              pc.red(
-                `❌ Insufficient vault balance. Requested ${amountInput}, available: ${maxFormatted}`,
-              ),
+          if (source === "spot") {
+            console.log(pc.cyan("💰 Checking profile balance..."));
+            const balanceEntry = balanceByAssetId.get(assetId);
+            if (!balanceEntry) {
+              throw new Error(
+                `No balance data returned for asset ${assetId} from Monaco profile.`,
+              );
+            }
+
+            const availableRaw = parseUnits(balanceEntry.available, decimals);
+            if (availableRaw <= 0n) {
+              throw new Error(
+                `Vault balance is zero for ${
+                  tokenInfo.symbol || tokenInfo.address
+                }.`,
+              );
+            }
+
+            maxFormatted = balanceEntry.available;
+
+            if (availableRaw < amount) {
+              console.error(
+                pc.red(
+                  `❌ Insufficient vault balance. Requested ${amountInput}, available: ${maxFormatted}`,
+                ),
+              );
+              exitCode = 1;
+              return;
+            }
+          } else {
+            console.log(
+              pc.cyan("💰 Checking transferable perps collateral..."),
             );
-            exitCode = 1;
-            return;
+            const collateral = parseAvailableCollateral(
+              await sdk.perps.getAvailableCollateral({ asset: assetId }),
+            );
+            maxFormatted = collateral.margin_transferable ?? "0";
+            const transferableRaw = parseUnits(maxFormatted, decimals);
+            if (transferableRaw <= 0n) {
+              throw new Error(
+                `Perps transferable collateral is zero for ${
+                  tokenInfo.symbol || tokenInfo.address
+                }.`,
+              );
+            }
+
+            if (transferableRaw < amount) {
+              console.error(
+                pc.red(
+                  `❌ Insufficient perps collateral. Requested ${amountInput}, transferable: ${maxFormatted}`,
+                ),
+              );
+              exitCode = 1;
+              return;
+            }
           }
 
           const tokenLabel = tokenInfo.symbol || tokenInfo.address;
@@ -1267,7 +1839,10 @@ export const registerLiveCommands = (liveCommand: Command): void => {
             token: tokenLabel,
             amount: amountInput,
             vaultBalance: maxFormatted,
-            status: "Preparing transaction",
+            status:
+              source === "perps"
+                ? "Preparing perps transfer and withdrawal"
+                : "Preparing transaction",
             viewport,
           };
           withdrawUi = await createWithdrawUi(baseUiState);
@@ -1275,8 +1850,34 @@ export const registerLiveCommands = (liveCommand: Command): void => {
           withdrawUi.update({
             ...baseUiState,
             stage: "withdrawing",
-            status: "Submitting withdrawal",
+            status:
+              source === "perps"
+                ? "Submitting perps transfer and withdrawal"
+                : "Submitting withdrawal",
           });
+
+          if (source === "perps") {
+            const marginAccountId = await resolveMarginAccountId(
+              sdk,
+              options.marginAccountId,
+            );
+            console.log(pc.cyan("📥 Moving collateral from perps to spot..."));
+            const transferResult = parseTransferCollateral(
+              await sdk.marginAccounts.transferCollateralFromMarginAccount(
+                marginAccountId,
+                {
+                  asset: assetId,
+                  amount: amount.toString(),
+                },
+              ),
+            );
+            console.log(pc.green("✅ Perps transfer processed"));
+            console.log(pc.gray(`   Margin Account: ${marginAccountId}`));
+            console.log(
+              pc.gray(`   Movement ID: ${transferResult.movement_id}`),
+            );
+            console.log(pc.gray(`   Status: ${transferResult.status}`));
+          }
 
           console.log(pc.cyan("📤 Submitting withdrawal..."));
           const withdrawResult = await vault.withdraw(assetId, amount, true);
@@ -1289,6 +1890,7 @@ export const registerLiveCommands = (liveCommand: Command): void => {
           console.log(
             pc.gray(`   Token: ${tokenInfo.symbol || tokenInfo.address}`),
           );
+          console.log(pc.gray(`   Source: ${source}`));
           console.log(
             pc.gray(`   Amount: ${amountInput} (raw: ${amount.toString()})`),
           );
@@ -1329,7 +1931,8 @@ export const registerLiveCommands = (liveCommand: Command): void => {
         }
         console.error(
           pc.red(
-            `❌ Failed to withdraw funds: ${error instanceof Error ? error.message : String(error)
+            `❌ Failed to withdraw funds: ${
+              error instanceof Error ? error.message : String(error)
             }`,
           ),
         );
@@ -1645,7 +2248,8 @@ export const registerLiveCommands = (liveCommand: Command): void => {
         }
         console.error(
           pc.red(
-            `❌ Failed to swap tokens: ${error instanceof Error ? error.message : String(error)
+            `❌ Failed to swap tokens: ${
+              error instanceof Error ? error.message : String(error)
             }`,
           ),
         );

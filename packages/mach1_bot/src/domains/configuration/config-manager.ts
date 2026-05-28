@@ -59,11 +59,11 @@ export class ConfigManager {
         marketMode: config.marketMode,
         perps: config.perps
           ? {
-            marginMode: config.perps.marginMode,
-            leverage: config.perps.leverage,
-            liquidationThresholdPercent:
-              config.perps.liquidationThresholdPercent,
-          }
+              marginMode: config.perps.marginMode,
+              leverage: config.perps.leverage,
+              liquidationThresholdPercent:
+                config.perps.liquidationThresholdPercent,
+            }
           : undefined,
       }),
     };
@@ -101,11 +101,11 @@ export class ConfigManager {
         marketMode: config.marketMode,
         perps: config.perps
           ? {
-            marginMode: config.perps.marginMode,
-            leverage: config.perps.leverage,
-            liquidationThresholdPercent:
-              config.perps.liquidationThresholdPercent,
-          }
+              marginMode: config.perps.marginMode,
+              leverage: config.perps.leverage,
+              liquidationThresholdPercent:
+                config.perps.liquidationThresholdPercent,
+            }
           : undefined,
       }),
     );

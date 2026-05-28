@@ -1,10 +1,6 @@
 import { EMBEDDED_KEY_MATERIAL } from "../internal/embedded-key-material";
 
-export type MonacoEnvironment =
-  | "mainnet"
-  | "staging"
-  | "development"
-  | "local";
+export type MonacoEnvironment = "mainnet" | "staging" | "development" | "local";
 
 export const DEFAULT_ENVIRONMENT: MonacoEnvironment = "staging";
 
@@ -96,7 +92,9 @@ export function getClientId(
   return getMonacoConfig(environment).clientId;
 }
 
-export function resolveMonacoApiUrl(network: MonacoEnvironment | string): string {
+export function resolveMonacoApiUrl(
+  network: MonacoEnvironment | string,
+): string {
   if (network in MONACO_API_URLS) {
     return MONACO_API_URLS[network as MonacoEnvironment];
   }

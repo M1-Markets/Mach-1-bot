@@ -1,7 +1,7 @@
 import {
-  MonacoCoreSDK,
   type Interval,
   type Mach1SDK,
+  MonacoCoreSDK,
   type MonacoCoreSDKConfig,
   type TradingPairResolver,
 } from "mach1_sdk";
@@ -23,18 +23,15 @@ import {
   type Position,
   type TradingPair,
 } from "@/shared/types";
-import { createLogger } from "@/shared/utils/logger";
-import { retryWithBackoff } from "@/shared/utils/rate-limiter";
 import {
-  createIdGenerator,
   type Clock,
+  createIdGenerator,
   type IdGenerator,
   type Rng,
   realClock,
   realRng,
 } from "@/shared/utils/determinism";
-
-const logger = createLogger("IsolatedPerpsLiveTradingEngine");
+import { retryWithBackoff } from "@/shared/utils/rate-limiter";
 
 type MarginAccountSummaryLike = {
   equity?: string;
@@ -210,7 +207,9 @@ const formatScaledDecimal = (value: bigint): string => {
   return `${negative ? "-" : ""}${whole.toString()}.${fraction}`;
 };
 
-const parseNumeric = (value: string | number | undefined): number | undefined => {
+const parseNumeric = (
+  value: string | number | undefined,
+): number | undefined => {
   if (value === undefined) {
     return undefined;
   }
@@ -443,7 +442,9 @@ export class IsolatedPerpsLiveTradingEngine extends BaseTradingMode {
       const response = (await retryWithBackoff(
         async () => {
           if (order.closeOnly) {
-            const openPosition = this.findOpenPosition(pairMetadata.tradingPairId);
+            const openPosition = this.findOpenPosition(
+              pairMetadata.tradingPairId,
+            );
             if (!openPosition) {
               throw new Error(
                 `No open isolated perps position found for ${pair.symbol}`,
@@ -477,7 +478,9 @@ export class IsolatedPerpsLiveTradingEngine extends BaseTradingMode {
           }
 
           return sdk.perps.placeMarketOrder({
-            leverage: String(order.leverage ?? this.config.perps?.leverage ?? 1),
+            leverage: String(
+              order.leverage ?? this.config.perps?.leverage ?? 1,
+            ),
             marginAccountId: accountState.marginAccountId,
             positionSide,
             quantity: formatScaledDecimal(order.quantity),
@@ -542,7 +545,8 @@ export class IsolatedPerpsLiveTradingEngine extends BaseTradingMode {
       throw new Error(`Order not found: ${orderId}`);
     }
 
-    const exchangeOrderId = orderData.exchangeOrderId ?? orderData.engineOrderId;
+    const exchangeOrderId =
+      orderData.exchangeOrderId ?? orderData.engineOrderId;
     if (!exchangeOrderId) {
       throw new Error(`Exchange order ID missing for ${orderId}`);
     }
@@ -696,7 +700,7 @@ export class IsolatedPerpsLiveTradingEngine extends BaseTradingMode {
         const fundingState = fundingStates.get(position.trading_pair_id);
         const accruedFunding =
           fundingState?.status === "available"
-            ? fundingState.accruedFunding ?? 0n
+            ? (fundingState.accruedFunding ?? 0n)
             : 0n;
         const fundingRate =
           fundingState?.status === "available" ? fundingState.rate : undefined;
@@ -813,7 +817,10 @@ export class IsolatedPerpsLiveTradingEngine extends BaseTradingMode {
 
   private resolveTradingPair(order: OrderRequest): TradingPair {
     const resolver = this.monacoSDK.getTradingPairResolver();
-    const resolved = resolver.getPairByContracts(order.baseToken, order.quoteToken);
+    const resolved = resolver.getPairByContracts(
+      order.baseToken,
+      order.quoteToken,
+    );
     return {
       base: order.baseToken,
       quote: order.quoteToken,
@@ -833,7 +840,9 @@ export class IsolatedPerpsLiveTradingEngine extends BaseTradingMode {
       resolver.getPairBySymbol(pair.symbol);
 
     if (!metadata?.id) {
-      throw new Error(`Perps trading pair metadata unavailable for ${pair.symbol}`);
+      throw new Error(
+        `Perps trading pair metadata unavailable for ${pair.symbol}`,
+      );
     }
 
     return {
@@ -854,7 +863,9 @@ export class IsolatedPerpsLiveTradingEngine extends BaseTradingMode {
     return order.isBuy ? "LONG" : "SHORT";
   }
 
-  private findOpenPosition(tradingPairId: string): CachedPerpsPosition | undefined {
+  private findOpenPosition(
+    tradingPairId: string,
+  ): CachedPerpsPosition | undefined {
     return this.accountState?.positions.find(
       (position) => position.pairId === tradingPairId,
     );

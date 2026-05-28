@@ -1,7 +1,6 @@
 import type {
   IsolatedPerpsConfig,
   LiveTradingMarketMode,
-  PerpsMarginMode,
 } from "@/shared/types/config";
 import {
   isLiveMode,
@@ -31,9 +30,9 @@ export interface NormalizedLiveMarketConfig {
 function hasPerpsSettings(perps?: RawPerpsConfig): boolean {
   return Boolean(
     perps &&
-    (perps.marginMode !== undefined ||
-      perps.leverage !== undefined ||
-      perps.liquidationThresholdPercent !== undefined),
+      (perps.marginMode !== undefined ||
+        perps.leverage !== undefined ||
+        perps.liquidationThresholdPercent !== undefined),
   );
 }
 
@@ -44,9 +43,7 @@ export function validateLiveMarketConfig(
   const { mode, marketMode, perps } = input;
 
   if (marketMode && !isLiveTradingMarketMode(marketMode)) {
-    errors.push(
-      "trading.market_mode must be one of: spot, isolated_perps",
-    );
+    errors.push("trading.market_mode must be one of: spot, isolated_perps");
     return errors;
   }
 
@@ -80,7 +77,11 @@ export function validateLiveMarketConfig(
   }
 
   const leverage = perps?.leverage;
-  if (typeof leverage !== "number" || !Number.isFinite(leverage) || leverage <= 0) {
+  if (
+    typeof leverage !== "number" ||
+    !Number.isFinite(leverage) ||
+    leverage <= 0
+  ) {
     errors.push("perps.leverage must be a positive number");
   }
 

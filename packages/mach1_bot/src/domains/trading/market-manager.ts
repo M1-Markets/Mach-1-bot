@@ -1,7 +1,7 @@
 import type {
-  Candlestick as MonacoCandlestick,
   Interval,
   Mach1SDK,
+  Candlestick as MonacoCandlestick,
   OrderbookEvent as MonacoOrderbookEvent,
   TradeEvent as MonacoTradeEvent,
   TradingPair as MonacoTradingPair,
@@ -27,9 +27,6 @@ import {
   realClock,
   realRng,
 } from "@/shared/utils/determinism";
-import { createLogger } from "@/shared/utils/logger";
-
-const logger = createLogger("MarketManager");
 
 type RecentTrade = {
   price: bigint;
@@ -45,7 +42,14 @@ type LivePairContext = {
   quoteDecimals: number;
 };
 
-const SUPPORTED_INTERVALS = new Set<Interval>(["1m", "5m", "15m", "1h", "4h", "1d"]);
+const SUPPORTED_INTERVALS = new Set<Interval>([
+  "1m",
+  "5m",
+  "15m",
+  "1h",
+  "4h",
+  "1d",
+]);
 
 function normalizeTradingPairsResponse(
   response: unknown,
@@ -194,14 +198,8 @@ export class MarketManager {
       this.generateMockOrderBook(ethUsdc, 300000n),
     );
 
-    this.mockTrades.set(
-      btcUsdc,
-      this.generateMockTrades(btcUsdc, 4500000n),
-    );
-    this.mockTrades.set(
-      ethUsdc,
-      this.generateMockTrades(ethUsdc, 300000n),
-    );
+    this.mockTrades.set(btcUsdc, this.generateMockTrades(btcUsdc, 4500000n));
+    this.mockTrades.set(ethUsdc, this.generateMockTrades(ethUsdc, 300000n));
   }
 
   setMode(mode: MarketDataMode): void {
@@ -437,7 +435,11 @@ export class MarketManager {
     error?: unknown,
   ): MarketDataUnavailableError {
     const message =
-      error instanceof Error ? error.message : error ? String(error) : undefined;
+      error instanceof Error
+        ? error.message
+        : error
+          ? String(error)
+          : undefined;
 
     return new MarketDataUnavailableError(pair.symbol, dataType, {
       ...details,
@@ -715,8 +717,9 @@ export class MarketManager {
           500,
           Math.max(
             1,
-            Math.ceil((end.getTime() - start.getTime()) / this.getIntervalMs(interval)) +
-            1,
+            Math.ceil(
+              (end.getTime() - start.getTime()) / this.getIntervalMs(interval),
+            ) + 1,
           ),
         );
         const candles = await sdk.market.getCandlesticks(
@@ -823,10 +826,7 @@ export class MarketManager {
     return intervals[timeframe] || intervals["1h"];
   }
 
-  async getRecentTrades(
-    pair: TradingPair,
-    limit = 50,
-  ): Promise<RecentTrade[]> {
+  async getRecentTrades(pair: TradingPair, limit = 50): Promise<RecentTrade[]> {
     if (!this.isSimulationMode()) {
       try {
         const sdk = this.getRequiredSDK();
@@ -836,15 +836,21 @@ export class MarketManager {
           cached && cached.length > 0
             ? cached
             : sdk.trades?.getTrades
-              ? (await sdk.trades.getTrades(livePair.tradingPairId, {
-                page: 1,
-                page_size: limit,
-              })).map((trade) =>
-                this.normalizeLiveTradeEvent(livePair.normalizedSymbol, trade, {
-                  baseDecimals: livePair.baseDecimals,
-                  quoteDecimals: livePair.quoteDecimals,
-                }),
-              )
+              ? (
+                  await sdk.trades.getTrades(livePair.tradingPairId, {
+                    page: 1,
+                    page_size: limit,
+                  })
+                ).map((trade) =>
+                  this.normalizeLiveTradeEvent(
+                    livePair.normalizedSymbol,
+                    trade,
+                    {
+                      baseDecimals: livePair.baseDecimals,
+                      quoteDecimals: livePair.quoteDecimals,
+                    },
+                  ),
+                )
               : undefined;
 
         if (!recentTrades) {

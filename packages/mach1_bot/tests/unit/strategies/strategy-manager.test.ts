@@ -1,8 +1,5 @@
-import { StrategyManager } from "@/domains/strategies/management/strategy-manager";
-import { StrategyRegistry } from "@/domains/strategies/management/strategy-registry";
 import { OrderEventEmitter } from "@/domains/execution/order-event-emitter";
 import { OrderLifecycleStore } from "@/domains/execution/order-lifecycle-store";
-import { RiskManager } from "@/domains/trading/risk-manager";
 import type {
   IStrategy,
   StrategyConfig,
@@ -12,6 +9,9 @@ import type {
   StrategyResult,
   StrategySignal,
 } from "@/domains/strategies/core/i-strategy";
+import { StrategyManager } from "@/domains/strategies/management/strategy-manager";
+import { StrategyRegistry } from "@/domains/strategies/management/strategy-registry";
+import { RiskManager } from "@/domains/trading/risk-manager";
 
 const createMockContext = (): StrategyContext => ({
   portfolio: {
@@ -55,6 +55,14 @@ const createMockContext = (): StrategyContext => ({
       formatTime: (timestamp: number) => new Date(timestamp).toISOString(),
       getMarketHours: () => ({ isOpen: true, nextOpen: 0, nextClose: 0 }),
     },
+    trading: {
+      getPositionQuantity: () => 0,
+      getPendingQuantity: () => 0,
+      getAvailableCapital: () => 0,
+      fullCloseQuantity: () => 0,
+      partialCloseQuantity: () => 0,
+      maxRiskPositionSize: () => 0,
+    },
     log: {
       info: () => undefined,
       warn: () => undefined,
@@ -78,7 +86,9 @@ class TestStrategy implements IStrategy {
     parametersSchema: {},
   };
 
-  async initialize(_context: StrategyContext): Promise<void> { }
+  async initialize(_context: StrategyContext): Promise<void> {
+    // Intentional no-op for tests.
+  }
 
   async execute(_context: StrategyContext): Promise<StrategyResult> {
     return {
@@ -94,9 +104,13 @@ class TestStrategy implements IStrategy {
   async updateParameters(
     _parameters: Partial<StrategyParameters>,
     _context: StrategyContext,
-  ): Promise<void> { }
+  ): Promise<void> {
+    // Intentional no-op for tests.
+  }
 
-  async cleanup(_context: StrategyContext): Promise<void> { }
+  async cleanup(_context: StrategyContext): Promise<void> {
+    // Intentional no-op for tests.
+  }
 }
 
 class CapturingStrategy extends TestStrategy {
@@ -688,6 +702,373 @@ describe("StrategyManager coordinator scheduling", () => {
       "risk:instance-8:true",
       "order:instance-8:true",
     ]);
+  });
+
+  it("submits explicit sell exit signals instead of skipping validation", async () => {
+    const validatingRiskManager = {
+      validateOrder: vi.fn().mockResolvedValue({
+        approved: true,
+        rejectionReasons: [],
+      }),
+    };
+    const orderExecutor = vi.fn().mockImplementation(async (request) => ({
+      orderId: "order-exit-1",
+      status: "filled",
+      filledQuantity: request.quantity,
+      remainingQuantity: 0n,
+    }));
+    const instance = {
+      id: "instance-8b",
+      strategyId: "test-strategy",
+      strategy: new TestStrategy(),
+      parameters: {},
+      status: "running",
+      metrics: {
+        totalReturn: 0,
+        sharpeRatio: 0,
+        maxDrawdown: 0,
+        winRate: 0,
+        totalTrades: 0,
+        avgHoldingPeriod: 0,
+        profitFactor: 0,
+        lastUpdate: 0,
+      },
+      state: new Map(),
+      createdAt: Date.now(),
+      executionCount: 0,
+      errors: [],
+      subscriptions: new Set(),
+    } satisfies StrategyInstance;
+
+    (
+      manager as unknown as {
+        riskManager: typeof validatingRiskManager;
+        marketManager: { getCurrentPrice: () => Promise<bigint> };
+      }
+    ).riskManager = validatingRiskManager;
+    (
+      manager as unknown as {
+        marketManager: { getCurrentPrice: () => Promise<bigint> };
+      }
+    ).marketManager = {
+      getCurrentPrice: vi.fn().mockResolvedValue(12345n),
+    };
+    manager.setOrderExecutor(orderExecutor);
+
+    const warnings = await (
+      manager as unknown as {
+        processStrategySignals: (
+          instance: StrategyInstance,
+          signals: StrategySignal[],
+          context: StrategyContext,
+        ) => Promise<string[]>;
+      }
+    ).processStrategySignals(
+      instance,
+      [
+        {
+          action: "sell",
+          pair: "ETH/USDC",
+          quantity: 1.5,
+          confidence: 1,
+          reason: "close long",
+        },
+      ],
+      createMockContext(),
+    );
+
+    expect(warnings).toEqual([]);
+    expect(validatingRiskManager.validateOrder).toHaveBeenCalledWith(
+      expect.objectContaining({
+        isBuy: false,
+        quantity: 150n,
+      }),
+    );
+    expect(orderExecutor).toHaveBeenCalledWith(
+      expect.objectContaining({
+        isBuy: false,
+        quantity: 150n,
+      }),
+    );
+  });
+
+  it("suppresses duplicate signals inside the execution cooldown window", async () => {
+    const validatingRiskManager = {
+      validateOrder: vi.fn().mockResolvedValue({
+        approved: true,
+        rejectionReasons: [],
+      }),
+    };
+    const orderExecutor = vi.fn().mockResolvedValue({
+      orderId: "order-dup-1",
+      status: "filled",
+      filledQuantity: 100n,
+      remainingQuantity: 0n,
+    });
+    const instance = {
+      id: "instance-dup",
+      strategyId: "test-strategy",
+      strategy: new TestStrategy(),
+      parameters: {},
+      status: "running",
+      metrics: {
+        totalReturn: 0,
+        sharpeRatio: 0,
+        maxDrawdown: 0,
+        winRate: 0,
+        totalTrades: 0,
+        avgHoldingPeriod: 0,
+        profitFactor: 0,
+        lastUpdate: 0,
+      },
+      state: new Map(),
+      createdAt: Date.now(),
+      executionCount: 0,
+      errors: [],
+      subscriptions: new Set(),
+    } satisfies StrategyInstance;
+
+    (
+      manager as unknown as {
+        riskManager: typeof validatingRiskManager;
+        marketManager: { getCurrentPrice: () => Promise<bigint> };
+      }
+    ).riskManager = validatingRiskManager;
+    (
+      manager as unknown as {
+        marketManager: { getCurrentPrice: () => Promise<bigint> };
+      }
+    ).marketManager = {
+      getCurrentPrice: vi.fn().mockResolvedValue(12345n),
+    };
+    manager.setOrderExecutor(orderExecutor);
+
+    const signal: StrategySignal = {
+      action: "buy",
+      pair: "ETH/USDC",
+      quantity: 1,
+      confidence: 1,
+      reason: "repeat",
+    };
+
+    const firstWarnings = await (
+      manager as unknown as {
+        processStrategySignals: (
+          instance: StrategyInstance,
+          signals: StrategySignal[],
+          context: StrategyContext,
+        ) => Promise<string[]>;
+      }
+    ).processStrategySignals(instance, [signal], createMockContext());
+    const secondWarnings = await (
+      manager as unknown as {
+        processStrategySignals: (
+          instance: StrategyInstance,
+          signals: StrategySignal[],
+          context: StrategyContext,
+        ) => Promise<string[]>;
+      }
+    ).processStrategySignals(instance, [signal], createMockContext());
+
+    expect(firstWarnings).toEqual([]);
+    expect(secondWarnings).toEqual([
+      "Strategy signal suppressed for ETH/USDC: duplicate_signal_cooldown",
+    ]);
+    expect(orderExecutor).toHaveBeenCalledTimes(1);
+  });
+
+  it("suppresses overlapping signals while a pending order exists", async () => {
+    const orderExecutor = vi.fn();
+    const instance = {
+      id: "instance-pending",
+      strategyId: "test-strategy",
+      strategy: new TestStrategy(),
+      parameters: {},
+      status: "running",
+      metrics: {
+        totalReturn: 0,
+        sharpeRatio: 0,
+        maxDrawdown: 0,
+        winRate: 0,
+        totalTrades: 0,
+        avgHoldingPeriod: 0,
+        profitFactor: 0,
+        lastUpdate: 0,
+      },
+      state: new Map(),
+      createdAt: Date.now(),
+      executionCount: 0,
+      errors: [],
+      subscriptions: new Set(["ETH/USDC"]),
+    } satisfies StrategyInstance;
+    (
+      manager as unknown as {
+        instances: Map<string, StrategyInstance>;
+      }
+    ).instances.set(instance.id, instance);
+    manager.setOrderExecutor(orderExecutor);
+
+    await (
+      manager as unknown as {
+        handleOrderLifecycleEvent: (event: {
+          type: "submitted";
+          timestamp: number;
+          order: {
+            localId: string;
+            strategyId: string;
+            pair: { symbol: string };
+            side: "buy" | "sell";
+            requestedPrice: bigint;
+            requestedQuantity: bigint;
+            filledQuantity: bigint;
+            remainingQuantity: bigint;
+            status: "submitted";
+          };
+        }) => Promise<void>;
+      }
+    ).handleOrderLifecycleEvent({
+      type: "submitted",
+      timestamp: Date.now(),
+      order: {
+        localId: "pending-order-1",
+        strategyId: instance.id,
+        pair: {
+          base: "0x1111111111111111111111111111111111111111",
+          quote: "0x4444444444444444444444444444444444444444",
+          symbol: "ETH/USDC",
+        },
+        side: "buy",
+        type: "market",
+        requestedPrice: 12345n,
+        requestedQuantity: 100n,
+        filledQuantity: 0n,
+        remainingQuantity: 100n,
+        fees: 0n,
+        slippage: 0n,
+        status: "submitted",
+        submittedAt: Date.now(),
+        updatedAt: Date.now(),
+      },
+    });
+
+    const pendingContext = createMockContext();
+    pendingContext.utils.trading.getPendingQuantity = (_pair, side) =>
+      side === "buy" ? 1 : 0;
+
+    const warnings = await (
+      manager as unknown as {
+        processStrategySignals: (
+          instance: StrategyInstance,
+          signals: StrategySignal[],
+          context: StrategyContext,
+        ) => Promise<string[]>;
+      }
+    ).processStrategySignals(
+      instance,
+      [
+        {
+          action: "buy",
+          pair: "ETH/USDC",
+          quantity: 1,
+          confidence: 1,
+          reason: "pending overlap",
+        },
+      ],
+      pendingContext,
+    );
+
+    expect(warnings).toEqual([
+      "Strategy signal suppressed for ETH/USDC: pending_buy_order_overlap",
+    ]);
+    expect(orderExecutor).not.toHaveBeenCalled();
+  });
+
+  it("exposes position-aware close and risk sizing helpers", () => {
+    const instance = {
+      id: "instance-utils",
+      strategyId: "test-strategy",
+      strategy: new TestStrategy(),
+      parameters: {},
+      status: "running",
+      metrics: {
+        totalReturn: 0,
+        sharpeRatio: 0,
+        maxDrawdown: 0,
+        winRate: 0,
+        totalTrades: 0,
+        avgHoldingPeriod: 0,
+        profitFactor: 0,
+        lastUpdate: 0,
+      },
+      state: new Map(),
+      createdAt: Date.now(),
+      executionCount: 0,
+      errors: [],
+      subscriptions: new Set(),
+    } satisfies StrategyInstance;
+
+    (
+      manager as unknown as {
+        pendingOrders: Map<
+          string,
+          {
+            strategyId?: string;
+            pair: { symbol: string };
+            side: "buy" | "sell";
+            remainingQuantity: bigint;
+            requestedPrice: bigint;
+          }
+        >;
+      }
+    ).pendingOrders.set("pending-buy", {
+      strategyId: instance.id,
+      pair: {
+        base: "0x1111111111111111111111111111111111111111",
+        quote: "0x4444444444444444444444444444444444444444",
+        symbol: "ETH/USDC",
+      },
+      side: "buy",
+      type: "market",
+      requestedPrice: 10000n,
+      requestedQuantity: 100n,
+      filledQuantity: 0n,
+      remainingQuantity: 25n,
+      fees: 0n,
+      slippage: 0n,
+      status: "submitted",
+      submittedAt: Date.now(),
+      updatedAt: Date.now(),
+      localId: "pending-buy",
+    });
+
+    const utils = (
+      manager as unknown as {
+        createStrategyUtils: (
+          instance: StrategyInstance,
+          corePositions: Map<string, { balance: bigint }>,
+          portfolio: { totalValue: number },
+        ) => StrategyContext["utils"];
+      }
+    ).createStrategyUtils(
+      instance,
+      new Map([
+        [
+          "0x1111111111111111111111111111111111111111",
+          {
+            balance: 250n,
+          },
+        ],
+      ]),
+      {
+        totalValue: 10_000,
+      } as never,
+    );
+
+    expect(utils.trading.fullCloseQuantity("ETH/USDC")).toBe(2.5);
+    expect(utils.trading.partialCloseQuantity("ETH/USDC", 0.4)).toBe(1);
+    expect(utils.trading.getPendingQuantity("ETH/USDC", "buy")).toBe(0.25);
+    expect(utils.trading.getAvailableCapital()).toBe(9_975);
+    expect(utils.trading.maxRiskPositionSize(100, 95, 0.02)).toBe(40);
   });
 
   it("turns valid perps long signal into perps-capable order request", async () => {

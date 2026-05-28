@@ -1,8 +1,8 @@
 import { EventEmitter } from "events";
+import type { RiskEvent as StrategyRiskEvent } from "@/domains/strategies/core/i-strategy";
 import { MarketManager } from "@/domains/trading/market-manager";
 import { OrderManager } from "@/domains/trading/order-manager";
 import { PositionTracker } from "@/domains/trading/position-tracker";
-import type { RiskEvent as StrategyRiskEvent } from "@/domains/strategies/core/i-strategy";
 import {
   Address,
   OrderRequest,
@@ -36,11 +36,11 @@ export interface RiskCheckResult {
 
 export interface RiskBreach {
   type:
-  | "position_limit"
-  | "daily_loss"
-  | "max_drawdown"
-  | "correlation"
-  | "leverage";
+    | "position_limit"
+    | "daily_loss"
+    | "max_drawdown"
+    | "correlation"
+    | "leverage";
   severity: "warning" | "critical";
   message: string;
   currentValue: number;
@@ -420,9 +420,9 @@ export class RiskManager extends EventEmitter {
       return this.failOpen
         ? { status: "within_limit", correlation: null }
         : {
-          status: "unavailable",
-          reason: "Correlation check unavailable.",
-        };
+            status: "unavailable",
+            reason: "Correlation check unavailable.",
+          };
     }
   }
 
@@ -573,9 +573,12 @@ export class RiskManager extends EventEmitter {
     let riskScore = 0;
 
     const pair = this.toPair(order.baseToken, order.quoteToken);
-    const position = context.getPosition ? await context.getPosition(pair) : undefined;
+    const position = context.getPosition
+      ? await context.getPosition(pair)
+      : undefined;
     const riskIncreasing = this.isRiskIncreasingPerpsOrder(order, position);
-    const requestedLeverage = order.leverage ?? context.maxConfiguredLeverage ?? 1;
+    const requestedLeverage =
+      order.leverage ?? context.maxConfiguredLeverage ?? 1;
     const configuredMaxLeverage = Math.min(
       context.maxConfiguredLeverage ?? this.riskLimits.maxLeverage,
       this.riskLimits.maxLeverage,
@@ -600,31 +603,37 @@ export class RiskManager extends EventEmitter {
     if (fundingState?.status === "unsupported") {
       warnings.push(
         fundingState.warning ??
-        "Funding rate unavailable from Monaco; skipping funding adjustment.",
+          "Funding rate unavailable from Monaco; skipping funding adjustment.",
       );
     }
     if (riskIncreasing && fundingState?.status === "missing") {
       rejectionReasons.push(
         fundingState.warning ??
-        "Funding data unavailable for isolated perps order; rejecting fail-closed",
+          "Funding data unavailable for isolated perps order; rejecting fail-closed",
       );
       riskScore += 15;
     }
     if (riskIncreasing && fundingState?.status === "stale") {
       rejectionReasons.push(
         fundingState.warning ??
-        "Funding data is stale for isolated perps order; rejecting fail-closed",
+          "Funding data is stale for isolated perps order; rejecting fail-closed",
       );
       riskScore += 20;
     }
 
-    const orderValue = calculateScaledNotionalValue(order.price, order.quantity);
+    const orderValue = calculateScaledNotionalValue(
+      order.price,
+      order.quantity,
+    );
     const requiredMargin = this.divideAndRoundUp(
       orderValue,
       BigInt(Math.max(1, Math.trunc(requestedLeverage))),
     );
 
-    if (riskIncreasing && requiredMargin > context.accountState.freeCollateral) {
+    if (
+      riskIncreasing &&
+      requiredMargin > context.accountState.freeCollateral
+    ) {
       rejectionReasons.push(
         `Required collateral ${this.formatScaledBigInt(requiredMargin)} exceeds free collateral ${this.formatScaledBigInt(context.accountState.freeCollateral)}`,
       );
@@ -647,7 +656,8 @@ export class RiskManager extends EventEmitter {
       position,
     );
     const maxPositionRisk =
-      (context.accountState.equity * BigInt(this.riskLimits.positionLimitPercent)) /
+      (context.accountState.equity *
+        BigInt(this.riskLimits.positionLimitPercent)) /
       100n;
     if (projectedMarginRisk > maxPositionRisk) {
       rejectionReasons.push(
@@ -657,16 +667,22 @@ export class RiskManager extends EventEmitter {
     }
 
     const liquidationThresholdPercent = context.liquidationThresholdPercent;
-    if (position?.balance && position.balance > 0n && liquidationThresholdPercent) {
+    if (
+      position?.balance &&
+      position.balance > 0n &&
+      liquidationThresholdPercent
+    ) {
       const stateAgeMs = Date.now() - context.accountState.updatedAt;
-      const maxAgeMs = context.markDataStaleAfterMs ?? DEFAULT_PERPS_STATE_MAX_AGE_MS;
+      const maxAgeMs =
+        context.markDataStaleAfterMs ?? DEFAULT_PERPS_STATE_MAX_AGE_MS;
       if (riskIncreasing && stateAgeMs > maxAgeMs) {
         rejectionReasons.push(
           "Perps mark price or maintenance margin data is stale; rejecting order fail-closed",
         );
         riskScore += 45;
       } else {
-        const liquidationDistance = this.calculateLiquidationDistancePercent(position);
+        const liquidationDistance =
+          this.calculateLiquidationDistancePercent(position);
         if (liquidationDistance === null) {
           if (riskIncreasing) {
             rejectionReasons.push(
@@ -798,7 +814,9 @@ export class RiskManager extends EventEmitter {
     return currentCollateral + requiredMargin;
   }
 
-  private calculateLiquidationDistancePercent(position: Position): number | null {
+  private calculateLiquidationDistancePercent(
+    position: Position,
+  ): number | null {
     if (
       position.markPrice === undefined ||
       position.markPrice <= 0n ||
@@ -868,7 +886,7 @@ export class RiskManager extends EventEmitter {
       if (
         Number(summary.dailyPnL) < 0 &&
         Math.abs(Number(summary.dailyPnL)) >
-        Number(this.riskLimits.maxDailyLoss) * 0.8
+          Number(this.riskLimits.maxDailyLoss) * 0.8
       ) {
         recommendations.push(
           "Approaching daily loss limit - consider position reduction",

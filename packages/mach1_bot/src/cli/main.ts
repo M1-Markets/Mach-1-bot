@@ -1118,7 +1118,6 @@ export const registerCliCommands = (target: Command): Command => {
         // exports MACH1_INVOCATION_CWD because the bot CLI itself spawns
         // with cwd=packages/mach1_bot, which would otherwise hide the
         // repo-root .env.
-        // biome-ignore lint/security/detectNonLiteralRequire: dotenv is a known fixed module
         const dotenv = require("dotenv");
         const envCwd = process.env.MACH1_INVOCATION_CWD || process.cwd();
         dotenv.config({ path: path.resolve(envCwd, ".env") });
@@ -1355,8 +1354,6 @@ async function runBot(configFile: string, runOptions: RunOptions = {}) {
   let runUi: RunUiController | undefined;
   let restoreConsole: (() => void) | undefined;
   let balanceRefreshTimer: NodeJS.Timeout | undefined;
-  const disableUi = process.env.MACH_ONE_NO_UI === "1";
-
   try {
     const disableUi = runOptions.noUi ?? process.env.MACH_ONE_NO_UI === "1";
 

@@ -71,7 +71,12 @@ class Logger {
   }
 
   warn(message: string, metadata?: unknown, error?: unknown): void {
-    this.log("WARN", message, this.mergeMetadata(metadata, error), console.warn);
+    this.log(
+      "WARN",
+      message,
+      this.mergeMetadata(metadata, error),
+      console.warn,
+    );
   }
 
   error(message: string, metadata?: unknown, error?: unknown): void {
@@ -105,7 +110,10 @@ class Logger {
     level: LogLevel,
     message: string,
     metadata?: unknown,
-    writer: (message?: unknown, ...optionalParams: unknown[]) => void = console.log,
+    writer: (
+      message?: unknown,
+      ...optionalParams: unknown[]
+    ) => void = console.log,
   ): void {
     if (!this.shouldLog(level)) {
       return;
@@ -113,7 +121,9 @@ class Logger {
 
     const payload = this.normalizeMetadata(metadata);
     if (payload === undefined) {
-      writer(`[${new Date().toISOString()}] [${level}] [${this.component}] ${message}`);
+      writer(
+        `[${new Date().toISOString()}] [${level}] [${this.component}] ${message}`,
+      );
       return;
     }
 
