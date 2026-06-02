@@ -1,6 +1,7 @@
 export * from "./applications/index";
 export * from "./auth/index";
 export * from "./base";
+export * from "./delegated-agents/index";
 export * from "./fees/index";
 export * from "./margin-accounts/index";
 export * from "./market/index";

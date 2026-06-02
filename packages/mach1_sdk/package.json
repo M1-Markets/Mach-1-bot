@@ -22,6 +22,8 @@
     "./api/applications/api": "./dist/api/applications/api.js",
     "./api/auth": "./dist/api/auth/index.js",
     "./api/auth/api": "./dist/api/auth/api.js",
+    "./api/delegated-agents": "./dist/api/delegated-agents/index.js",
+    "./api/delegated-agents/api": "./dist/api/delegated-agents/api.js",
     "./api/fees": "./dist/api/fees/index.js",
     "./api/fees/api": "./dist/api/fees/api.js",
     "./api/margin-accounts": "./dist/api/margin-accounts/index.js",
@@ -64,14 +66,14 @@
     "lint:fix": "biome check --write src tests"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.4.12",
-    "@types/node": "^24.9.1",
+    "@biomejs/biome": "^2.4.16",
+    "@types/node": "^24.12.4",
     "tsup": "^8.5.1",
     "typescript": "^5.9.3"
   },
   "dependencies": {
-    "@0xmonaco/core": "^0.7.9",
-    "@0xmonaco/types": "^0.7.9"
+    "@0xmonaco/core": "^0.8.7",
+    "@0xmonaco/types": "^0.8.7"
   },
   "peerDependencies": {
     "viem": "^2.45.2"

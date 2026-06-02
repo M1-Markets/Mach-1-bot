@@ -6,6 +6,7 @@ test("root and subpath exports resolve", async () => {
   const monaco = await import("mach1_sdk/monaco");
   const sdk = await import("mach1_sdk/sdk");
   const api = await import("mach1_sdk/api");
+  const delegatedAgentsApi = await import("mach1_sdk/api/delegated-agents/api");
   const marginAccountsApi = await import("mach1_sdk/api/margin-accounts/api");
   const marketApi = await import("mach1_sdk/api/market/api");
   const perp = await import("mach1_sdk/api/perp");
@@ -32,6 +33,8 @@ test("root and subpath exports resolve", async () => {
   assert.equal(typeof monaco.TradingPairResolver, "function");
   assert.equal(typeof monaco.resolveMonacoApiUrl, "function");
   assert.equal(typeof api.BaseAPI, "function");
+  assert.equal(typeof api.DelegatedAgentsAPIImpl, "function");
+  assert.equal(typeof delegatedAgentsApi.DelegatedAgentsAPIImpl, "function");
   assert.equal(typeof api.MarginAccountsAPIImpl, "function");
   assert.equal(typeof marketApi.MarketAPIImpl, "function");
   assert.equal(typeof marginAccountsApi.MarginAccountsAPIImpl, "function");
