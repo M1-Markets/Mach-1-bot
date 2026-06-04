@@ -75,6 +75,7 @@ export interface TomlConfig {
     margin_mode?: PerpsMarginMode;
     leverage?: number;
     liquidation_threshold_percent?: number;
+    margin_account_id?: string;
   };
   strategy: {
     type: string;
@@ -791,6 +792,7 @@ export function convertToBotConfig(tomlConfig: TomlConfig): BotConfig {
           leverage: tomlConfig.perps.leverage,
           liquidationThresholdPercent:
             tomlConfig.perps.liquidation_threshold_percent,
+          marginAccountId: tomlConfig.perps.margin_account_id,
         }
       : undefined,
   });
@@ -808,6 +810,7 @@ export function convertToBotConfig(tomlConfig: TomlConfig): BotConfig {
           leverage: tomlConfig.perps.leverage,
           liquidationThresholdPercent:
             tomlConfig.perps.liquidation_threshold_percent,
+          marginAccountId: tomlConfig.perps.margin_account_id,
         }
       : undefined,
   });

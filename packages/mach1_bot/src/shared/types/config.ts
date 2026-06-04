@@ -16,6 +16,7 @@ export interface IsolatedPerpsConfig {
   marginMode?: PerpsMarginMode;
   leverage?: number;
   liquidationThresholdPercent?: number;
+  marginAccountId?: string;
 }
 
 // Core SDK Configuration

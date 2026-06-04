@@ -22,6 +22,8 @@ max_daily_loss = 250
 margin_mode = "isolated"
 leverage = 3
 liquidation_threshold_percent = 12
+# Optional: pin bot to specific isolated margin account instead of first active account.
+# margin_account_id = "margin-account-id-here"
 
 [strategy]
 type = "multi_indicator"

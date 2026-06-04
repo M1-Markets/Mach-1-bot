@@ -213,6 +213,33 @@ describe("IsolatedPerpsLiveTradingEngine", () => {
     );
   });
 
+  it("uses configured isolated margin account id when provided", async () => {
+    const engine = new IsolatedPerpsLiveTradingEngine({
+      privateKey: "0x" + "1".repeat(64),
+      network: "sei-testnet",
+      marketMode: "isolated_perps",
+      perps: {
+        marginMode: "isolated",
+        leverage: 5,
+        marginAccountId: "margin-configured",
+      },
+      maxSlippage: 0.01,
+      maxRetries: 2,
+      retryDelay: 0,
+    });
+
+    await engine.initialize();
+
+    expect(mockListMarginAccounts).not.toHaveBeenCalled();
+    expect(mockGetMarginAccountSummary).toHaveBeenCalledWith(
+      "margin-configured",
+    );
+    expect(mockListOpenPositions).toHaveBeenCalledWith({
+      margin_account_id: "margin-configured",
+    });
+    expect(engine.getAccountState()?.marginAccountId).toBe("margin-configured");
+  });
+
   it("syncs cached isolated margin state on initialize and later refresh", async () => {
     const engine = makeEngine();
 

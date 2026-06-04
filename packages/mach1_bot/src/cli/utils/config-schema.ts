@@ -30,8 +30,32 @@ export interface TomlConfigSchema extends TomlConfigSchemaNode {
   $schema: string;
 }
 
+export function resolveTomlConfigSchemaPath(fromDir: string): string {
+  let currentDir = path.resolve(fromDir);
+
+  while (true) {
+    const candidate = path.join(
+      currentDir,
+      "schema",
+      "toml-config.schema.json",
+    );
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+
+    const parentDir = path.dirname(currentDir);
+    if (parentDir === currentDir) {
+      throw new Error(
+        `Unable to locate toml-config.schema.json from ${fromDir}`,
+      );
+    }
+
+    currentDir = parentDir;
+  }
+}
+
 export function getTomlConfigSchemaPath(): string {
-  return path.resolve(__dirname, "../../../schema/toml-config.schema.json");
+  return resolveTomlConfigSchemaPath(__dirname);
 }
 
 export function loadTomlConfigSchema(): TomlConfigSchema {

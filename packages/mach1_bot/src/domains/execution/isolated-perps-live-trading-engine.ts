@@ -663,6 +663,12 @@ export class IsolatedPerpsLiveTradingEngine extends BaseTradingMode {
   }
 
   private async resolveMarginAccountId(sdk: Mach1SDK): Promise<string> {
+    const configuredMarginAccountId =
+      this.config.perps?.marginAccountId?.trim();
+    if (configuredMarginAccountId) {
+      return configuredMarginAccountId;
+    }
+
     const response = await sdk.perps.listMarginAccounts({ state: "ACTIVE" });
     const marginAccountId = response.accounts?.[0]?.margin_account_id;
 

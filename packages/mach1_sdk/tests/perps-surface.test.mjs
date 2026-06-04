@@ -283,21 +283,33 @@ test("perp order helpers normalize to Monaco trading and position contracts", as
 
 test("perp helpers reuse underlying authenticated APIs", () => {
   const sdk = createSdk();
-  let capturedToken;
+  let capturedSession;
 
-  sdk.ws.setToken = (token) => {
-    capturedToken = token;
+  sdk.ws.setSessionKeypair = (session) => {
+    capturedSession = session;
   };
 
   sdk.setAuthState({
-    accessToken: "access-token",
     expiresAt: Date.now() + 60_000,
-    refreshToken: "refresh-token",
+    sessionPrivateKey: "1".repeat(64),
+    sessionPublicKey: "2".repeat(64),
     user: { id: "user-1" },
   });
 
-  assert.equal(sdk.marginAccounts.accessToken, "access-token");
-  assert.equal(sdk.positions.accessToken, "access-token");
-  assert.equal(sdk.trading.accessToken, "access-token");
-  assert.equal(capturedToken, "access-token");
+  assert.deepEqual(sdk.marginAccounts.sessionKeypair, {
+    privateKey: new Uint8Array(32).fill(0x11),
+    publicKey: new Uint8Array(32).fill(0x22),
+  });
+  assert.deepEqual(sdk.positions.sessionKeypair, {
+    privateKey: new Uint8Array(32).fill(0x11),
+    publicKey: new Uint8Array(32).fill(0x22),
+  });
+  assert.deepEqual(sdk.trading.sessionKeypair, {
+    privateKey: new Uint8Array(32).fill(0x11),
+    publicKey: new Uint8Array(32).fill(0x22),
+  });
+  assert.deepEqual(capturedSession, {
+    privateKey: "1".repeat(64),
+    publicKey: "2".repeat(64),
+  });
 });

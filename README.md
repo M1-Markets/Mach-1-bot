@@ -136,6 +136,7 @@ Supported order behavior in this phase:
 
 Scope and fail-closed rules:
 - Only isolated margin is supported. Cross-margin config is rejected.
+- `perps.margin_account_id` is optional. When omitted, bot uses first active isolated margin account returned by Monaco.
 - New perps orders fail closed when isolated margin account state is missing.
 - New risk-increasing perps orders fail closed when mark price or maintenance-margin data is stale.
 - Funding data stays fail-closed for risk-increasing paths when Monaco cannot provide fresh funding state.

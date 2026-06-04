@@ -139,7 +139,14 @@ vi.mock("@/cli/utils/monaco-session", () => ({
       onStatus?.("Authenticating with Monaco");
       onStatus?.("Loading trading pairs");
       const sdk = {
-        getAuthState: () => ({ accessToken: "token" }),
+        getAuthState: () => ({
+          expiresAt: Date.now() + 60_000,
+          sessionPrivateKey:
+            "1111111111111111111111111111111111111111111111111111111111111111",
+          sessionPublicKey:
+            "2222222222222222222222222222222222222222222222222222222222222222",
+          user: { id: "user-1", address: "0xabc" },
+        }),
         getAccountAddress: () => "0xabc",
         perps: {
           listMarginAccounts: async () => ({
@@ -462,6 +469,19 @@ describe("live subcommands", () => {
     registerLiveCommands(program);
     const code = await runCommand(program, ["faucet"]);
     expect(code).toBe(0);
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      "https://faucet.example.com/api/v1/faucet/mint",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({
+          "Content-Type": "application/json",
+          "X-Monaco-PublicKey":
+            "2222222222222222222222222222222222222222222222222222222222222222",
+          "X-Monaco-Signature": expect.any(String),
+          "X-Monaco-Timestamp": expect.any(String),
+        }),
+      }),
+    );
   });
 
   it("formats empty isolated perps account state", async () => {

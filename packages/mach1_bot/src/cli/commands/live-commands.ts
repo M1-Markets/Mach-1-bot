@@ -1,5 +1,6 @@
 import type { Command } from "commander";
-import type {
+import {
+  buildMonacoSessionHeaders,
   CreateMarginAccountResponse,
   GetAvailableCollateralResponse,
   GetUserBalancesResponse,
@@ -1111,11 +1112,10 @@ export const registerLiveCommands = (liveCommand: Command): void => {
         console.log(pc.cyan("🔗 Connecting to Monaco..."));
         await withMonacoSession(prepared, async ({ sdk, network }) => {
           const authState = sdk.getAuthState();
-          const accessToken = authState?.accessToken;
 
-          if (!accessToken) {
+          if (!authState) {
             throw new Error(
-              "Missing Monaco access token. Ensure authentication succeeds before calling faucet.",
+              "Missing Monaco session credentials. Ensure authentication succeeds before calling faucet.",
             );
           }
 
@@ -1126,11 +1126,14 @@ export const registerLiveCommands = (liveCommand: Command): void => {
             endpoint: faucetUrl,
           });
 
+          const faucetPath = new URL(faucetUrl).pathname;
           const response = await fetch(faucetUrl, {
             method: "POST",
             headers: {
-              Authorization: `Bearer ${accessToken}`,
               "Content-Type": "application/json",
+              ...buildMonacoSessionHeaders(authState, faucetPath, {
+                method: "POST",
+              }),
             },
           });
 

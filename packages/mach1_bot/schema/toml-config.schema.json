@@ -104,6 +104,11 @@
                     "type": "number",
                     "exclusiveMinimum": 0,
                     "exclusiveMaximum": 100
+                },
+                "margin_account_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Optional isolated margin account id to pin live perps execution to a specific account."
                 }
             },
             "additionalProperties": false

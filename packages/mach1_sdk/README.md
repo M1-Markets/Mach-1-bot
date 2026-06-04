@@ -35,7 +35,7 @@ await sdk.waitForTransaction("0xabc123", 1, 30_000);
 
 - APIs available on the SDK instance (`sdk.<name>`):
 	- `applications` — applications API client
-	- `auth` — authentication API client (authenticate(), refreshToken(), revokeToken())
+	- `auth` — authentication API client (authenticate(), refreshSession(), revokeSession())
 	- `fees` — fees API client
 	- `vault` — vault API client (on-chain helpers, needs `walletClient` for signing)
 	- `trading` — trading API client
@@ -65,14 +65,14 @@ console.log(newApp);
 
 ```ts
 // login (opens configured auth flow)
-const authState = await sdk.auth.authenticate({ username: "user", password: "pass" });
+const authState = await sdk.login({ connectWebSocket: true });
 console.log(authState);
 
-// refresh
-await sdk.auth.refreshToken();
+// refresh current session expiry
+await sdk.auth.refreshSession();
 
 // revoke / logout
-await sdk.auth.revokeToken();
+await sdk.auth.revokeSession();
 ```
 
 - Vault (balances, sign & send)
@@ -162,7 +162,7 @@ The SDK uses a Monaco-compatible websocket client. Commonly available methods (a
 - `ws.connect()` — connect socket (returns Promise).
 - `ws.disconnect()` — disconnect gracefully.
 - `ws.isConnected()` — boolean.
-- `ws.setToken(token)` — set access token for auth'd subscriptions.
+- `ws.setSessionKeypair(credentials)` — set session keypair for auth'd subscriptions.
 
 Note: websocket API is provided by `@0xmonaco/core`; use `createMonacoWebSocket()` and `MonacoWebSocket` types for advanced usage.
 
@@ -216,8 +216,8 @@ main().catch(console.error);
 
 **Auth & session management**
 
- - `sdk.login(options?)` — performs authentication using SDK's built-in auth flow; returns auth state `{ accessToken, refreshToken, expiresAt, user }`.
-- `sdk.refreshAuth()` — refresh access token using previously stored refresh token.
+ - `sdk.login(options?)` — performs authentication using SDK's built-in auth flow; returns auth state `{ sessionPublicKey, sessionPrivateKey, expiresAt, user }`.
+- `sdk.refreshAuth()` — refresh current session expiry using stored session keypair.
 - `sdk.logout()` — revoke refresh token (if available) and clear local auth state.
 - `sdk.getAuthState()`, `sdk.isAuthenticated()` — inspect auth state.
 

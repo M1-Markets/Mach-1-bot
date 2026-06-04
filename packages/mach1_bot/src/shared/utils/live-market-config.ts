@@ -14,6 +14,7 @@ type RawPerpsConfig = {
   marginMode?: string | null;
   leverage?: number | null;
   liquidationThresholdPercent?: number | null;
+  marginAccountId?: string | null;
 } | null;
 
 export interface LiveMarketConfigValidationInput {
@@ -32,7 +33,8 @@ function hasPerpsSettings(perps?: RawPerpsConfig): boolean {
     perps &&
       (perps.marginMode !== undefined ||
         perps.leverage !== undefined ||
-        perps.liquidationThresholdPercent !== undefined),
+        perps.liquidationThresholdPercent !== undefined ||
+        perps.marginAccountId !== undefined),
   );
 }
 
@@ -99,6 +101,14 @@ export function validateLiveMarketConfig(
     );
   }
 
+  if (
+    perps?.marginAccountId !== undefined &&
+    perps.marginAccountId !== null &&
+    perps.marginAccountId.trim().length === 0
+  ) {
+    errors.push("perps.margin_account_id must be a non-empty string");
+  }
+
   return errors;
 }
 
@@ -118,6 +128,7 @@ export function normalizeLiveMarketConfig(
       leverage: input.perps?.leverage ?? undefined,
       liquidationThresholdPercent:
         input.perps?.liquidationThresholdPercent ?? undefined,
+      marginAccountId: input.perps?.marginAccountId?.trim() || undefined,
     },
   };
 }

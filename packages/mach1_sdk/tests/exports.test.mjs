@@ -28,6 +28,7 @@ test("root and subpath exports resolve", async () => {
   assert.equal(typeof sdk.MonacoSDK, "function");
   assert.equal(typeof root.MonacoCoreSDK, "function");
   assert.equal(typeof monaco.MonacoCoreSDK, "function");
+  assert.equal(typeof root.buildMonacoSessionHeaders, "function");
   assert.equal(typeof root.tradingPairResolver.resolveSymbolToId, "function");
   assert.equal(typeof monaco.tradingPairResolver.resolveSymbolToId, "function");
   assert.equal(typeof monaco.TradingPairResolver, "function");

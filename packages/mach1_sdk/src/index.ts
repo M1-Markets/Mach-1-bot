@@ -47,6 +47,11 @@ export {
   type MonacoSDKAdapterConfig,
 } from "./monaco/monaco-sdk-adapter";
 export {
+  buildSessionAuthHeaders,
+  buildSessionAuthHeaders as buildMonacoSessionHeaders,
+  type MonacoSessionAuthState,
+} from "./monaco/session-auth";
+export {
   type ResolvedTradingPair,
   TradingPairResolver,
   tradingPairResolver,

@@ -22,16 +22,14 @@ index 24f848f..d82d15d 100644
 -export { ApplicationsAPIImpl } from "./api";
 +export { ApplicationsAPIImpl } from "./api.js";
 diff --git a/node_modules/@0xmonaco/core/dist/api/auth/api.js b/node_modules/@0xmonaco/core/dist/api/auth/api.js
-index 9738ba4..7b336ae 100644
+index cf6abff..0ed9427 100644
 --- a/node_modules/@0xmonaco/core/dist/api/auth/api.js
 +++ b/node_modules/@0xmonaco/core/dist/api/auth/api.js
-@@ -28,8 +28,8 @@
-  * const backendAuth = await authAPI.authenticateBackend(secretKey);
-  * ```
+@@ -30,7 +30,7 @@
   */
--import { InvalidConfigError } from "../../errors";
+ import { generateSessionKeypair, privateKeyHex, publicKeyHex } from "../../crypto/session";
+ import { InvalidConfigError } from "../../errors";
 -import { BaseAPI } from "../base";
-+import { InvalidConfigError } from "../../errors/index.js";
 +import { BaseAPI } from "../base.js";
  export class AuthAPIImpl extends BaseAPI {
      chain;
@@ -47,18 +45,39 @@ index f3ac1cd..184ae65 100644
 -export { AuthAPIImpl } from "./api";
 +export { AuthAPIImpl } from "./api.js";
 diff --git a/node_modules/@0xmonaco/core/dist/api/base.js b/node_modules/@0xmonaco/core/dist/api/base.js
-index a7ed744..e19a73e 100644
+index 1e0d8fb..12b8501 100644
 --- a/node_modules/@0xmonaco/core/dist/api/base.js
 +++ b/node_modules/@0xmonaco/core/dist/api/base.js
-@@ -21,7 +21,7 @@
-  * ```
+@@ -22,8 +22,8 @@
   */
+ import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils";
  import { StatusCodes } from "http-status-codes";
+-import { composeSigningString, keypairFromHex, sha256Hex, signMessage } from "../crypto/session";
 -import { APIError } from "../errors";
++import { composeSigningString, keypairFromHex, sha256Hex, signMessage } from "../crypto/session.js";
 +import { APIError } from "../errors/index.js";
  export class BaseAPI {
      apiUrl;
-     accessToken;
+     /** Active session keypair (raw bytes) used to sign authenticated requests. */
+diff --git a/node_modules/@0xmonaco/core/dist/api/delegated-agents/api.js b/node_modules/@0xmonaco/core/dist/api/delegated-agents/api.js
+index cfdc58a..8274235 100644
+--- a/node_modules/@0xmonaco/core/dist/api/delegated-agents/api.js
++++ b/node_modules/@0xmonaco/core/dist/api/delegated-agents/api.js
+@@ -1,5 +1,5 @@
+-import { BaseAPI } from "../base";
+-import { perpRoutes } from "../perp";
++import { BaseAPI } from "../base.js";
++import { perpRoutes } from "../perp/index.js";
+ export class DelegatedAgentsAPIImpl extends BaseAPI {
+     async upsertDelegatedAgent(request) {
+         return this.makeAuthenticatedRequest(perpRoutes.delegatedAgents.list(), {
+diff --git a/node_modules/@0xmonaco/core/dist/api/delegated-agents/index.js b/node_modules/@0xmonaco/core/dist/api/delegated-agents/index.js
+index d158c57..e4fa9cd 100644
+--- a/node_modules/@0xmonaco/core/dist/api/delegated-agents/index.js
++++ b/node_modules/@0xmonaco/core/dist/api/delegated-agents/index.js
+@@ -1 +1 @@
+-export * from "./api";
++export * from "./api.js";
 diff --git a/node_modules/@0xmonaco/core/dist/api/fees/api.js b/node_modules/@0xmonaco/core/dist/api/fees/api.js
 index ab2c666..9076d85 100644
 --- a/node_modules/@0xmonaco/core/dist/api/fees/api.js
@@ -83,15 +102,16 @@ index 383a478..cf8438d 100644
 -export { FeesAPIImpl } from "./api";
 +export { FeesAPIImpl } from "./api.js";
 diff --git a/node_modules/@0xmonaco/core/dist/api/index.js b/node_modules/@0xmonaco/core/dist/api/index.js
-index e619ba2..5b52d6b 100644
+index 6382198..c1b1ccd 100644
 --- a/node_modules/@0xmonaco/core/dist/api/index.js
 +++ b/node_modules/@0xmonaco/core/dist/api/index.js
-@@ -3,16 +3,16 @@
+@@ -3,17 +3,17 @@
   *
   * This module exports the new simplified APIs for the Monaco SDK.
   */
 -export * from "./applications/index";
 -export * from "./base";
+-export * from "./delegated-agents";
 -export * from "./fees";
 -export * from "./margin-accounts";
 -export * from "./market";
@@ -105,6 +125,7 @@ index e619ba2..5b52d6b 100644
 -export * from "./websocket";
 +export * from "./applications/index.js";
 +export * from "./base.js";
++export * from "./delegated-agents/index.js";
 +export * from "./fees/index.js";
 +export * from "./margin-accounts/index.js";
 +export * from "./market/index.js";
@@ -117,11 +138,11 @@ index e619ba2..5b52d6b 100644
 +export * from "./vault/index.js";
 +export * from "./websocket/index.js";
 diff --git a/node_modules/@0xmonaco/core/dist/api/margin-accounts/api.js b/node_modules/@0xmonaco/core/dist/api/margin-accounts/api.js
-index 76e2a5b..8fb77d5 100644
+index d5e6941..57a36a7 100644
 --- a/node_modules/@0xmonaco/core/dist/api/margin-accounts/api.js
 +++ b/node_modules/@0xmonaco/core/dist/api/margin-accounts/api.js
 @@ -1,6 +1,6 @@
- import { CreateMarginAccountSchema, GetAvailableCollateralSchema, GetMarginAccountMovementsSchema, GetMarginAccountSummarySchema, ListMarginAccountsSchema, SimulateOrderRiskSchema, TransferCollateralSchema, validate, } from "@0xmonaco/types";
+ import { CreateMarginAccountSchema, GetAvailableCollateralSchema, GetMarginAccountMovementsSchema, GetMarginAccountSummarySchema, ListMarginAccountsSchema, SimulateAutoMarginOrderRiskSchema, SimulateOrderRiskSchema, TransferCollateralSchema, TransferCollateralToAutoMarginAccountSchema, validate, } from "@0xmonaco/types";
 -import { BaseAPI } from "../base";
 -import { perpRoutes } from "../perp";
 +import { BaseAPI } from "../base.js";
@@ -157,7 +178,7 @@ index a253bf1..7fd1b4a 100644
 -export { MarketAPIImpl } from "./api";
 +export { MarketAPIImpl } from "./api.js";
 diff --git a/node_modules/@0xmonaco/core/dist/api/orderbook/api.js b/node_modules/@0xmonaco/core/dist/api/orderbook/api.js
-index 9bea9fa..919bb00 100644
+index 1d6e8ec..4811552 100644
 --- a/node_modules/@0xmonaco/core/dist/api/orderbook/api.js
 +++ b/node_modules/@0xmonaco/core/dist/api/orderbook/api.js
 @@ -1,4 +1,4 @@
@@ -201,16 +222,14 @@ index e3a6a7b..dfac1b8 100644
 -export { PositionsAPIImpl } from "./api";
 +export { PositionsAPIImpl } from "./api.js";
 diff --git a/node_modules/@0xmonaco/core/dist/api/profile/api.js b/node_modules/@0xmonaco/core/dist/api/profile/api.js
-index edaa3ee..f03e332 100644
+index edaa3ee..0392f8b 100644
 --- a/node_modules/@0xmonaco/core/dist/api/profile/api.js
 +++ b/node_modules/@0xmonaco/core/dist/api/profile/api.js
-@@ -18,8 +18,8 @@
-  * ```
+@@ -19,7 +19,7 @@
   */
  import { GetUserMovementsSchema, GetUserTradesSchema, validate } from "@0xmonaco/types";
--import { APIError } from "../../errors";
+ import { APIError } from "../../errors";
 -import { BaseAPI } from "../base";
-+import { APIError } from "../../errors/index.js";
 +import { BaseAPI } from "../base.js";
  export class ProfileAPIImpl extends BaseAPI {
      /**
@@ -243,7 +262,7 @@ index d158c57..e4fa9cd 100644
 -export * from "./api";
 +export * from "./api.js";
 diff --git a/node_modules/@0xmonaco/core/dist/api/trading/api.js b/node_modules/@0xmonaco/core/dist/api/trading/api.js
-index cab5988..2c7726c 100644
+index 267a554..3c52ce8 100644
 --- a/node_modules/@0xmonaco/core/dist/api/trading/api.js
 +++ b/node_modules/@0xmonaco/core/dist/api/trading/api.js
 @@ -22,8 +22,8 @@
@@ -268,16 +287,14 @@ index 6bc2067..d9d3dc9 100644
 -export { TradingAPIImpl } from "./api";
 +export { TradingAPIImpl } from "./api.js";
 diff --git a/node_modules/@0xmonaco/core/dist/api/vault/api.js b/node_modules/@0xmonaco/core/dist/api/vault/api.js
-index 1bb0c14..23b18e0 100644
+index 1bb0c14..1f92d8d 100644
 --- a/node_modules/@0xmonaco/core/dist/api/vault/api.js
 +++ b/node_modules/@0xmonaco/core/dist/api/vault/api.js
-@@ -26,8 +26,8 @@
- import { CONTRACT_ABIS } from "@0xmonaco/contracts";
+@@ -27,7 +27,7 @@ import { CONTRACT_ABIS } from "@0xmonaco/contracts";
  import { ApproveTokenSchema, DepositSchema, validate, WithdrawSchema } from "@0xmonaco/types";
  import { erc20Abi, zeroAddress } from "viem";
--import { APIError, ContractError, InvalidConfigError } from "../../errors";
+ import { APIError, ContractError, InvalidConfigError } from "../../errors";
 -import { BaseAPI } from "../base";
-+import { APIError, ContractError, InvalidConfigError } from "../../errors/index.js";
 +import { BaseAPI } from "../base.js";
  export class VaultAPIImpl extends BaseAPI {
      publicClient;
@@ -304,13 +321,14 @@ index 268e83b..8517497 100644
 +export * from "./utils.js";
 +export * from "./websocket.js";
 diff --git a/node_modules/@0xmonaco/core/dist/api/websocket/websocket.js b/node_modules/@0xmonaco/core/dist/api/websocket/websocket.js
-index f1ef469..52b3ca8 100644
+index 46bbd4d..805c9b9 100644
 --- a/node_modules/@0xmonaco/core/dist/api/websocket/websocket.js
 +++ b/node_modules/@0xmonaco/core/dist/api/websocket/websocket.js
-@@ -1,5 +1,5 @@
--import { ALL_MAGNITUDES } from "../../utils";
+@@ -1,7 +1,7 @@
+ import { hexToBytes } from "@noble/hashes/utils";
+ import { composeWsSigningString, signMessage } from "../../crypto/session";
+ import { ALL_MAGNITUDES } from "../../utils";
 -import { keysToCamelCase } from "./utils";
-+import { ALL_MAGNITUDES } from "../../utils/index.js";
 +import { keysToCamelCase } from "./utils.js";
  // Connection constants
  const CONNECTION_TIMEOUT = 10000;
@@ -345,15 +363,16 @@ index 3737efd..9f74313 100644
 -export * from "./networks";
 +export * from "./networks.js";
 diff --git a/node_modules/@0xmonaco/core/dist/sdk.js b/node_modules/@0xmonaco/core/dist/sdk.js
-index 058b602..8bd49f4 100644
+index 0b467cd..f90f825 100644
 --- a/node_modules/@0xmonaco/core/dist/sdk.js
 +++ b/node_modules/@0xmonaco/core/dist/sdk.js
-@@ -1,17 +1,17 @@
+@@ -1,18 +1,18 @@
  import { StatusCodes } from "http-status-codes";
  import { createPublicClient, http } from "viem";
  import { sei, seiTestnet } from "viem/chains";
 -import { ApplicationsAPIImpl, createMonacoWebSocket, OrderbookAPIImpl, TradesAPIImpl } from "./api";
 -import { AuthAPIImpl } from "./api/auth";
+-import { DelegatedAgentsAPIImpl } from "./api/delegated-agents";
 -import { FeesAPIImpl } from "./api/fees";
 -import { MarginAccountsAPIImpl } from "./api/margin-accounts";
 -import { MarketAPIImpl } from "./api/market";
@@ -365,6 +384,7 @@ index 058b602..8bd49f4 100644
 -import { resolveApiUrl, resolveWsUrl } from "./networks";
 +import { ApplicationsAPIImpl, createMonacoWebSocket, OrderbookAPIImpl, TradesAPIImpl } from "./api/index.js";
 +import { AuthAPIImpl } from "./api/auth/index.js";
++import { DelegatedAgentsAPIImpl } from "./api/delegated-agents/index.js";
 +import { FeesAPIImpl } from "./api/fees/index.js";
 +import { MarginAccountsAPIImpl } from "./api/margin-accounts/index.js";
 +import { MarketAPIImpl } from "./api/market/index.js";
@@ -374,9 +394,9 @@ index 058b602..8bd49f4 100644
 +import { VaultAPIImpl } from "./api/vault/index.js";
 +import { APIError, InvalidConfigError, InvalidStateError } from "./errors/index.js";
 +import { resolveApiUrl, resolveWsUrl } from "./networks/index.js";
- export class MonacoSDKImpl {
-     auth;
-     applications;
+ /** Validate a user-supplied URL override, returning it unchanged when valid. */
+ function validateUrl(value, field) {
+     try {
 diff --git a/node_modules/@0xmonaco/core/dist/utils/index.js b/node_modules/@0xmonaco/core/dist/utils/index.js
 index e2c51ef..15740f1 100644
 --- a/node_modules/@0xmonaco/core/dist/utils/index.js

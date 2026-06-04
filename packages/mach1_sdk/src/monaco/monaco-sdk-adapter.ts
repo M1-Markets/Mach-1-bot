@@ -67,6 +67,7 @@ type AccountBalanceSnapshot = {
   symbol: string | null;
   available_balance: string;
   locked_balance: string;
+  margin_locked?: string;
   total_balance: string;
 };
 
@@ -195,7 +196,7 @@ export class MonacoSDKAdapter {
       this.authState.expiresAt = normalizeExpiresAt(this.authState.expiresAt);
     }
 
-    this.syncAuthAccessToken();
+    this.syncAuthSession();
     this.scheduleTokenRefresh();
     this.emitStatus("Loading trading pairs");
     await tradingPairResolver.initialize(this.sdk);
@@ -232,7 +233,7 @@ export class MonacoSDKAdapter {
               this.authState.expiresAt,
             );
           }
-          this.syncAuthAccessToken();
+          this.syncAuthSession();
         },
         {
           maxRetries: TOKEN_REFRESH_CONFIG.maxRetries,
@@ -336,9 +337,9 @@ export class MonacoSDKAdapter {
         this.tokenRefreshTimer = undefined;
       }
 
-      if (this.sdk && this.authState?.accessToken) {
+      if (this.sdk && this.authState) {
         try {
-          this.syncAuthAccessToken();
+          this.syncAuthSession();
           await this.sdk.logout();
         } catch (error) {
           const message =
@@ -402,6 +403,7 @@ export class MonacoSDKAdapter {
           symbol: balance.symbol,
           available: balance.available_balance,
           locked: balance.locked_balance,
+          marginLocked: balance.margin_locked,
           total: balance.total_balance,
         })),
       });
@@ -412,23 +414,12 @@ export class MonacoSDKAdapter {
     }
   }
 
-  private syncAuthAccessToken(): void {
-    if (!this.sdk || !this.authState?.accessToken) {
+  private syncAuthSession(): void {
+    if (!this.sdk || !this.authState) {
       return;
     }
 
-    this.sdk.auth.setAccessToken(this.authState.accessToken);
-    this.sdk.applications.setAccessToken(this.authState.accessToken);
-    this.sdk.fees.setAccessToken(this.authState.accessToken);
-    this.sdk.vault.setAccessToken(this.authState.accessToken);
-    this.sdk.trading.setAccessToken(this.authState.accessToken);
-    this.sdk.market.setAccessToken(this.authState.accessToken);
-    this.sdk.marginAccounts.setAccessToken(this.authState.accessToken);
-    this.sdk.positions.setAccessToken(this.authState.accessToken);
-    this.sdk.profile.setAccessToken(this.authState.accessToken);
-    this.sdk.orderbook.setAccessToken(this.authState.accessToken);
-    this.sdk.trades.setAccessToken(this.authState.accessToken);
-    this.sdk.ws.setToken(this.authState.accessToken);
+    this.sdk.setAuthState(this.authState);
   }
 
   private scheduleTokenRefresh(): void {
@@ -469,7 +460,7 @@ export class MonacoSDKAdapter {
       this.authState.expiresAt = normalizeExpiresAt(this.authState.expiresAt);
     }
 
-    this.syncAuthAccessToken();
+    this.syncAuthSession();
     this.scheduleTokenRefresh();
   }
 

@@ -1,3 +1,4 @@
+import type { User } from "@0xmonaco/types";
 import type { Interval, Mach1SDK } from "../sdk";
 import { DEFAULT_ENVIRONMENT, type MonacoEnvironment } from "./constants";
 import {
@@ -35,10 +36,10 @@ export interface MonacoCoreOrderResult {
 }
 
 export interface AuthState {
-  accessToken: string;
-  refreshToken: string;
   expiresAt: number;
-  user?: unknown;
+  sessionPrivateKey: string;
+  sessionPublicKey: string;
+  user: User;
 }
 
 export interface MonacoCoreSDKConfig {

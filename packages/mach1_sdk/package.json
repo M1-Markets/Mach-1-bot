@@ -1,6 +1,6 @@
 {
   "name": "mach1_sdk",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Advanced algorithmic trading SDK built on Monaco Protocol CLOB",
   "license": "MIT",
   "author": "",
@@ -72,8 +72,8 @@
     "typescript": "^5.9.3"
   },
   "dependencies": {
-    "@0xmonaco/core": "^0.8.7",
-    "@0xmonaco/types": "^0.8.7"
+    "@0xmonaco/core": "^0.8.8",
+    "@0xmonaco/types": "^0.8.8"
   },
   "peerDependencies": {
     "viem": "^2.45.2"

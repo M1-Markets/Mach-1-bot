@@ -175,6 +175,7 @@ describe("CLI Bot Utilities", () => {
           margin_mode: "isolated",
           leverage: 5,
           liquidation_threshold_percent: 10,
+          margin_account_id: "margin-4",
         },
       });
 
@@ -183,6 +184,7 @@ describe("CLI Bot Utilities", () => {
         marginMode: "isolated",
         leverage: 5,
         liquidationThresholdPercent: 10,
+        marginAccountId: "margin-4",
       });
     });
 

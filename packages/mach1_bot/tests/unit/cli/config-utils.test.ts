@@ -220,6 +220,7 @@ describe("config utils", () => {
           margin_mode: "isolated",
           leverage: 4,
           liquidation_threshold_percent: 15,
+          margin_account_id: "margin-9",
         },
       }),
     ).toEqual({
@@ -235,6 +236,7 @@ describe("config utils", () => {
         marginMode: "isolated",
         leverage: 4,
         liquidationThresholdPercent: 15,
+        marginAccountId: "margin-9",
       },
     });
   });

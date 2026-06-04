@@ -47,6 +47,7 @@ import {
 } from "./errors/index";
 import { EMBEDDED_KEY_MATERIAL } from "./internal/embedded-key-material";
 import { resolveApiUrl, resolveWsUrl } from "./networks/index";
+import type { SessionCredentials } from "@0xmonaco/types";
 
 export type { Interval } from "@0xmonaco/types";
 
@@ -375,32 +376,31 @@ export class Mach1SDKImpl implements Mach1SDK {
     this.ws = createMonacoWebSocket(wsUrl);
   }
 
-  private propagateAccessToken(accessValue: string): void {
-    this.auth.setAccessToken(accessValue);
-    this.applications.setAccessToken(accessValue);
-    this.fees.setAccessToken(accessValue);
-    this.vault.setAccessToken(accessValue);
-    this.trading.setAccessToken(accessValue);
-    this.market.setAccessToken(accessValue);
-    this.marginAccounts.setAccessToken(accessValue);
-    this.positions.setAccessToken(accessValue);
-    this.profile.setAccessToken(accessValue);
-    this.orderbook.setAccessToken(accessValue);
-    this.trades.setAccessToken(accessValue);
-    this.ws.setToken(accessValue);
+  private propagateSession(credentials: SessionCredentials | undefined): void {
+    this.auth.setSessionKeypair(credentials);
+    this.applications.setSessionKeypair(credentials);
+    this.fees.setSessionKeypair(credentials);
+    this.vault.setSessionKeypair(credentials);
+    this.trading.setSessionKeypair(credentials);
+    this.market.setSessionKeypair(credentials);
+    this.marginAccounts.setSessionKeypair(credentials);
+    this.positions.setSessionKeypair(credentials);
+    this.profile.setSessionKeypair(credentials);
+    this.orderbook.setSessionKeypair(credentials);
+    this.trades.setSessionKeypair(credentials);
+    this.ws.setSessionKeypair(credentials);
+  }
+
+  private sessionFromAuthState(authState: AuthState): SessionCredentials {
+    return {
+      privateKey: authState.sessionPrivateKey,
+      publicKey: authState.sessionPublicKey,
+    };
   }
 
   async login(options?: LoginOptions): Promise<AuthState> {
-    const response = await this.auth.authenticate(EMBEDDED_KEY_MATERIAL);
-
-    this.authState = {
-      accessToken: response.accessToken,
-      expiresAt: response.expiresAt,
-      refreshToken: response.refreshToken,
-      user: response.user,
-    };
-
-    this.propagateAccessToken(this.authState.accessToken);
+    this.authState = await this.auth.authenticate(EMBEDDED_KEY_MATERIAL);
+    this.propagateSession(this.sessionFromAuthState(this.authState));
 
     if (options?.connectWebSocket && !this.ws.isConnected()) {
       await this.ws.connect();
@@ -415,13 +415,13 @@ export class Mach1SDKImpl implements Mach1SDK {
 
   setAuthState(authState: AuthState): void {
     this.authState = authState;
-    this.propagateAccessToken(authState.accessToken);
+    this.propagateSession(this.sessionFromAuthState(authState));
   }
 
   async logout(): Promise<void> {
-    if (this.authState?.refreshToken) {
+    if (this.authState) {
       try {
-        await this.auth.revokeToken();
+        await this.auth.revokeSession();
         // biome-ignore lint/suspicious/noEmptyBlockStatements: no need to do anything on failure - just clear local state
       } catch {}
     }
@@ -431,31 +431,28 @@ export class Mach1SDKImpl implements Mach1SDK {
     }
 
     this.authState = undefined;
-    this.propagateAccessToken("");
+    this.propagateSession(undefined);
   }
 
   async refreshAuth(): Promise<AuthState> {
-    if (!this.authState?.refreshToken) {
-      throw new APIError("No refresh token available", {
+    if (!this.authState) {
+      throw new APIError("No active session to refresh", {
         endpoint: "auth/refresh",
         statusCode: StatusCodes.UNAUTHORIZED,
       });
     }
 
     try {
-      const response = await this.auth.refreshToken(
-        this.authState.refreshToken,
-      );
+      const response = await this.auth.refreshSession();
 
       this.authState = {
         ...this.authState,
-        accessToken: response.accessToken,
         expiresAt: response.expiresAt,
       };
-      this.propagateAccessToken(this.authState.accessToken);
       return this.authState;
     } catch (error) {
       this.authState = undefined;
+      this.propagateSession(undefined);
       throw error;
     }
   }

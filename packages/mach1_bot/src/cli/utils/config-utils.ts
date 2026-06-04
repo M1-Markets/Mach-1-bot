@@ -46,6 +46,7 @@ export interface BotConfig {
     marginMode?: PerpsMarginMode;
     leverage?: number;
     liquidationThresholdPercent?: number;
+    marginAccountId?: string;
   };
   aiHelper?: {
     enabled: boolean;
@@ -71,6 +72,7 @@ export interface TomlConfig {
     margin_mode?: PerpsMarginMode;
     leverage?: number;
     liquidation_threshold_percent?: number;
+    margin_account_id?: string;
   };
   strategy: {
     type: string;
@@ -211,6 +213,7 @@ export function validateConfig(tomlConfig: unknown): void {
           liquidationThresholdPercent: getNumber(
             perps.liquidation_threshold_percent,
           ),
+          marginAccountId: getString(perps.margin_account_id),
         }
       : undefined,
   });
@@ -239,6 +242,7 @@ export function toBotConfig(tomlConfig: unknown): BotConfig {
           liquidationThresholdPercent: getNumber(
             perps.liquidation_threshold_percent,
           ),
+          marginAccountId: getString(perps.margin_account_id),
         }
       : undefined,
   });

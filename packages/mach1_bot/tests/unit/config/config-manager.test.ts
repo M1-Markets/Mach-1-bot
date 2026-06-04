@@ -123,6 +123,7 @@ describe("ConfigManager", () => {
           marginMode: "isolated",
           leverage: 4,
           liquidationThresholdPercent: 15,
+          marginAccountId: "margin-7",
         },
         contractAddresses: {
           clob: "0x1234567890123456789012345678901234567890" as Address,
@@ -137,6 +138,7 @@ describe("ConfigManager", () => {
         marginMode: "isolated",
         leverage: 4,
         liquidationThresholdPercent: 15,
+        marginAccountId: "margin-7",
       });
     });
   });

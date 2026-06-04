@@ -63,6 +63,7 @@ export class ConfigManager {
               leverage: config.perps.leverage,
               liquidationThresholdPercent:
                 config.perps.liquidationThresholdPercent,
+              marginAccountId: config.perps.marginAccountId,
             }
           : undefined,
       }),
@@ -105,6 +106,7 @@ export class ConfigManager {
               leverage: config.perps.leverage,
               liquidationThresholdPercent:
                 config.perps.liquidationThresholdPercent,
+              marginAccountId: config.perps.marginAccountId,
             }
           : undefined,
       }),
