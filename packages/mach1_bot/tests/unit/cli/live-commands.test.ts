@@ -1,4 +1,5 @@
 import { Command } from "commander";
+import prompts from "prompts";
 import { vi } from "vitest";
 import { registerLiveCommands } from "@/cli/commands/live-commands";
 import { createBalanceUi } from "@/cli/ui/balance-ui";
@@ -16,6 +17,10 @@ vi.mock("picocolors", () => ({
     magenta: (text: string) => text,
     bold: (text: string) => text,
   },
+}));
+
+vi.mock("prompts", () => ({
+  default: vi.fn(),
 }));
 
 vi.mock("@/cli/ui/balance-ui", () => ({
@@ -252,6 +257,58 @@ vi.mock("@/cli/utils/monaco-session", () => ({
             new_withdrawable_collateral: "1000",
           }),
         },
+        delegatedAgents: {
+          listDelegatedAgents: async () => ({
+            agents: [
+              {
+                id: "agent-1",
+                owner_user_id: "user-1",
+                agent_address: "0x3333333333333333333333333333333333333333",
+                name: "Desk bot",
+                is_active: true,
+                expires_at: "2026-07-01T00:00:00.000Z",
+                allowed_actions: ["CREATE_ORDER"],
+                allowed_trading_pair_ids: ["pair-1"],
+                allowed_margin_account_ids: [],
+                allowed_order_types: ["LIMIT"],
+                allowed_time_in_force: ["GTC"],
+                max_leverage: "5",
+                max_order_notional: "1000",
+                max_open_orders: 3,
+              },
+            ],
+          }),
+          upsertDelegatedAgent: async (request: {
+            agentAddress: string;
+            name?: string;
+            expiresAt?: string;
+            allowedActions: string[];
+            allowedTradingPairIds: string[];
+            allowedMarginAccountIds?: string[];
+            allowedOrderTypes?: string[];
+            allowedTimeInForce?: string[];
+            maxLeverage?: string;
+            maxOrderNotional?: string;
+            maxOpenOrders?: number;
+          }) => ({
+            id: "agent-2",
+            owner_user_id: "user-1",
+            agent_address: request.agentAddress,
+            name: request.name,
+            is_active: true,
+            expires_at: request.expiresAt,
+            revoked_at: undefined,
+            allowed_actions: request.allowedActions,
+            allowed_trading_pair_ids: request.allowedTradingPairIds,
+            allowed_margin_account_ids: request.allowedMarginAccountIds ?? [],
+            allowed_order_types: request.allowedOrderTypes,
+            allowed_time_in_force: request.allowedTimeInForce,
+            max_leverage: request.maxLeverage,
+            max_order_notional: request.maxOrderNotional,
+            max_open_orders: request.maxOpenOrders,
+          }),
+          revokeDelegatedAgent: async () => ({ status: "REVOKED" }),
+        },
         trading: {
           placeMarketOrder: async () => ({
             order_id: "order-1",
@@ -307,9 +364,11 @@ const runCommand = async (command: Command, args: string[]) => {
 
 describe("live subcommands", () => {
   let logSpy: ReturnType<typeof vi.spyOn>;
+  const mockPrompts = vi.mocked(prompts);
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockPrompts.mockReset();
     logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
     globalThis.fetch = vi.fn(async () => ({
       ok: true,
@@ -317,6 +376,7 @@ describe("live subcommands", () => {
       statusText: "OK",
       text: async () => JSON.stringify({ ok: true }),
     })) as unknown as typeof fetch;
+    mockPrompts.mockResolvedValue({});
   });
 
   afterEach(() => {
@@ -678,6 +738,100 @@ describe("live subcommands", () => {
         freeCollateral: "0",
         withdrawableCollateral: "0",
         updatedAt: "2026-05-28T00:00:00.000Z",
+      }),
+    );
+  });
+
+  it("runs live delegated-agent list", async () => {
+    const program = new Command("live");
+    registerLiveCommands(program);
+    const code = await runCommand(program, ["delegated-agent", "list"]);
+    expect(code).toBe(0);
+    expect(logSpy).toHaveBeenCalledWith("Delegated Agents");
+    expect(logSpy).toHaveBeenCalledWith("1. Desk bot (active)");
+    expect(logSpy).toHaveBeenCalledWith("   Address: 0x3333...3333");
+    expect(logSpy).toHaveBeenCalledWith("   Actions: CREATE_ORDER");
+    expect(logSpy).toHaveBeenCalledWith("   Pairs: USDC/ETH");
+    expect(logSpy).toHaveBeenCalledWith("   Margin Accounts: ALL");
+    expect(logSpy).toHaveBeenCalledWith("   Orders: LIMIT | TIF: GTC");
+    expect(logSpy).toHaveBeenCalledWith(
+      "   Limits: max leverage 5 | max notional 1000 | max open orders 3",
+    );
+    expect(logSpy).toHaveBeenCalledWith("   Expires: 2026-07-01T00:00:00.000Z");
+  });
+
+  it("runs live delegated-agent add", async () => {
+    mockPrompts
+      .mockResolvedValueOnce({
+        walletAddress: "0x4444444444444444444444444444444444444444",
+        name: "Risk bot",
+        expiresAt: "2026-07-31T00:00:00Z",
+      })
+      .mockResolvedValueOnce({
+        allowedActions: ["CREATE_ORDER", "CANCEL_ORDER"],
+      })
+      .mockResolvedValueOnce({
+        allowedTradingPairIds: ["pair-1"],
+      })
+      .mockResolvedValueOnce({
+        allowedOrderTypes: ["LIMIT"],
+        allowedTimeInForce: ["GTC", "IOC"],
+        marginAccountMode: "selected",
+      })
+      .mockResolvedValueOnce({
+        allowedMarginAccountIds: ["margin-1"],
+      })
+      .mockResolvedValueOnce({
+        maxLeverage: "3",
+        maxOrderNotional: "2500",
+        maxOpenOrders: "4",
+      });
+
+    const program = new Command("live");
+    registerLiveCommands(program);
+    const code = await runCommand(program, ["delegated-agent", "add"]);
+
+    expect(code).toBe(0);
+    expect(logSpy).toHaveBeenCalledWith("✅ Delegated agent saved");
+    expect(logSpy).toHaveBeenCalledWith(
+      JSON.stringify({
+        id: "agent-2",
+        name: "Risk bot",
+        address: "0x4444444444444444444444444444444444444444",
+        active: true,
+        expiresAt: "2026-07-31T00:00:00.000Z",
+        allowedActions: ["CREATE_ORDER", "CANCEL_ORDER"],
+        allowedTradingPairs: ["USDC/ETH"],
+        allowedMarginAccountIds: ["margin-1"],
+        allowedOrderTypes: ["LIMIT"],
+        allowedTimeInForce: ["GTC", "IOC"],
+        maxLeverage: "3",
+        maxOrderNotional: "2500",
+        maxOpenOrders: 4,
+      }),
+    );
+  });
+
+  it("runs live delegated-agent remove", async () => {
+    mockPrompts
+      .mockResolvedValueOnce({
+        agentId: "agent-1",
+      })
+      .mockResolvedValueOnce({
+        confirmed: true,
+      });
+
+    const program = new Command("live");
+    registerLiveCommands(program);
+    const code = await runCommand(program, ["delegated-agent", "remove"]);
+
+    expect(code).toBe(0);
+    expect(logSpy).toHaveBeenCalledWith("✅ Delegated agent revoked");
+    expect(logSpy).toHaveBeenCalledWith(
+      JSON.stringify({
+        id: "agent-1",
+        address: "0x3333333333333333333333333333333333333333",
+        name: "Desk bot",
       }),
     );
   });

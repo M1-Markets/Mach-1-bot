@@ -13,12 +13,12 @@ The RSI strategy is a mean reversion trading strategy that:
 
 1. **List available strategies** to confirm RSI strategy is available:
    ```bash
-   mach-one-bot list-strategies
+   mach-one-bot strategy list
    ```
 
 2. **Get detailed RSI strategy information**:
    ```bash
-   mach-one-bot strategy rsi_strategy_v1
+   mach-one-bot strategy show rsi_strategy_v1
    ```
 
 3. **Use one of the example configurations**:
@@ -186,6 +186,6 @@ The RSI strategy can be enhanced by considering multiple timeframes in future ve
 
 For additional help:
 1. Check the main documentation: `README.md`
-2. View all available strategies: `mach-one-bot list-strategies`
-3. Get strategy details: `mach-one-bot strategy <strategy-id>`
+2. View all available strategies: `mach-one-bot strategy list`
+3. Get strategy details: `mach-one-bot strategy show <strategy-id>`
 4. Examine example configurations in the `examples/` directory

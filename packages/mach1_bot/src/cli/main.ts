@@ -942,9 +942,14 @@ export const registerCliCommands = (target: Command): Command => {
     .description("Live trading utilities");
   registerLiveCommands(liveCommand);
 
+  // Strategy utilities command group
+  const strategyCommand = target
+    .command("strategy")
+    .description("Strategy utilities");
+
   // List strategies command
-  target
-    .command("list-strategies")
+  strategyCommand
+    .command("list")
     .description("List all available trading strategies")
     .option("-c, --category <category>", "Filter by strategy category")
     .option("-t, --tags <tags>", "Filter by tags (comma-separated)")
@@ -1076,8 +1081,8 @@ export const registerCliCommands = (target: Command): Command => {
     });
 
   // Strategy details command
-  target
-    .command("strategy <strategyId>")
+  strategyCommand
+    .command("show <strategyId>")
     .description("Show detailed information about a specific strategy")
     .action(async (strategyId) => {
       try {
@@ -1087,7 +1092,7 @@ export const registerCliCommands = (target: Command): Command => {
           console.error(pc.red(`❌ Strategy '${strategyId}' not found`));
           console.log(
             pc.gray(
-              "Use 'mach-one-bot list-strategies' to see available strategies",
+              "Use 'mach-one-bot strategy list' to see available strategies",
             ),
           );
           process.exit(1);

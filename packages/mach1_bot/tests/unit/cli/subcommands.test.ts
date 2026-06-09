@@ -204,18 +204,18 @@ describe("CLI subcommands", () => {
     expect(mockUtils.validateDryRun).toHaveBeenCalledWith("/resolved/a.toml");
   });
 
-  it("runs list-strategies", async () => {
+  it("runs strategy list", async () => {
     const program = await createProgram();
-    const code = await runCommand(program, ["list-strategies"]);
+    const code = await runCommand(program, ["strategy", "list"]);
 
     expect(code).toBe(0);
     expect(mockUtils.getAvailableStrategies).toHaveBeenCalled();
     expect(mockUtils.displayStrategiesTable).toHaveBeenCalled();
   });
 
-  it("runs strategy <id>", async () => {
+  it("runs strategy show <id>", async () => {
     const program = await createProgram();
-    const code = await runCommand(program, ["strategy", "dca"]);
+    const code = await runCommand(program, ["strategy", "show", "dca"]);
 
     expect(code).toBe(0);
     expect(mockUtils.getStrategyById).toHaveBeenCalledWith("dca");

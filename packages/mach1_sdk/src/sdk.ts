@@ -27,6 +27,7 @@ import { createPublicClient, http, type WalletClient } from "viem";
 import { sei, seiTestnet } from "viem/chains";
 import { ApplicationsAPIImpl } from "./api/applications/index";
 import { AuthAPIImpl } from "./api/auth/index";
+import { DelegatedAgentsAPIImpl } from "./api/delegated-agents/index";
 import { FeesAPIImpl } from "./api/fees/index";
 import { MarginAccountsAPIImpl } from "./api/margin-accounts/index";
 import { MarketAPIImpl } from "./api/market/index";
@@ -250,6 +251,7 @@ class IsolatedMarginPerpsAPIImpl implements IsolatedMarginPerpsAPI {
 export type Mach1SDK = {
   applications: ApplicationsAPIImpl;
   auth: AuthAPIImpl;
+  delegatedAgents: DelegatedAgentsAPIImpl;
   fees: FeesAPIImpl;
   vault: VaultAPIImpl;
   trading: TradingAPIImpl;
@@ -284,6 +286,7 @@ export type Mach1SDK = {
 export class Mach1SDKImpl implements Mach1SDK {
   readonly applications;
   readonly auth;
+  readonly delegatedAgents;
   readonly fees;
   readonly vault;
   readonly trading;
@@ -355,6 +358,7 @@ export class Mach1SDKImpl implements Mach1SDK {
     this.marginAccounts = new MarginAccountsAPIImpl(apiUrl);
     this.positions = new PositionsAPIImpl(apiUrl);
     this.auth = new AuthAPIImpl(this.walletClient, this.chain, apiUrl);
+    this.delegatedAgents = new DelegatedAgentsAPIImpl(apiUrl);
     this.fees = new FeesAPIImpl(apiUrl);
     this.profile = new ProfileAPIImpl(apiUrl);
     this.vault = new VaultAPIImpl(
@@ -378,6 +382,7 @@ export class Mach1SDKImpl implements Mach1SDK {
 
   private propagateSession(credentials: SessionCredentials | undefined): void {
     this.auth.setSessionKeypair(credentials);
+    this.delegatedAgents.setSessionKeypair(credentials);
     this.applications.setSessionKeypair(credentials);
     this.fees.setSessionKeypair(credentials);
     this.vault.setSessionKeypair(credentials);

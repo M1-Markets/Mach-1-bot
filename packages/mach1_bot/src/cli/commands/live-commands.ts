@@ -2,8 +2,10 @@ import type { Command } from "commander";
 import {
   buildMonacoSessionHeaders,
   CreateMarginAccountResponse,
+  type DelegatedAgent,
   GetAvailableCollateralResponse,
   GetUserBalancesResponse,
+  type ListDelegatedAgentsResponse,
   ListMarginAccountsResponse,
   ListPositionsResponse,
   MarginAccountSummary,
@@ -45,6 +47,13 @@ import {
   type WithdrawUiController,
   type WithdrawUiState,
 } from "@/cli/ui/withdraw-ui";
+import {
+  type DelegatedAgentMarginAccountOption,
+  type DelegatedAgentPairOption,
+  formatDelegatedAgentLabel,
+  promptForDelegatedAgentRemoval,
+  promptForDelegatedAgentRequest,
+} from "@/cli/utils/delegated-agent-utils";
 import {
   assertPositiveAmountInput,
   buildTokenCatalog,
@@ -129,6 +138,8 @@ type MarginAccountListRow = {
   withdrawableCollateral: string;
   updatedAt: string;
 };
+
+type DelegatedAgentListRow = Record<string, unknown>;
 
 const shouldTraceMonacoApi = (): boolean =>
   process.env.MACH1_TRACE_MONACO === "1" ||
@@ -394,6 +405,136 @@ const parseCreatedMarginAccount = (
     withdrawableCollateral: "0",
     updatedAt: getStringProp(response, "created_at") ?? "unavailable",
   };
+};
+
+const parseDelegatedAgents = (
+  response: ListDelegatedAgentsResponse,
+): DelegatedAgent[] => {
+  traceMonacoApiPayload("delegatedAgents.listDelegatedAgents", response);
+  if (!Array.isArray(response?.agents)) {
+    throw new Error("Delegated agents response missing agents array.");
+  }
+
+  const parsed = response.agents.filter(
+    (agent): agent is DelegatedAgent =>
+      isRecord(agent) &&
+      typeof agent.id === "string" &&
+      typeof agent.agent_address === "string" &&
+      Array.isArray(agent.allowed_actions) &&
+      Array.isArray(agent.allowed_trading_pair_ids) &&
+      Array.isArray(agent.allowed_margin_account_ids),
+  );
+
+  if (response.agents.length > 0 && parsed.length === 0) {
+    throw new Error(
+      "Delegated agents response structure did not match expected Monaco fields.",
+    );
+  }
+
+  return parsed;
+};
+
+const buildDelegatedAgentPairOptions = (
+  pairs: TokenLikePair[],
+): DelegatedAgentPairOption[] => {
+  const seen = new Set<string>();
+  return pairs.flatMap((pair) => {
+    if (!pair.id || seen.has(pair.id)) {
+      return [];
+    }
+
+    seen.add(pair.id);
+    return [
+      {
+        id: pair.id,
+        symbol: pair.symbol ?? `${pair.base_token}/${pair.quote_token}`,
+      },
+    ];
+  });
+};
+
+const buildDelegatedAgentMarginAccountOptions = (
+  rows: MarginAccountListRow[],
+): DelegatedAgentMarginAccountOption[] =>
+  rows.map((row) => ({
+    id: row.marginAccountId,
+    label: row.label.trim().length > 0 ? row.label : "Unlabeled Margin Account",
+  }));
+
+const buildDelegatedAgentRows = (
+  agents: DelegatedAgent[],
+  pairOptions: DelegatedAgentPairOption[],
+): DelegatedAgentListRow[] => {
+  const pairLabelsById = new Map(
+    pairOptions.map((pair) => [pair.id, pair.symbol] as const),
+  );
+  return agents.map((agent) =>
+    formatDelegatedAgentLabel(agent, pairLabelsById),
+  );
+};
+
+const renderDelegatedAgentListRows = (rows: DelegatedAgentListRow[]): void => {
+  const formatShortAddress = (value: string): string =>
+    value.length > 10 ? `${value.slice(0, 6)}...${value.slice(-4)}` : value;
+
+  console.log(pc.cyan("Delegated Agents"));
+  if (rows.length === 0) {
+    console.log(pc.gray("  none"));
+    return;
+  }
+
+  rows.forEach((row, index) => {
+    const name =
+      typeof row.name === "string" && row.name.trim().length > 0
+        ? row.name
+        : "Unnamed";
+    const address =
+      typeof row.address === "string" ? row.address : "unavailable";
+    const active = row.active === true ? "active" : "inactive";
+    const allowedActions = Array.isArray(row.allowedActions)
+      ? row.allowedActions.join(", ")
+      : "none";
+    const allowedTradingPairs = Array.isArray(row.allowedTradingPairs)
+      ? row.allowedTradingPairs.join(", ")
+      : "none";
+    const allowedMarginAccountIds =
+      Array.isArray(row.allowedMarginAccountIds) &&
+      row.allowedMarginAccountIds.length > 0
+        ? row.allowedMarginAccountIds.join(", ")
+        : "ALL";
+    const allowedOrderTypes =
+      Array.isArray(row.allowedOrderTypes) && row.allowedOrderTypes.length > 0
+        ? row.allowedOrderTypes.join(", ")
+        : "ALL";
+    const allowedTimeInForce =
+      Array.isArray(row.allowedTimeInForce) && row.allowedTimeInForce.length > 0
+        ? row.allowedTimeInForce.join(", ")
+        : "ALL";
+    const limitParts = [
+      typeof row.maxLeverage === "string"
+        ? `max leverage ${row.maxLeverage}`
+        : undefined,
+      typeof row.maxOrderNotional === "string"
+        ? `max notional ${row.maxOrderNotional}`
+        : undefined,
+      typeof row.maxOpenOrders === "number"
+        ? `max open orders ${row.maxOpenOrders}`
+        : undefined,
+    ].filter((entry): entry is string => Boolean(entry));
+    const expiresAt =
+      typeof row.expiresAt === "string" && row.expiresAt.length > 0
+        ? row.expiresAt
+        : "none";
+
+    console.log(`${index + 1}. ${pc.bold(name)} ${pc.gray(`(${active})`)}`);
+    console.log(`   Address: ${formatShortAddress(address)}`);
+    console.log(`   Actions: ${allowedActions}`);
+    console.log(`   Pairs: ${allowedTradingPairs}`);
+    console.log(`   Margin Accounts: ${allowedMarginAccountIds}`);
+    console.log(`   Orders: ${allowedOrderTypes} | TIF: ${allowedTimeInForce}`);
+    console.log(`   Limits: ${limitParts.join(" | ") || "none"}`);
+    console.log(`   Expires: ${expiresAt}`);
+  });
 };
 
 const parseTransferCollateral = (
@@ -924,6 +1065,195 @@ export const registerLiveCommands = (liveCommand: Command): void => {
             }`,
           ),
         );
+      } finally {
+        process.exit(exitCode);
+      }
+    });
+
+  const delegatedAgentCommand = liveCommand
+    .command("delegated-agent")
+    .description("Manage delegated agents");
+
+  delegatedAgentCommand
+    .command("list")
+    .description("List delegated agents")
+    .option(
+      "-c, --config <file>",
+      "Configuration file path",
+      "mach-one-bot.toml",
+    )
+    .option(
+      "--env <environment>",
+      "Environment: mainnet, staging, development, or local",
+    )
+    .action(async (options) => {
+      let exitCode = 0;
+      try {
+        const prepared = await loadBotConfigWithEnv(
+          options.config,
+          options.env,
+          "staging",
+        );
+
+        logBalanceStatus("Connecting to Monaco");
+        await withMonacoSession(
+          prepared,
+          async ({ sdk, resolver }) => {
+            logBalanceStatus("Fetching delegated agents");
+            const pairs = resolver.getAllPairs() as TokenLikePair[];
+            const pairOptions = buildDelegatedAgentPairOptions(pairs);
+            const agents = parseDelegatedAgents(
+              await sdk.delegatedAgents.listDelegatedAgents(),
+            );
+            const rows = buildDelegatedAgentRows(agents, pairOptions);
+
+            renderDelegatedAgentListRows(rows);
+          },
+          logBalanceStatus,
+          {
+            connectWebSocket: false,
+            traceProfileOnInitialize: false,
+          },
+        );
+      } catch (error) {
+        exitCode = 1;
+        console.error(
+          pc.red(
+            `❌ Failed to list delegated agents: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          ),
+        );
+      } finally {
+        process.exit(exitCode);
+      }
+    });
+
+  delegatedAgentCommand
+    .command("add")
+    .description("Create or update delegated agent permissions")
+    .option(
+      "-c, --config <file>",
+      "Configuration file path",
+      "mach-one-bot.toml",
+    )
+    .option(
+      "--env <environment>",
+      "Environment: mainnet, staging, development, or local",
+    )
+    .action(async (options) => {
+      let exitCode = 0;
+      try {
+        const prepared = await loadBotConfigWithEnv(
+          options.config,
+          options.env,
+          "staging",
+        );
+
+        console.log(pc.cyan("🔗 Connecting to Monaco..."));
+        await withMonacoSession(
+          prepared,
+          async ({ sdk, resolver }) => {
+            const pairs = resolver.getAllPairs() as TokenLikePair[];
+            const pairOptions = buildDelegatedAgentPairOptions(pairs);
+            const marginAccounts = buildDelegatedAgentMarginAccountOptions(
+              parseMarginAccountRows(await sdk.perps.listMarginAccounts()),
+            );
+            const request = await promptForDelegatedAgentRequest({
+              pairOptions,
+              marginAccounts,
+            });
+            const created =
+              await sdk.delegatedAgents.upsertDelegatedAgent(request);
+
+            console.log(pc.green("✅ Delegated agent saved"));
+            console.log(
+              JSON.stringify(
+                buildDelegatedAgentRows([created], pairOptions)[0] ?? {
+                  id: created.id,
+                },
+              ),
+            );
+          },
+          logBalanceStatus,
+          {
+            connectWebSocket: false,
+            traceProfileOnInitialize: false,
+          },
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (message.toLowerCase().includes("cancelled")) {
+          exitCode = 0;
+          console.log(pc.gray(message));
+        } else {
+          exitCode = 1;
+          console.error(
+            pc.red(`❌ Failed to save delegated agent: ${message}`),
+          );
+        }
+      } finally {
+        process.exit(exitCode);
+      }
+    });
+
+  delegatedAgentCommand
+    .command("remove")
+    .description("Remove delegated agent")
+    .option(
+      "-c, --config <file>",
+      "Configuration file path",
+      "mach-one-bot.toml",
+    )
+    .option(
+      "--env <environment>",
+      "Environment: mainnet, staging, development, or local",
+    )
+    .action(async (options) => {
+      let exitCode = 0;
+      try {
+        const prepared = await loadBotConfigWithEnv(
+          options.config,
+          options.env,
+          "staging",
+        );
+
+        console.log(pc.cyan("🔗 Connecting to Monaco..."));
+        await withMonacoSession(
+          prepared,
+          async ({ sdk }) => {
+            const agents = parseDelegatedAgents(
+              await sdk.delegatedAgents.listDelegatedAgents(),
+            );
+            const selectedAgent = await promptForDelegatedAgentRemoval(agents);
+            await sdk.delegatedAgents.revokeDelegatedAgent(selectedAgent.id);
+
+            console.log(pc.green("✅ Delegated agent revoked"));
+            console.log(
+              JSON.stringify({
+                id: selectedAgent.id,
+                address: selectedAgent.agent_address,
+                name: selectedAgent.name ?? "",
+              }),
+            );
+          },
+          logBalanceStatus,
+          {
+            connectWebSocket: false,
+            traceProfileOnInitialize: false,
+          },
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (message.toLowerCase().includes("cancelled")) {
+          exitCode = 0;
+          console.log(pc.gray(message));
+        } else {
+          exitCode = 1;
+          console.error(
+            pc.red(`❌ Failed to remove delegated agent: ${message}`),
+          );
+        }
       } finally {
         process.exit(exitCode);
       }
