@@ -15,7 +15,7 @@
     "mach-one-bot": "npm --workspace packages/mach1_bot exec -- mach-one-bot",
     "create-cross-repo-patch": "bash ./scripts/create-cross-repo-patch.sh",
     "apply-cross-repo-patch": "bash ./scripts/apply-cross-repo-patch.sh",
-    "test-mach-one-bot-tempdir": "bash ./scripts/test-mach-one-bot-tempdir.sh",
+    "test-mach-one-bot-tempdir": "bash ./scripts/mach-one-bot-tempdir.sh",
     "test": "npm --workspace packages/mach1_bot test"
   },
   "devDependencies": {

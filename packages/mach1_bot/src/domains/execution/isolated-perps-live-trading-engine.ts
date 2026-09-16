@@ -669,7 +669,7 @@ export class IsolatedPerpsLiveTradingEngine extends BaseTradingMode {
       return configuredMarginAccountId;
     }
 
-    const response = await sdk.perps.listMarginAccounts({ state: "ACTIVE" });
+    const response = await sdk.perps.listMarginAccounts();
     const marginAccountId = response.accounts?.[0]?.marginAccountId;
 
     if (!marginAccountId) {

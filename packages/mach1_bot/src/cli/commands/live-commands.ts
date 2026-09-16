@@ -615,6 +615,10 @@ const parseAvailableCollateral = (
       getStringProp(response, "marginTransferable") ??
       getStringProp(response, "margin_transferable") ??
       undefined,
+    marginAvailableCollateral:
+      getStringProp(response, "marginAvailableCollateral") ??
+      getStringProp(response, "margin_available_collateral") ??
+      undefined,
   };
 };
 
@@ -632,7 +636,7 @@ const resolveMarginAccountId = async (
     return requestedMarginAccountId;
   }
 
-  const rawAccounts = await sdk.perps.listMarginAccounts({ state: "ACTIVE" });
+  const rawAccounts = await sdk.perps.listMarginAccounts();
   traceMonacoApiPayload("perps.listMarginAccounts", rawAccounts);
   const marginAccountId = parseMarginAccountId(rawAccounts);
   if (!marginAccountId) {
@@ -759,7 +763,7 @@ const fetchLivePerpsResult = async (
   onStatus: (status: string) => void,
 ): Promise<LivePerpsResult> => {
   onStatus("Fetching isolated margin accounts");
-  const rawAccounts = await sdk.perps.listMarginAccounts({ state: "ACTIVE" });
+  const rawAccounts = await sdk.perps.listMarginAccounts();
   traceMonacoApiPayload("perps.listMarginAccounts", rawAccounts);
   const marginAccountId = parseMarginAccountId(rawAccounts);
 
@@ -1381,13 +1385,10 @@ export const registerLiveCommands = (liveCommand: Command): void => {
           if (direction === "spot-to-perps") {
             console.log(pc.cyan("📤 Transferring collateral to perps..."));
             const transferResult = parseTransferCollateral(
-              await sdk.marginAccounts.transferCollateralToMarginAccount(
-                marginAccountId,
-                {
-                  asset: assetId,
-                  amount: amount.toString(),
-                },
-              ),
+              await sdk.marginAccounts.transferCollateralToParentMarginAccount({
+                asset: assetId,
+                amount: options.amount,
+              }),
             );
             console.log(pc.green("✅ Transfer processed"));
             console.log(pc.gray(`   Direction: spot -> perps`));
@@ -1405,7 +1406,7 @@ export const registerLiveCommands = (liveCommand: Command): void => {
           const collateral = parseAvailableCollateral(
             await sdk.perps.getAvailableCollateral({ asset: assetId }),
           );
-          const transferable = collateral.marginTransferable ?? "0";
+          const transferable = collateral.marginAvailableCollateral ?? "0";
           const transferableRaw = parseUnits(transferable, decimals);
           if (transferableRaw < amount) {
             throw new Error(
@@ -1415,13 +1416,10 @@ export const registerLiveCommands = (liveCommand: Command): void => {
 
           console.log(pc.cyan("📥 Transferring collateral to spot..."));
           const transferResult = parseTransferCollateral(
-            await sdk.marginAccounts.transferCollateralFromMarginAccount(
-              marginAccountId,
-              {
-                asset: assetId,
-                amount: amount.toString(),
-              },
-            ),
+            await sdk.marginAccounts.transferCollateralFromParentMarginAccount({
+              asset: assetId,
+              amount: options.amount,
+            }),
           );
           console.log(pc.green("✅ Transfer processed"));
           console.log(pc.gray(`   Direction: perps -> spot`));
@@ -1790,11 +1788,10 @@ export const registerLiveCommands = (liveCommand: Command): void => {
                   options.marginAccountId,
                 );
                 const transferResult = parseTransferCollateral(
-                  await sdk.marginAccounts.transferCollateralToMarginAccount(
-                    marginAccountId,
+                  await sdk.marginAccounts.transferCollateralToParentMarginAccount(
                     {
                       asset: assetId,
-                      amount: depositBalance.toString(),
+                      amount: amountFormatted,
                     },
                   ),
                 );
@@ -1964,13 +1961,10 @@ export const registerLiveCommands = (liveCommand: Command): void => {
               options.marginAccountId,
             );
             const transferResult = parseTransferCollateral(
-              await sdk.marginAccounts.transferCollateralToMarginAccount(
-                marginAccountId,
-                {
-                  asset: assetId,
-                  amount: amount.toString(),
-                },
-              ),
+              await sdk.marginAccounts.transferCollateralToParentMarginAccount({
+                asset: assetId,
+                amount: amountInput,
+              }),
             );
             console.log(pc.cyan("📤 Moving deposited collateral to perps..."));
             console.log(pc.green("✅ Perps transfer processed"));
@@ -2176,7 +2170,7 @@ export const registerLiveCommands = (liveCommand: Command): void => {
             const collateral = parseAvailableCollateral(
               await sdk.perps.getAvailableCollateral({ asset: assetId }),
             );
-            maxFormatted = collateral.marginTransferable ?? "0";
+            maxFormatted = collateral.marginAvailableCollateral ?? "0";
             const transferableRaw = parseUnits(maxFormatted, decimals);
             if (transferableRaw <= 0n) {
               throw new Error(
@@ -2227,11 +2221,10 @@ export const registerLiveCommands = (liveCommand: Command): void => {
             );
             console.log(pc.cyan("📥 Moving collateral from perps to spot..."));
             const transferResult = parseTransferCollateral(
-              await sdk.marginAccounts.transferCollateralFromMarginAccount(
-                marginAccountId,
+              await sdk.marginAccounts.transferCollateralFromParentMarginAccount(
                 {
                   asset: assetId,
-                  amount: amount.toString(),
+                  amount: amountInput,
                 },
               ),
             );

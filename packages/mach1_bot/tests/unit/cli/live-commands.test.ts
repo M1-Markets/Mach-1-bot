@@ -163,6 +163,7 @@ vi.mock("@/cli/utils/monaco-session", () => ({
             walletAvailable: "1000",
             walletLocked: "0",
             marginTransferable: "25",
+            marginAvailableCollateral: "25",
           }),
           getMarginAccountSummary: async () => ({
             equity: "1500",
@@ -241,12 +242,12 @@ vi.mock("@/cli/utils/monaco-session", () => ({
             collateral_asset: request?.collateralAsset ?? "USDC",
             created_at: "2026-05-28T00:00:00.000Z",
           }),
-          transferCollateralToMarginAccount: async (
-            marginAccountId: string,
-            request: { asset: string; amount: string },
-          ) => ({
+          transferCollateralToParentMarginAccount: async (request: {
+            asset: string;
+            amount: string;
+          }) => ({
             movementId: "movement-in-1",
-            marginAccountId: marginAccountId,
+            marginAccountId: "margin-1",
             asset: request.asset,
             amount: request.amount,
             status: "SUCCESS",
@@ -254,12 +255,12 @@ vi.mock("@/cli/utils/monaco-session", () => ({
             newTotalCollateralValue: "1600",
             newWithdrawableCollateral: "1200",
           }),
-          transferCollateralFromMarginAccount: async (
-            marginAccountId: string,
-            request: { asset: string; amount: string },
-          ) => ({
+          transferCollateralFromParentMarginAccount: async (request: {
+            asset: string;
+            amount: string;
+          }) => ({
             movementId: "movement-out-1",
-            marginAccountId: marginAccountId,
+            marginAccountId: "margin-1",
             asset: request.asset,
             amount: request.amount,
             status: "SUCCESS",
