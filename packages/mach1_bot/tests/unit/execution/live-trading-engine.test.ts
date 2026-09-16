@@ -473,7 +473,7 @@ describe("LiveTradingEngine order placement retries", () => {
           getSDK: () => {
             profile: {
               getUserBalanceByAssetId: (assetId: string) => Promise<{
-                available_balance: string;
+                availableBalance: string;
               }>;
             };
           };
@@ -504,7 +504,7 @@ describe("LiveTradingEngine order placement retries", () => {
       getSDK: () => ({
         profile: {
           getUserBalanceByAssetId: async () => ({
-            available_balance: "10.0",
+            availableBalance: "10.0",
           }),
         },
       }),

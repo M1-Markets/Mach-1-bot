@@ -730,10 +730,9 @@ export class LiveTradingEngine extends BaseTradingMode {
     const directBalanceRecord = isRecord(directBalance)
       ? directBalance
       : undefined;
-    const directAvailable = getStringProp(
-      directBalanceRecord,
-      "available_balance",
-    );
+    const directAvailable =
+      getStringProp(directBalanceRecord, "availableBalance") ??
+      getStringProp(directBalanceRecord, "available_balance");
 
     if (directAvailable) {
       return directAvailable;
@@ -750,11 +749,14 @@ export class LiveTradingEngine extends BaseTradingMode {
       if (!isRecord(entry)) {
         continue;
       }
-      const entryAssetId = getStringProp(entry, "asset_id");
+      const entryAssetId =
+        getStringProp(entry, "assetId") ?? getStringProp(entry, "asset_id");
       if (entryAssetId !== assetId) {
         continue;
       }
-      const available = getStringProp(entry, "available_balance");
+      const available =
+        getStringProp(entry, "availableBalance") ??
+        getStringProp(entry, "available_balance");
       if (!available) {
         throw new Error(
           `Profile balance entry missing available_balance for asset ${assetId}.`,

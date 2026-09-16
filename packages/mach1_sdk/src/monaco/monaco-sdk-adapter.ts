@@ -1,4 +1,4 @@
-import { type Chain, createWalletClient, http } from "viem";
+import { type Chain, createWalletClient, formatUnits, http, parseUnits } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { sei, seiTestnet } from "viem/chains";
 import { createMach1SDK, type Mach1SDK } from "../sdk";
@@ -355,8 +355,11 @@ export class MonacoSDKAdapter {
       "pending" | "filled" | "cancelled" | "rejected"
     > = {
       OPEN: "pending",
+      SUBMITTED: "pending",
       PARTIALLY_FILLED: "pending",
       FILLED: "filled",
+      SETTLED: "filled",
+      SETTLED_ON_CHAIN: "filled",
       CANCELLED: "cancelled",
       REJECTED: "rejected",
       EXPIRED: "cancelled",
@@ -471,6 +474,17 @@ export class MonacoSDKAdapter {
       const tradingPairId = pairByContracts
         ? pairByContracts.id
         : tradingPairResolver.resolveSymbolToId(symbol);
+      if (!pairByContracts) {
+        throw new Error(`Trading pair not found for ${symbol}`);
+      }
+      const quantityDecimal = formatUnits(
+        request.quantity,
+        pairByContracts.base_decimals,
+      );
+      const priceDecimal = formatUnits(
+        request.price,
+        pairByContracts.quote_decimals,
+      );
       const isLimitOrder = request.orderType
         ? request.orderType === "limit"
         : Boolean(request.price && request.price > 0n);
@@ -488,8 +502,8 @@ export class MonacoSDKAdapter {
           return this.sdk.trading.placeLimitOrder(
             tradingPairId,
             request.isBuy ? "BUY" : "SELL",
-            request.quantity.toString(),
-            request.price.toString(),
+            quantityDecimal,
+            priceDecimal,
             { tradingMode: "SPOT" },
           );
         });
@@ -502,20 +516,24 @@ export class MonacoSDKAdapter {
           return this.sdk.trading.placeMarketOrder(
             tradingPairId,
             request.isBuy ? "BUY" : "SELL",
-            request.quantity.toString(),
+            quantityDecimal,
             { tradingMode: "SPOT" },
           );
         });
       }
 
       const dataRecord = isRecord(response) ? response : {};
-      const matchResult = getRecord(dataRecord.match_result);
+      const matchResult =
+        getRecord(dataRecord.matchResult) ?? getRecord(dataRecord.match_result);
       const orderId = String(dataRecord.order_id ?? dataRecord.orderId ?? "");
       const status = this.mapOrderStatus(
         String(matchResult?.status ?? dataRecord.status ?? ""),
       );
-      const filledQuantity = BigInt(
-        String(matchResult?.total_filled ?? dataRecord.filledQuantity ?? "0"),
+      const filledQuantity = parseUnits(
+        String(matchResult?.totalFilled ??
+          matchResult?.total_filled ??
+          dataRecord.filledQuantity ?? "0"),
+        pairByContracts.base_decimals,
       );
       const quantity = BigInt(String(request.quantity));
 

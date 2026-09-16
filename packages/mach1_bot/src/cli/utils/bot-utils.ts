@@ -560,14 +560,24 @@ async function getAvailableTokenBalance(
         getStringProp(balanceRecord, "token") ||
         ""
       ).toUpperCase();
-      const balanceAssetId = getStringProp(balanceRecord, "asset_id");
+      const balanceAssetId =
+        getStringProp(balanceRecord, "assetId") ??
+        getStringProp(balanceRecord, "asset_id");
       if (
         balanceSymbol === normalizedSymbol ||
         (assetId && balanceAssetId === assetId)
       ) {
         const raw =
+          getStringProp(balanceRecord, "availableBalance") ??
+          getStringProp(balanceRecord, "available_balance") ??
+          getStringProp(balanceRecord, "available") ??
+          getStringProp(balanceRecord, "totalBalance") ??
+          getStringProp(balanceRecord, "total_balance") ??
+          getStringProp(balanceRecord, "balance") ??
+          getNumberProp(balanceRecord, "availableBalance") ??
           getNumberProp(balanceRecord, "available_balance") ??
           getNumberProp(balanceRecord, "available") ??
+          getNumberProp(balanceRecord, "totalBalance") ??
           getNumberProp(balanceRecord, "total_balance") ??
           getNumberProp(balanceRecord, "balance") ??
           0;
@@ -614,7 +624,11 @@ async function validateStrategyBalances(
   botConfig: BotConfig | undefined,
   tradingPairs: string[],
 ): Promise<void> {
-  if (!botConfig || botConfig.mode !== "live") {
+  if (
+    !botConfig ||
+    botConfig.mode !== "live" ||
+    botConfig.marketMode === "isolated_perps"
+  ) {
     return;
   }
 
@@ -759,12 +773,16 @@ export function convertToBotConfig(tomlConfig: TomlConfig): BotConfig {
   const resolvedLogLevel =
     process.env.MONACO_LOG_LEVEL ?? process.env.MACH1_LOG_LEVEL ?? "info";
   const mode = normalizeConfigMode(tomlConfig.trading?.mode);
+  const privateKeyReference = tomlConfig.wallet?.private_key ?? "";
+  const privateKey = privateKeyReference.startsWith("env:")
+    ? (process.env[privateKeyReference.slice(4)] ?? "")
+    : privateKeyReference;
 
   if (tomlConfig.trading?.mode && !isConfigModeInput(tomlConfig.trading.mode)) {
     throw new Error("mode must be one of: backtest, simulation, live, paper");
   }
 
-  if (isLiveMode(mode) && !tomlConfig.wallet?.private_key) {
+  if (isLiveMode(mode) && !privateKey) {
     throw new Error("private_key is required in [wallet] section");
   }
 
@@ -816,7 +834,7 @@ export function convertToBotConfig(tomlConfig: TomlConfig): BotConfig {
   });
 
   const config: BotConfig = {
-    privateKey: tomlConfig.wallet?.private_key ?? "",
+    privateKey,
     rpcUrl: tomlConfig.network?.rpc_url ?? "",
     mode,
     marketMode: normalizedLiveMarketConfig.marketMode,

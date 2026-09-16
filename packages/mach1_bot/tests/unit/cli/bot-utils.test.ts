@@ -81,6 +81,29 @@ describe("CLI Bot Utilities", () => {
   });
 
   describe("convertToBotConfig", () => {
+    it("resolves private keys from an environment reference", () => {
+      process.env.TEST_MACH1_PRIVATE_KEY = "0xtest-secret";
+      const result = convertToBotConfig({
+        trading: { mode: "live" },
+        wallet: { private_key: "env:TEST_MACH1_PRIVATE_KEY" },
+        network: { rpc_url: "https://test.com" },
+      });
+
+      expect(result.privateKey).toBe("0xtest-secret");
+      delete process.env.TEST_MACH1_PRIVATE_KEY;
+    });
+
+    it("rejects an unset private-key environment reference in live mode", () => {
+      delete process.env.TEST_MACH1_MISSING_PRIVATE_KEY;
+      expect(() =>
+        convertToBotConfig({
+          trading: { mode: "live" },
+          wallet: { private_key: "env:TEST_MACH1_MISSING_PRIVATE_KEY" },
+          network: { rpc_url: "https://test.com" },
+        }),
+      ).toThrow("private_key is required in [wallet] section");
+    });
+
     const validTomlConfig: TomlConfig = {
       general: {
         name: "test-bot",
