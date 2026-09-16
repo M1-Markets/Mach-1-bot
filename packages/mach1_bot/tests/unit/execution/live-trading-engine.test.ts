@@ -1026,6 +1026,46 @@ describe("LiveTradingEngine order placement retries", () => {
     });
   });
 
+  it("waits for asynchronous fill listeners before returning", async () => {
+    const engine = makeEngine();
+    let releaseFill: (() => void) | undefined;
+    let fillApplied = false;
+    engine
+      .getOrderLifecycleStore()
+      .getEventEmitter()
+      .on(async (event) => {
+        if (event.type !== "filled") return;
+        await new Promise<void>((resolve) => {
+          releaseFill = resolve;
+        });
+        fillApplied = true;
+      });
+    const placeOrder = vi.fn().mockResolvedValue({
+      orderId: "sdk-filled",
+      status: "filled",
+      filledQuantity: order.quantity,
+      remainingQuantity: 0n,
+    });
+    (engine as unknown as { monacoSDK: unknown }).monacoSDK = {
+      isInitialized: () => true,
+      isPaused: () => false,
+      getTradingPairResolver: () => createResolver(),
+      placeOrder,
+    };
+
+    let returned = false;
+    const placement = engine.placeOrder(order).then((result) => {
+      returned = true;
+      return result;
+    });
+    while (!releaseFill) await Promise.resolve();
+    expect(returned).toBe(false);
+    releaseFill();
+
+    await expect(placement).resolves.toMatchObject({ status: "filled" });
+    expect(fillApplied).toBe(true);
+  });
+
   it("cancels Monaco order with SDK returned id", async () => {
     const engine = makeEngine();
     const cancelOrder = vi.fn().mockResolvedValue(undefined);

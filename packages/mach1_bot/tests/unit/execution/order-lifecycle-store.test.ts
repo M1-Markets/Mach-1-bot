@@ -18,6 +18,20 @@ const order: OrderRequest = {
 };
 
 describe("OrderLifecycleStore", () => {
+  it("waits for asynchronous lifecycle listeners", async () => {
+    const store = new OrderLifecycleStore();
+    let applied = false;
+    store.getEventEmitter().on(async () => {
+      await Promise.resolve();
+      applied = true;
+    });
+
+    store.createSubmittedOrder({ localId: "async-1", pair, order });
+    expect(applied).toBe(false);
+    await store.waitForEvents();
+    expect(applied).toBe(true);
+  });
+
   it("tracks submitted to filled transition", () => {
     const store = new OrderLifecycleStore();
     const events: string[] = [];

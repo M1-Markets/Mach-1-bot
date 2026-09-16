@@ -156,7 +156,7 @@ describe("PositionTracker Phase 14 accounting", () => {
         filledQuantity: 200n,
       }),
     );
-    await vi.runAllTimersAsync();
+    await emitter.waitForIdle();
 
     const position = await tracker.getPosition(pair);
     expect(position.balance).toBe(200n);

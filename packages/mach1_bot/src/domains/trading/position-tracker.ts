@@ -215,9 +215,9 @@ export class PositionTracker {
   }
 
   attachOrderEventEmitter(orderEventEmitter: OrderEventEmitter): () => void {
-    return orderEventEmitter.on((event) => {
-      void this.handleOrderLifecycleEvent(event);
-    });
+    return orderEventEmitter.on((event) =>
+      this.handleOrderLifecycleEvent(event),
+    );
   }
 
   async handleOrderLifecycleEvent(event: OrderLifecycleEvent): Promise<void> {

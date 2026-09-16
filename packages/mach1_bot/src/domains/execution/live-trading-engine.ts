@@ -535,6 +535,7 @@ export class LiveTradingEngine extends BaseTradingMode {
           normalizedResult.filledQuantity > 0n ? order.price : undefined,
         timestamp: Date.now(),
       });
+      await this.orderLifecycleStore.waitForEvents();
 
       // Track statistics
       if (normalizedResult.status === "filled") {

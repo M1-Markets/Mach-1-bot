@@ -57,6 +57,10 @@ export class OrderLifecycleStore {
     return this.emitter;
   }
 
+  async waitForEvents(): Promise<void> {
+    await this.emitter.waitForIdle();
+  }
+
   createSubmittedOrder(input: CreateOrderRecordInput): OrderLifecycleRecord {
     const timestamp = input.timestamp ?? Date.now();
     const record: OrderLifecycleRecord = {
