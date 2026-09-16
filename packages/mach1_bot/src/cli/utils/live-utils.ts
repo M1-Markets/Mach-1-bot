@@ -43,6 +43,7 @@ export type TokenLikePair = {
   quote_token_contract: string;
   base_decimals: number;
   quote_decimals: number;
+  quantity_step_size?: string;
   symbol?: string;
 };
 
@@ -580,6 +581,24 @@ export const formatDecimalAmount = (
 ): string => {
   const fixed = value.toFixed(decimals);
   return fixed.replace(/\.?0+$/, "");
+};
+
+export const formatStepAlignedAmount = (
+  value: number,
+  decimals: number,
+  stepSize: string | undefined,
+): string => {
+  const step = Number(stepSize);
+  if (!Number.isFinite(step) || step <= 0) {
+    return formatDecimalAmount(value, decimals);
+  }
+
+  const aligned = Math.floor((value + Number.EPSILON) / step) * step;
+  if (aligned <= 0) {
+    throw new Error(`Order quantity is below the pair quantity step size ().`);
+  }
+
+  return formatDecimalAmount(aligned, decimals);
 };
 
 export const formatEstimatedAmount = (value: number): string => {

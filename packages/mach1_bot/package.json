@@ -62,8 +62,7 @@
     "format": "biome format --write src tests",
     "lint": "biome check src tests",
     "monaco:balances": "tsx ../standalone_scripts/monaco-balances.ts",
-    "typecheck": "tsc --noEmit",
-    "postinstall": "patch-package"
+    "typecheck": "tsc --noEmit"
   },
   "bin": {
     "mach-one-bot": "./mach-one-bot"
@@ -81,7 +80,6 @@
     "ink": "^7.0.1",
     "ink-text-input": "^6.0.0",
     "mach1_sdk": "file:../mach1_sdk",
-    "pico": "^0.1.17",
     "react": "^19.2.5",
     "smol-toml": "^1.6.1",
     "viem": "^2.48.1"
@@ -89,22 +87,21 @@
   "devDependencies": {
     "@biomejs/biome": "^2.4.12",
     "@tsconfig/node20": "^20.1.9",
-    "@vitest/coverage-istanbul": "^1.3.1",
     "@types/node": "^25.6.0",
     "@types/prompts": "^2.4.9",
     "@types/react": "^19.2.14",
+    "@vitest/coverage-istanbul": "^1.3.1",
     "esbuild": "^0.28.0",
     "globals": "^17.5.0",
     "jiti": "^2.6.1",
-    "patch-package": "^8.0.1",
     "picocolors": "^1.1.1",
     "prompts": "^2.4.2",
     "rimraf": "^6.1.3",
-    "vitest": "^1.3.1",
     "ts-node": "^10.9.2",
     "tsc-alias": "^1.8.16",
     "tsup": "^8.5.1",
     "tsx": "^4.21.0",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vitest": "^1.3.1"
   }
 }

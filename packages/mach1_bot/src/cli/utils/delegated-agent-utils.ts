@@ -102,19 +102,19 @@ export const formatDelegatedAgentLabel = (
 ): Record<string, unknown> => ({
   id: agent.id,
   name: agent.name ?? "",
-  address: agent.agent_address,
-  active: agent.is_active,
-  expiresAt: agent.expires_at ?? null,
-  allowedActions: agent.allowed_actions,
-  allowedTradingPairs: agent.allowed_trading_pair_ids.map(
+  address: agent.agentAddress,
+  active: agent.isActive,
+  expiresAt: agent.expiresAt ?? null,
+  allowedActions: agent.allowedActions,
+  allowedTradingPairs: agent.allowedTradingPairIds.map(
     (pairId) => pairLabelsById.get(pairId) ?? pairId,
   ),
-  allowedMarginAccountIds: agent.allowed_margin_account_ids,
-  allowedOrderTypes: agent.allowed_order_types ?? [],
-  allowedTimeInForce: agent.allowed_time_in_force ?? [],
-  maxLeverage: agent.max_leverage ?? null,
-  maxOrderNotional: agent.max_order_notional ?? null,
-  maxOpenOrders: agent.max_open_orders ?? null,
+  allowedMarginAccountIds: agent.allowedMarginAccountIds,
+  allowedOrderTypes: agent.allowedOrderTypes ?? [],
+  allowedTimeInForce: agent.allowedTimeInForce ?? [],
+  maxLeverage: agent.maxLeverage ?? null,
+  maxOrderNotional: agent.maxOrderNotional ?? null,
+  maxOpenOrders: agent.maxOpenOrders ?? null,
 });
 
 export const promptForDelegatedAgentRequest = async (options: {
@@ -339,7 +339,7 @@ export const promptForDelegatedAgentRemoval = async (
         name: "agentId",
         message: pc.yellow("Select delegated agent to remove"),
         choices: agents.map((agent) => ({
-          title: `${agent.name || "Unnamed"} ${pc.gray(`(${agent.agent_address})`)}`,
+          title: `${agent.name || "Unnamed"} ${pc.gray(`(${agent.agentAddress})`)}`,
           description: agent.id,
           value: agent.id,
         })),

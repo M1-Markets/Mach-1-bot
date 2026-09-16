@@ -96,29 +96,29 @@ describe("IsolatedPerpsLiveTradingEngine", () => {
 
   const baseSummary = {
     equity: "1500",
-    free_collateral: "1200",
-    initial_margin_required: "100",
-    maintenance_margin_required: "50",
-    margin_account_id: "margin-1",
-    realized_pnl: "10",
-    unrealized_pnl: "25",
-    withdrawable_collateral: "1100",
+    freeCollateral: "1200",
+    initialMarginRequired: "100",
+    maintenanceMarginRequired: "50",
+    marginAccountId: "margin-1",
+    realizedPnl: "10",
+    unrealizedPnl: "25",
+    withdrawableCollateral: "1100",
   };
 
   const basePositions = {
     positions: [
       {
-        entry_price: "3200",
-        isolated_margin: "250",
-        liquidation_price: "2900",
-        maintenance_margin_required: "100",
-        mark_price: "3210",
-        position_id: "position-1",
-        realized_pnl: "0",
+        entryPrice: "3200",
+        isolatedMargin: "250",
+        liquidationPrice: "2900",
+        maintenanceMarginRequired: "100",
+        markPrice: "3210",
+        positionId: "position-1",
+        realizedPnl: "0",
         side: "LONG",
         size: "1.25",
-        trading_pair_id: "pair-1",
-        unrealized_pnl: "12.5",
+        tradingPairId: "pair-1",
+        unrealizedPnl: "12.5",
       },
     ],
   };
@@ -142,23 +142,23 @@ describe("IsolatedPerpsLiveTradingEngine", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockListMarginAccounts.mockResolvedValue({
-      accounts: [{ margin_account_id: "margin-1" }],
+      accounts: [{ marginAccountId: "margin-1" }],
     });
     mockGetMarginAccountSummary.mockResolvedValue(baseSummary);
     mockListOpenPositions.mockResolvedValue(basePositions);
     mockPlaceMarketOrder.mockResolvedValue({
-      order_id: "perp-order-1",
+      orderId: "perp-order-1",
       status: "SUCCESS",
     });
     mockPlaceLimitOrder.mockResolvedValue({
-      order_id: "perp-limit-1",
+      orderId: "perp-limit-1",
       status: "SUCCESS",
     });
     mockCancelOrder.mockResolvedValue({ status: "SUCCESS" });
     mockClosePosition.mockResolvedValue({
-      close_order_id: "perp-close-1",
+      closeOrderId: "perp-close-1",
       status: "SUCCESS",
-      submitted_quantity: "1.25",
+      submittedQuantity: "1.25",
     });
   });
 
@@ -235,7 +235,7 @@ describe("IsolatedPerpsLiveTradingEngine", () => {
       "margin-configured",
     );
     expect(mockListOpenPositions).toHaveBeenCalledWith({
-      margin_account_id: "margin-configured",
+      marginAccountId: "margin-configured",
     });
     expect(engine.getAccountState()?.marginAccountId).toBe("margin-configured");
   });
@@ -261,8 +261,8 @@ describe("IsolatedPerpsLiveTradingEngine", () => {
 
     mockGetMarginAccountSummary.mockResolvedValueOnce({
       ...baseSummary,
-      free_collateral: "900",
-      initial_margin_required: "400",
+      freeCollateral: "900",
+      initialMarginRequired: "400",
     });
     mockListOpenPositions.mockResolvedValueOnce({ positions: [] });
 
@@ -372,8 +372,8 @@ describe("IsolatedPerpsLiveTradingEngine", () => {
 
     mockGetMarginAccountSummary.mockResolvedValueOnce({
       ...baseSummary,
-      realized_pnl: "45",
-      unrealized_pnl: "0",
+      realizedPnl: "45",
+      unrealizedPnl: "0",
     });
     mockListOpenPositions.mockResolvedValueOnce({ positions: [] });
 
@@ -417,8 +417,8 @@ describe("IsolatedPerpsLiveTradingEngine", () => {
         {
           ...basePositions.positions[0],
           side: "SHORT",
-          realized_pnl: "0",
-          unrealized_pnl: "-8.5",
+          realizedPnl: "0",
+          unrealizedPnl: "-8.5",
         },
       ],
     });
@@ -441,8 +441,8 @@ describe("IsolatedPerpsLiveTradingEngine", () => {
 
     mockGetMarginAccountSummary.mockResolvedValueOnce({
       ...baseSummary,
-      realized_pnl: "32.5",
-      unrealized_pnl: "0",
+      realizedPnl: "32.5",
+      unrealizedPnl: "0",
     });
     mockListOpenPositions.mockResolvedValueOnce({ positions: [] });
 
@@ -465,17 +465,17 @@ describe("IsolatedPerpsLiveTradingEngine", () => {
     mockListOpenPositions.mockResolvedValueOnce({
       positions: [
         {
-          entry_price: "3200",
-          isolated_margin: "250",
-          liquidation_price: "2900",
-          maintenance_margin_required: "100",
-          mark_price: "3210",
-          position_id: "position-1",
-          realized_pnl: "15",
+          entryPrice: "3200",
+          isolatedMargin: "250",
+          liquidationPrice: "2900",
+          maintenanceMarginRequired: "100",
+          markPrice: "3210",
+          positionId: "position-1",
+          realizedPnl: "15",
           side: "SHORT",
           size: "1.25",
-          trading_pair_id: "pair-1",
-          unrealized_pnl: "22.5",
+          tradingPairId: "pair-1",
+          unrealizedPnl: "22.5",
           leverage: "5",
         },
       ],
@@ -511,17 +511,17 @@ describe("IsolatedPerpsLiveTradingEngine", () => {
     mockListOpenPositions.mockResolvedValueOnce({
       positions: [
         {
-          entry_price: "3200",
-          isolated_margin: "180",
-          liquidation_price: "2925",
-          maintenance_margin_required: "80",
-          mark_price: "3250",
-          position_id: "position-1",
-          realized_pnl: "25",
+          entryPrice: "3200",
+          isolatedMargin: "180",
+          liquidationPrice: "2925",
+          maintenanceMarginRequired: "80",
+          markPrice: "3250",
+          positionId: "position-1",
+          realizedPnl: "25",
           side: "LONG",
           size: "0.75",
-          trading_pair_id: "pair-1",
-          unrealized_pnl: "37.5",
+          tradingPairId: "pair-1",
+          unrealizedPnl: "37.5",
           leverage: "5",
         },
       ],

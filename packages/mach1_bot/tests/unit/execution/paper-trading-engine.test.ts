@@ -119,8 +119,8 @@ describe("PaperTradingEngine strategy execution", () => {
         getAllTradingPairs: vi.fn().mockResolvedValue([
           {
             symbol: "DOGE/USDC",
-            base_token_contract: "0x5555555555555555555555555555555555555555",
-            quote_token_contract: "0x4444444444444444444444444444444444444444",
+            baseTokenContract: "0x5555555555555555555555555555555555555555",
+            quoteTokenContract: "0x4444444444444444444444444444444444444444",
           },
         ]),
       } as never,

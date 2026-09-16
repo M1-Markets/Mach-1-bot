@@ -35,27 +35,27 @@ import { retryWithBackoff } from "@/shared/utils/rate-limiter";
 
 type MarginAccountSummaryLike = {
   equity?: string;
-  free_collateral?: string;
-  initial_margin_required?: string;
-  maintenance_margin_required?: string;
-  margin_account_id?: string;
-  realized_pnl?: string;
-  unrealized_pnl?: string;
-  withdrawable_collateral?: string;
+  freeCollateral?: string;
+  initialMarginRequired?: string;
+  maintenanceMarginRequired?: string;
+  marginAccountId?: string;
+  realizedPnl?: string;
+  unrealizedPnl?: string;
+  withdrawableCollateral?: string;
 };
 
 type OpenPositionLike = {
-  entry_price?: string;
-  isolated_margin?: string;
-  liquidation_price?: string;
-  maintenance_margin_required?: string;
-  mark_price?: string;
-  position_id?: string;
-  realized_pnl?: string;
+  entryPrice?: string;
+  isolatedMargin?: string;
+  liquidationPrice?: string;
+  maintenanceMarginRequired?: string;
+  markPrice?: string;
+  positionId?: string;
+  realizedPnl?: string;
   side?: string;
   size?: string;
-  trading_pair_id?: string;
-  unrealized_pnl?: string;
+  tradingPairId?: string;
+  unrealizedPnl?: string;
   leverage?: string | number;
 };
 
@@ -74,8 +74,8 @@ export interface IsolatedPerpsFundingState {
 }
 
 type PerpsOrderResponseLike = {
-  order_id?: string;
-  close_order_id?: string;
+  orderId?: string;
+  closeOrderId?: string;
 };
 
 type CachedPerpsPosition = {
@@ -219,7 +219,7 @@ const parseNumeric = (
 };
 
 const normalizeEngineOrderId = (response: PerpsOrderResponseLike): string => {
-  const orderId = response.close_order_id ?? response.order_id;
+  const orderId = response.closeOrderId ?? response.orderId;
 
   if (!orderId) {
     throw new Error("Perps order response missing order id");
@@ -348,7 +348,7 @@ export class IsolatedPerpsLiveTradingEngine extends BaseTradingMode {
     const marginAccountId = await this.resolveMarginAccountId(sdk);
     const [summary, positionsResponse] = await Promise.all([
       sdk.perps.getMarginAccountSummary(marginAccountId),
-      sdk.perps.listOpenPositions({ margin_account_id: marginAccountId }),
+      sdk.perps.listOpenPositions({ marginAccountId: marginAccountId }),
     ]);
     const fundingStates = await this.resolveFundingStates(
       marginAccountId,
@@ -670,7 +670,7 @@ export class IsolatedPerpsLiveTradingEngine extends BaseTradingMode {
     }
 
     const response = await sdk.perps.listMarginAccounts({ state: "ACTIVE" });
-    const marginAccountId = response.accounts?.[0]?.margin_account_id;
+    const marginAccountId = response.accounts?.[0]?.marginAccountId;
 
     if (!marginAccountId) {
       throw new Error("No active isolated margin account available");
@@ -688,22 +688,20 @@ export class IsolatedPerpsLiveTradingEngine extends BaseTradingMode {
     return {
       marginAccountId,
       equity: parseScaledDecimal(summary.equity),
-      freeCollateral: parseScaledDecimal(summary.free_collateral),
-      usedMargin: parseScaledDecimal(summary.initial_margin_required),
-      maintenanceMargin: parseScaledDecimal(
-        summary.maintenance_margin_required,
-      ),
+      freeCollateral: parseScaledDecimal(summary.freeCollateral),
+      usedMargin: parseScaledDecimal(summary.initialMarginRequired),
+      maintenanceMargin: parseScaledDecimal(summary.maintenanceMarginRequired),
       withdrawableCollateral: parseScaledDecimal(
-        summary.withdrawable_collateral,
+        summary.withdrawableCollateral,
       ),
-      realizedPnL: parseScaledDecimal(summary.realized_pnl),
-      unrealizedPnL: parseScaledDecimal(summary.unrealized_pnl),
+      realizedPnL: parseScaledDecimal(summary.realizedPnl),
+      unrealizedPnL: parseScaledDecimal(summary.unrealizedPnl),
       positions: (positionsResponse.positions ?? []).flatMap((position) => {
-        if (!position.position_id || !position.trading_pair_id) {
+        if (!position.positionId || !position.tradingPairId) {
           return [];
         }
 
-        const fundingState = fundingStates.get(position.trading_pair_id);
+        const fundingState = fundingStates.get(position.tradingPairId);
         const accruedFunding =
           fundingState?.status === "available"
             ? (fundingState.accruedFunding ?? 0n)
@@ -713,20 +711,20 @@ export class IsolatedPerpsLiveTradingEngine extends BaseTradingMode {
 
         return [
           {
-            positionId: position.position_id,
-            pairId: position.trading_pair_id,
+            positionId: position.positionId,
+            pairId: position.tradingPairId,
             side: position.side === "SHORT" ? "short" : "long",
             size: parseScaledDecimal(position.size),
-            entryPrice: parseScaledDecimal(position.entry_price),
-            markPrice: parseScaledDecimal(position.mark_price),
-            collateral: parseScaledDecimal(position.isolated_margin),
+            entryPrice: parseScaledDecimal(position.entryPrice),
+            markPrice: parseScaledDecimal(position.markPrice),
+            collateral: parseScaledDecimal(position.isolatedMargin),
             maintenanceMargin: parseScaledDecimal(
-              position.maintenance_margin_required,
+              position.maintenanceMarginRequired,
             ),
-            liquidationPrice: parseScaledDecimal(position.liquidation_price),
-            realizedPnL: parseScaledDecimal(position.realized_pnl),
+            liquidationPrice: parseScaledDecimal(position.liquidationPrice),
+            realizedPnL: parseScaledDecimal(position.realizedPnl),
             unrealizedPnL:
-              parseScaledDecimal(position.unrealized_pnl) - accruedFunding,
+              parseScaledDecimal(position.unrealizedPnl) - accruedFunding,
             fees: 0n,
             leverage: parseNumeric(position.leverage),
             fundingRate,
@@ -747,8 +745,8 @@ export class IsolatedPerpsLiveTradingEngine extends BaseTradingMode {
 
     if (!this.fundingStateProvider) {
       for (const position of positions) {
-        if (position.trading_pair_id) {
-          states.set(position.trading_pair_id, {
+        if (position.tradingPairId) {
+          states.set(position.tradingPairId, {
             status: "unsupported",
             warning: UNSUPPORTED_FUNDING_WARNING,
           });
@@ -763,11 +761,11 @@ export class IsolatedPerpsLiveTradingEngine extends BaseTradingMode {
 
     await Promise.all(
       positions.map(async (position) => {
-        if (!position.trading_pair_id) {
+        if (!position.tradingPairId) {
           return;
         }
 
-        const tradingPairId = position.trading_pair_id;
+        const tradingPairId = position.tradingPairId;
 
         try {
           const snapshot = await this.fundingStateProvider?.({

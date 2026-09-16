@@ -4,6 +4,53 @@ import { createLogger } from "./runtime-utils";
 
 const logger = createLogger("TradingPairResolver");
 
+function normalizeTradingPair(value: unknown): ResolvedTradingPair | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+
+  const pair = value as Record<string, unknown>;
+  const readString = (camel: string, snake: string): string => {
+    const field = pair[camel] ?? pair[snake];
+    return typeof field === "string" ? field : "";
+  };
+  const readNumber = (camel: string, snake: string): number => {
+    const field = pair[camel] ?? pair[snake];
+    return typeof field === "number" && Number.isFinite(field) ? field : 0;
+  };
+
+  const normalized: ResolvedTradingPair = {
+    id: readString("id", "id"),
+    symbol: readString("symbol", "symbol"),
+    base_token: readString("baseToken", "base_token"),
+    quote_token: readString("quoteToken", "quote_token"),
+    base_token_contract: readString("baseTokenContract", "base_token_contract"),
+    quote_token_contract: readString(
+      "quoteTokenContract",
+      "quote_token_contract",
+    ),
+    base_decimals: readNumber("baseDecimals", "base_decimals"),
+    quote_decimals: readNumber("quoteDecimals", "quote_decimals"),
+    market_type: readString("marketType", "market_type"),
+    is_active: Boolean(pair.isActive ?? pair.is_active),
+    maker_fee_bps: readNumber("makerFeeBps", "maker_fee_bps"),
+    taker_fee_bps: readNumber("takerFeeBps", "taker_fee_bps"),
+    min_order_size: readString("minOrderSize", "min_order_size"),
+    max_order_size: readString("maxOrderSize", "max_order_size"),
+    quantity_step_size: readString("quantityStepSize", "quantity_step_size"),
+    tick_size: readString("tickSize", "tick_size"),
+  };
+
+  const baseAssetId = readString("baseAssetId", "base_asset_id");
+  const quoteAssetId = readString("quoteAssetId", "quote_asset_id");
+  if (baseAssetId) normalized.base_asset_id = baseAssetId;
+  if (quoteAssetId) normalized.quote_asset_id = quoteAssetId;
+
+  return normalized.id && normalized.symbol && normalized.market_type
+    ? normalized
+    : undefined;
+}
+
 function normalizeTradingPairsResponse(
   response: unknown,
 ): ResolvedTradingPair[] | undefined {
@@ -11,37 +58,28 @@ function normalizeTradingPairsResponse(
     return undefined;
   }
 
-  const body = response as {
-    trading_pairs?: unknown;
-    data?: unknown;
-  };
+  const body = response as Record<string, unknown>;
+  const nested =
+    body.data && typeof body.data === "object" && !Array.isArray(body.data)
+      ? (body.data as Record<string, unknown>)
+      : undefined;
+  const candidates = [
+    body.tradingPairs,
+    body.trading_pairs,
+    Array.isArray(body.data) ? body.data : undefined,
+    nested?.tradingPairs,
+    nested?.trading_pairs,
+    nested?.data,
+  ];
+  const rows = candidates.find(Array.isArray);
 
-  if (Array.isArray(body.trading_pairs)) {
-    return body.trading_pairs as ResolvedTradingPair[];
-  }
-
-  if (Array.isArray(body.data)) {
-    return body.data as ResolvedTradingPair[];
-  }
-
-  if (!body.data || typeof body.data !== "object") {
+  if (!rows) {
     return undefined;
   }
 
-  const nested = body.data as {
-    trading_pairs?: unknown;
-    data?: unknown;
-  };
-
-  if (Array.isArray(nested.trading_pairs)) {
-    return nested.trading_pairs as ResolvedTradingPair[];
-  }
-
-  if (Array.isArray(nested.data)) {
-    return nested.data as ResolvedTradingPair[];
-  }
-
-  return undefined;
+  return rows
+    .map((pair) => normalizeTradingPair(pair))
+    .filter((pair): pair is ResolvedTradingPair => pair !== undefined);
 }
 
 function getTradingPairsTotalPages(response: unknown): number | undefined {
@@ -63,12 +101,15 @@ function getTradingPairsTotalPages(response: unknown): number | undefined {
   };
 
   const body = response as {
+    totalPages?: unknown;
     total_pages?: unknown;
     total?: unknown;
     data?: unknown;
   };
 
-  const totalFromBody = parseNumber(body.total_pages ?? body.total);
+  const totalFromBody = parseNumber(
+    body.totalPages ?? body.total_pages ?? body.total,
+  );
   if (totalFromBody !== undefined) {
     return totalFromBody;
   }
@@ -78,11 +119,12 @@ function getTradingPairsTotalPages(response: unknown): number | undefined {
   }
 
   const nested = body.data as {
+    totalPages?: unknown;
     total_pages?: unknown;
     total?: unknown;
   };
 
-  return parseNumber(nested.total_pages ?? nested.total);
+  return parseNumber(nested.totalPages ?? nested.total_pages ?? nested.total);
 }
 
 function filterSpotTradingPairs(
@@ -110,6 +152,7 @@ export interface ResolvedTradingPair {
   taker_fee_bps: number;
   min_order_size: string;
   max_order_size: string;
+  quantity_step_size: string;
   tick_size: string;
 }
 
@@ -160,8 +203,8 @@ export class TradingPairResolver {
     while (page <= totalPages) {
       const response = await this.sdk.market.getPaginatedTradingPairs({
         page,
-        page_size: 100,
-        is_active: true,
+        pageSize: 100,
+        isActive: true,
       });
 
       const tradingPairs = normalizeTradingPairsResponse(response);

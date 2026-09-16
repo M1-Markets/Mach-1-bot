@@ -143,17 +143,9 @@ test("perp order helpers normalize to Monaco trading and position contracts", as
     status: "SUCCESS",
     submitted_quantity: "0.4",
   };
-  const reduceResponse = {
-    margin_account_id: "margin-1",
-    message: "reduce ok",
-    new_isolated_margin: "150",
-    position_id: "position-1",
-    status: "SUCCESS",
-  };
   const orderCalls = [];
   let capturedCancelOrderId;
   let capturedCloseArgs;
-  let capturedReduceArgs;
 
   sdk.trading.placeLimitOrder = async (...args) => {
     orderCalls.push(["limit", args]);
@@ -170,10 +162,6 @@ test("perp order helpers normalize to Monaco trading and position contracts", as
   sdk.positions.closePosition = async (...args) => {
     capturedCloseArgs = args;
     return closeResponse;
-  };
-  sdk.positions.reducePositionMargin = async (...args) => {
-    capturedReduceArgs = args;
-    return reduceResponse;
   };
 
   await sdk.perps.placeLimitOrder({
@@ -214,7 +202,6 @@ test("perp order helpers normalize to Monaco trading and position contracts", as
     quantity: "0.4",
     slippageToleranceBps: 25,
   });
-  await sdk.perps.reducePositionMargin("position-1", { amount: "50" });
 
   assert.deepEqual(orderCalls, [
     [
@@ -271,12 +258,6 @@ test("perp order helpers normalize to Monaco trading and position contracts", as
       closeType: "IOC",
       quantity: "0.4",
       slippageToleranceBps: 25,
-    },
-  ]);
-  assert.deepEqual(capturedReduceArgs, [
-    "position-1",
-    {
-      amount: "50",
     },
   ]);
 });

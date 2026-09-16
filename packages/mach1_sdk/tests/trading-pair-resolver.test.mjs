@@ -46,10 +46,62 @@ test("TradingPairResolver normalizes nested Monaco API responses", async () => {
   });
 
   assert.equal(callCount, 1);
-  assert.deepEqual(lastParams, { page: 1, page_size: 100, is_active: true });
+  assert.deepEqual(lastParams, { page: 1, pageSize: 100, isActive: true });
   assert.equal(resolver.isReady(), true);
   assert.equal(resolver.resolveSymbolToId("BTC/USDC"), "pair-1");
   assert.equal(resolver.getAllPairs().length, 1);
+
+  resolver.shutdown();
+});
+
+test("TradingPairResolver normalizes Monaco 1.0.60 camelCase responses", async () => {
+  const resolver = new TradingPairResolver();
+
+  await resolver.initialize({
+    market: {
+      async getPaginatedTradingPairs() {
+        return {
+          tradingPairs: [
+            {
+              id: "pair-modern",
+              symbol: "ETH/USDC",
+              baseToken: "ETH",
+              quoteToken: "USDC",
+              baseAssetId: "eth",
+              quoteAssetId: "usdc",
+              baseTokenContract: "0x1111111111111111111111111111111111111111",
+              quoteTokenContract: "0x2222222222222222222222222222222222222222",
+              baseDecimals: 18,
+              quoteDecimals: 6,
+              marketType: "SPOT",
+              isActive: true,
+              makerFeeBps: 1,
+              takerFeeBps: 2,
+              minOrderSize: "0.001",
+              maxOrderSize: "1000",
+              quantityStepSize: "0.00001",
+              tickSize: "0.01",
+            },
+          ],
+          page: 1,
+          pageSize: 100,
+          total: 1,
+          totalPages: 1,
+        };
+      },
+    },
+  });
+
+  assert.equal(resolver.resolveSymbolToId("ETH/USDC"), "pair-modern");
+  assert.equal(resolver.getPairById("pair-modern")?.base_token, "ETH");
+  assert.equal(
+    resolver.getPairById("pair-modern")?.quantity_step_size,
+    "0.00001",
+  );
+  assert.equal(
+    resolver.getPairById("pair-modern")?.base_token_contract,
+    "0x1111111111111111111111111111111111111111",
+  );
 
   resolver.shutdown();
 });

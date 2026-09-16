@@ -1,7 +1,6 @@
 import type { Command } from "commander";
 import {
   buildMonacoSessionHeaders,
-  CreateMarginAccountResponse,
   type DelegatedAgent,
   GetAvailableCollateralResponse,
   GetUserBalancesResponse,
@@ -60,9 +59,9 @@ import {
   fetchWalletBalance,
   fetchWalletBalancesForCatalog,
   findSwapRoute,
-  formatDecimalAmount,
   formatEstimatedAmount,
   formatFaucetResponse,
+  formatStepAlignedAmount,
   getBestPrices,
   getCatalogEntryByAddress,
   isZeroAddress,
@@ -220,10 +219,17 @@ const parseProfileBalances = (
       if (!isRecord(entry)) {
         return undefined;
       }
-      const assetId = getStringProp(entry, "asset_id");
-      const available = getStringProp(entry, "available_balance");
-      const total = getStringProp(entry, "total_balance");
-      const locked = getStringProp(entry, "locked_balance");
+      const assetId =
+        getStringProp(entry, "assetId") ?? getStringProp(entry, "asset_id");
+      const available =
+        getStringProp(entry, "availableBalance") ??
+        getStringProp(entry, "available_balance");
+      const total =
+        getStringProp(entry, "totalBalance") ??
+        getStringProp(entry, "total_balance");
+      const locked =
+        getStringProp(entry, "lockedBalance") ??
+        getStringProp(entry, "locked_balance");
       if (!assetId || !available || !total || !locked) {
         return undefined;
       }
@@ -336,7 +342,9 @@ const parseMarginAccountId = (
       continue;
     }
 
-    const marginAccountId = getStringProp(account, "margin_account_id");
+    const marginAccountId =
+      getStringProp(account, "marginAccountId") ??
+      getStringProp(account, "margin_account_id");
     if (marginAccountId) {
       return marginAccountId;
     }
@@ -357,7 +365,9 @@ const parseMarginAccountRows = (
       return [];
     }
 
-    const marginAccountId = getStringProp(account, "margin_account_id");
+    const marginAccountId =
+      getStringProp(account, "marginAccountId") ??
+      getStringProp(account, "margin_account_id");
     if (!marginAccountId) {
       return [];
     }
@@ -366,45 +376,30 @@ const parseMarginAccountRows = (
       {
         marginAccountId,
         label: getStringProp(account, "label") ?? "",
-        state: getStringProp(account, "account_state") ?? "unknown",
+        state:
+          getStringProp(account, "accountState") ??
+          getStringProp(account, "account_state") ??
+          "unknown",
         collateralAsset:
-          getStringProp(account, "collateral_asset") ?? "unavailable",
+          getStringProp(account, "collateralAsset") ??
+          getStringProp(account, "collateral_asset") ??
+          "unavailable",
         equity: getStringProp(account, "equity") ?? "0",
-        freeCollateral: getStringProp(account, "free_collateral") ?? "0",
+        freeCollateral:
+          getStringProp(account, "freeCollateral") ??
+          getStringProp(account, "free_collateral") ??
+          "0",
         withdrawableCollateral:
-          getStringProp(account, "withdrawable_collateral") ?? "0",
-        updatedAt: getStringProp(account, "updated_at") ?? "unavailable",
+          getStringProp(account, "withdrawableCollateral") ??
+          getStringProp(account, "withdrawable_collateral") ??
+          "0",
+        updatedAt:
+          getStringProp(account, "updatedAt") ??
+          getStringProp(account, "updated_at") ??
+          "unavailable",
       },
     ];
   });
-};
-
-const parseCreatedMarginAccount = (
-  response: CreateMarginAccountResponse,
-): MarginAccountListRow => {
-  traceMonacoApiPayload("marginAccounts.createMarginAccount", response);
-  if (!isRecord(response)) {
-    throw new Error("Create margin account response is not an object.");
-  }
-
-  const marginAccountId = getStringProp(response, "margin_account_id");
-  if (!marginAccountId) {
-    throw new Error(
-      "Create margin account response missing margin_account_id.",
-    );
-  }
-
-  return {
-    marginAccountId,
-    label: getStringProp(response, "label") ?? "",
-    state: getStringProp(response, "account_state") ?? "unknown",
-    collateralAsset:
-      getStringProp(response, "collateral_asset") ?? "unavailable",
-    equity: "0",
-    freeCollateral: "0",
-    withdrawableCollateral: "0",
-    updatedAt: getStringProp(response, "created_at") ?? "unavailable",
-  };
 };
 
 const parseDelegatedAgents = (
@@ -419,10 +414,10 @@ const parseDelegatedAgents = (
     (agent): agent is DelegatedAgent =>
       isRecord(agent) &&
       typeof agent.id === "string" &&
-      typeof agent.agent_address === "string" &&
-      Array.isArray(agent.allowed_actions) &&
-      Array.isArray(agent.allowed_trading_pair_ids) &&
-      Array.isArray(agent.allowed_margin_account_ids),
+      typeof agent.agentAddress === "string" &&
+      Array.isArray(agent.allowedActions) &&
+      Array.isArray(agent.allowedTradingPairIds) &&
+      Array.isArray(agent.allowedMarginAccountIds),
   );
 
   if (response.agents.length > 0 && parsed.length === 0) {
@@ -545,20 +540,24 @@ const parseTransferCollateral = (
     throw new Error("Transfer collateral response is not an object.");
   }
 
-  const movementId = getStringProp(response, "movement_id");
-  const marginAccountId = getStringProp(response, "margin_account_id");
+  const movementId =
+    getStringProp(response, "movementId") ??
+    getStringProp(response, "movement_id");
+  const marginAccountId =
+    getStringProp(response, "marginAccountId") ??
+    getStringProp(response, "margin_account_id");
   const asset = getStringProp(response, "asset");
   const amount = getStringProp(response, "amount");
   const status = getStringProp(response, "status");
-  const newEquity = getStringProp(response, "new_equity");
-  const newTotalCollateralValue = getStringProp(
-    response,
-    "new_total_collateral_value",
-  );
-  const newWithdrawableCollateral = getStringProp(
-    response,
-    "new_withdrawable_collateral",
-  );
+  const newEquity =
+    getStringProp(response, "newEquity") ??
+    getStringProp(response, "new_equity");
+  const newTotalCollateralValue =
+    getStringProp(response, "newTotalCollateralValue") ??
+    getStringProp(response, "new_total_collateral_value");
+  const newWithdrawableCollateral =
+    getStringProp(response, "newWithdrawableCollateral") ??
+    getStringProp(response, "new_withdrawable_collateral");
 
   if (
     !movementId ||
@@ -576,14 +575,14 @@ const parseTransferCollateral = (
   }
 
   return {
-    movement_id: movementId,
-    margin_account_id: marginAccountId,
+    movementId,
+    marginAccountId,
     asset,
     amount,
     status,
-    new_equity: newEquity,
-    new_total_collateral_value: newTotalCollateralValue,
-    new_withdrawable_collateral: newWithdrawableCollateral,
+    newEquity,
+    newTotalCollateralValue,
+    newWithdrawableCollateral,
   };
 };
 
@@ -596,8 +595,12 @@ const parseAvailableCollateral = (
   }
 
   const asset = getStringProp(response, "asset");
-  const walletAvailable = getStringProp(response, "wallet_available");
-  const walletLocked = getStringProp(response, "wallet_locked");
+  const walletAvailable =
+    getStringProp(response, "walletAvailable") ??
+    getStringProp(response, "wallet_available");
+  const walletLocked =
+    getStringProp(response, "walletLocked") ??
+    getStringProp(response, "wallet_locked");
   if (!asset || !walletAvailable || !walletLocked) {
     throw new Error(
       "Available collateral response missing required Monaco fields.",
@@ -606,10 +609,12 @@ const parseAvailableCollateral = (
 
   return {
     asset,
-    wallet_available: walletAvailable,
-    wallet_locked: walletLocked,
-    margin_transferable:
-      getStringProp(response, "margin_transferable") ?? undefined,
+    walletAvailable,
+    walletLocked,
+    marginTransferable:
+      getStringProp(response, "marginTransferable") ??
+      getStringProp(response, "margin_transferable") ??
+      undefined,
   };
 };
 
@@ -649,14 +654,30 @@ const parseMarginAccountSummary = (
   return {
     marginAccountId,
     equity: getStringProp(summary, "equity") ?? "0",
-    freeCollateral: getStringProp(summary, "free_collateral") ?? "0",
-    usedMargin: getStringProp(summary, "initial_margin_required") ?? "0",
+    freeCollateral:
+      getStringProp(summary, "freeCollateral") ??
+      getStringProp(summary, "free_collateral") ??
+      "0",
+    usedMargin:
+      getStringProp(summary, "initialMarginRequired") ??
+      getStringProp(summary, "initial_margin_required") ??
+      "0",
     maintenanceMargin:
-      getStringProp(summary, "maintenance_margin_required") ?? "0",
+      getStringProp(summary, "maintenanceMarginRequired") ??
+      getStringProp(summary, "maintenance_margin_required") ??
+      "0",
     withdrawableCollateral:
-      getStringProp(summary, "withdrawable_collateral") ?? "0",
-    realizedPnl: getStringProp(summary, "realized_pnl") ?? "0",
-    unrealizedPnl: getStringProp(summary, "unrealized_pnl") ?? "0",
+      getStringProp(summary, "withdrawableCollateral") ??
+      getStringProp(summary, "withdrawable_collateral") ??
+      "0",
+    realizedPnl:
+      getStringProp(summary, "realizedPnl") ??
+      getStringProp(summary, "realized_pnl") ??
+      "0",
+    unrealizedPnl:
+      getStringProp(summary, "unrealizedPnl") ??
+      getStringProp(summary, "unrealized_pnl") ??
+      "0",
   };
 };
 
@@ -673,7 +694,9 @@ const parsePerpsPositions = (
       return [];
     }
 
-    const tradingPairId = getStringProp(position, "trading_pair_id");
+    const tradingPairId =
+      getStringProp(position, "tradingPairId") ??
+      getStringProp(position, "trading_pair_id");
     const side = getStringProp(position, "side");
     const size = getStringProp(position, "size");
     if (!tradingPairId || !side || !size) {
@@ -685,16 +708,35 @@ const parsePerpsPositions = (
         tradingPairId,
         side,
         size,
-        entryPrice: getStringProp(position, "entry_price") ?? "0",
-        markPrice: getStringProp(position, "mark_price") ?? "0",
+        entryPrice:
+          getStringProp(position, "entryPrice") ??
+          getStringProp(position, "entry_price") ??
+          "0",
+        markPrice:
+          getStringProp(position, "markPrice") ??
+          getStringProp(position, "mark_price") ??
+          "0",
         leverage: getStringProp(position, "leverage") ?? "unavailable",
-        collateral: getStringProp(position, "isolated_margin") ?? "0",
-        unrealizedPnl: getStringProp(position, "unrealized_pnl") ?? "0",
+        collateral:
+          getStringProp(position, "isolatedMargin") ??
+          getStringProp(position, "isolated_margin") ??
+          "0",
+        unrealizedPnl:
+          getStringProp(position, "unrealizedPnl") ??
+          getStringProp(position, "unrealized_pnl") ??
+          "0",
         liquidationPrice:
-          getStringProp(position, "liquidation_price") ?? "unavailable",
-        fundingRate: getStringProp(position, "funding_rate") ?? "unavailable",
+          getStringProp(position, "liquidationPrice") ??
+          getStringProp(position, "liquidation_price") ??
+          "unavailable",
+        fundingRate:
+          getStringProp(position, "fundingRate") ??
+          getStringProp(position, "funding_rate") ??
+          "unavailable",
         accruedFunding:
-          getStringProp(position, "accrued_funding") ?? "unavailable",
+          getStringProp(position, "accruedFunding") ??
+          getStringProp(position, "accrued_funding") ??
+          "unavailable",
       },
     ];
   });
@@ -710,7 +752,7 @@ const fetchLivePerpsResult = async (
         marginAccountId: string,
       ) => Promise<MarginAccountSummary>;
       listOpenPositions: (params?: {
-        margin_account_id?: string;
+        marginAccountId?: string;
       }) => Promise<ListPositionsResponse>;
     };
   },
@@ -733,7 +775,7 @@ const fetchLivePerpsResult = async (
 
   onStatus("Fetching open perps positions");
   const rawPositions = await sdk.perps.listOpenPositions({
-    margin_account_id: marginAccountId,
+    marginAccountId,
   });
 
   return {
@@ -1010,12 +1052,7 @@ export const registerLiveCommands = (liveCommand: Command): void => {
 
   marginAccountCommand
     .command("create")
-    .description("Create isolated perps margin account")
-    .option("--label <label>", "Optional account label")
-    .option(
-      "--collateral-asset <asset>",
-      "Optional collateral asset symbol or asset id",
-    )
+    .description("Resolve the auto-provisioned Monaco parent margin account")
     .option(
       "-c, --config <file>",
       "Configuration file path",
@@ -1038,16 +1075,15 @@ export const registerLiveCommands = (liveCommand: Command): void => {
         await withMonacoSession(
           prepared,
           async ({ sdk }) => {
-            logBalanceStatus("Creating isolated margin account");
-            const created = parseCreatedMarginAccount(
-              await sdk.marginAccounts.createMarginAccount({
-                label: options.label,
-                collateralAsset: options.collateralAsset,
-              }),
+            logBalanceStatus("Resolving parent margin account");
+            const summary =
+              await sdk.marginAccounts.getParentMarginAccountSummary();
+            console.log(pc.cyan("Parent Margin Account"));
+            console.log(
+              JSON.stringify(
+                parseMarginAccountSummary(summary.marginAccountId, summary),
+              ),
             );
-
-            console.log(pc.cyan("Created Margin Account"));
-            console.log(JSON.stringify(created));
           },
           logBalanceStatus,
           {
@@ -1057,14 +1093,9 @@ export const registerLiveCommands = (liveCommand: Command): void => {
         );
       } catch (error) {
         exitCode = 1;
-        logBalanceStatus("Margin account create failed");
-        console.error(
-          pc.red(
-            `❌ Failed to create margin account: ${
-              error instanceof Error ? error.message : String(error)
-            }`,
-          ),
-        );
+        logBalanceStatus("Margin account resolution failed");
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(pc.red("Failed to resolve margin account: " + message));
       } finally {
         process.exit(exitCode);
       }
@@ -1232,7 +1263,7 @@ export const registerLiveCommands = (liveCommand: Command): void => {
             console.log(
               JSON.stringify({
                 id: selectedAgent.id,
-                address: selectedAgent.agent_address,
+                address: selectedAgent.agentAddress,
                 name: selectedAgent.name ?? "",
               }),
             );
@@ -1365,7 +1396,7 @@ export const registerLiveCommands = (liveCommand: Command): void => {
             console.log(pc.gray(`   Asset ID: ${assetId}`));
             console.log(pc.gray(`   Margin Account: ${marginAccountId}`));
             console.log(
-              pc.gray(`   Movement ID: ${transferResult.movement_id}`),
+              pc.gray(`   Movement ID: ${transferResult.movementId}`),
             );
             console.log(pc.gray(`   Status: ${transferResult.status}`));
             return;
@@ -1374,7 +1405,7 @@ export const registerLiveCommands = (liveCommand: Command): void => {
           const collateral = parseAvailableCollateral(
             await sdk.perps.getAvailableCollateral({ asset: assetId }),
           );
-          const transferable = collateral.margin_transferable ?? "0";
+          const transferable = collateral.marginTransferable ?? "0";
           const transferableRaw = parseUnits(transferable, decimals);
           if (transferableRaw < amount) {
             throw new Error(
@@ -1398,7 +1429,7 @@ export const registerLiveCommands = (liveCommand: Command): void => {
           console.log(pc.gray(`   Amount: ${options.amount}`));
           console.log(pc.gray(`   Asset ID: ${assetId}`));
           console.log(pc.gray(`   Margin Account: ${marginAccountId}`));
-          console.log(pc.gray(`   Movement ID: ${transferResult.movement_id}`));
+          console.log(pc.gray(`   Movement ID: ${transferResult.movementId}`));
           console.log(pc.gray(`   Status: ${transferResult.status}`));
         });
       } catch (error) {
@@ -1770,7 +1801,7 @@ export const registerLiveCommands = (liveCommand: Command): void => {
                 console.log(pc.green("✅ Perps transfer processed"));
                 console.log(pc.gray(`   Margin Account: ${marginAccountId}`));
                 console.log(
-                  pc.gray(`   Movement ID: ${transferResult.movement_id}`),
+                  pc.gray(`   Movement ID: ${transferResult.movementId}`),
                 );
                 console.log(pc.gray(`   Status: ${transferResult.status}`));
               }
@@ -1945,7 +1976,7 @@ export const registerLiveCommands = (liveCommand: Command): void => {
             console.log(pc.green("✅ Perps transfer processed"));
             console.log(pc.gray(`   Margin Account: ${marginAccountId}`));
             console.log(
-              pc.gray(`   Movement ID: ${transferResult.movement_id}`),
+              pc.gray(`   Movement ID: ${transferResult.movementId}`),
             );
             console.log(pc.gray(`   Status: ${transferResult.status}`));
           }
@@ -2145,7 +2176,7 @@ export const registerLiveCommands = (liveCommand: Command): void => {
             const collateral = parseAvailableCollateral(
               await sdk.perps.getAvailableCollateral({ asset: assetId }),
             );
-            maxFormatted = collateral.margin_transferable ?? "0";
+            maxFormatted = collateral.marginTransferable ?? "0";
             const transferableRaw = parseUnits(maxFormatted, decimals);
             if (transferableRaw <= 0n) {
               throw new Error(
@@ -2207,13 +2238,14 @@ export const registerLiveCommands = (liveCommand: Command): void => {
             console.log(pc.green("✅ Perps transfer processed"));
             console.log(pc.gray(`   Margin Account: ${marginAccountId}`));
             console.log(
-              pc.gray(`   Movement ID: ${transferResult.movement_id}`),
+              pc.gray(`   Movement ID: ${transferResult.movementId}`),
             );
             console.log(pc.gray(`   Status: ${transferResult.status}`));
           }
 
           console.log(pc.cyan("📤 Submitting withdrawal..."));
           const withdrawResult = await vault.withdraw(assetId, amount, true);
+          const withdrawHash = withdrawResult.hash ?? "unavailable";
 
           const statusIcon =
             withdrawResult.status === "confirmed"
@@ -2227,18 +2259,18 @@ export const registerLiveCommands = (liveCommand: Command): void => {
           console.log(
             pc.gray(`   Amount: ${amountInput} (raw: ${amount.toString()})`),
           );
-          console.log(pc.gray(`   Tx Hash: ${withdrawResult.hash}`));
-          console.log(
-            pc.gray(`   Tx Url: ${buildSeiscanTxUrl(withdrawResult.hash)}`),
-          );
+          console.log(pc.gray(`   Tx Hash: ${withdrawHash}`));
+          console.log(pc.gray(`   Tx Url: ${buildSeiscanTxUrl(withdrawHash)}`));
           console.log(pc.gray(`   Status: ${withdrawResult.status}`));
-          console.log(pc.gray(`   Nonce: ${withdrawResult.nonce.toString()}`));
+          console.log(
+            pc.gray(`   Nonce: ${(withdrawResult.nonce ?? 0n).toString()}`),
+          );
           withdrawUi.update({
             ...baseUiState,
             stage: withdrawResult.status === "confirmed" ? "done" : "error",
             status: withdrawResult.status,
-            withdrawTxHash: withdrawResult.hash,
-            withdrawTxUrl: buildSeiscanTxUrl(withdrawResult.hash),
+            withdrawTxHash: withdrawHash,
+            withdrawTxUrl: buildSeiscanTxUrl(withdrawHash),
           });
 
           if (withdrawResult.status !== "confirmed") {
@@ -2463,9 +2495,10 @@ export const registerLiveCommands = (liveCommand: Command): void => {
             }
             const baseDecimals =
               step.side === "SELL" ? step.input.decimals : step.output.decimals;
-            const quantityString = formatDecimalAmount(
+            const quantityString = formatStepAlignedAmount(
               baseQuantity,
               baseDecimals,
+              step.pair.quantity_step_size,
             );
 
             legs.push({
@@ -2527,7 +2560,7 @@ export const registerLiveCommands = (liveCommand: Command): void => {
 
             console.log(
               pc.gray(
-                `   Order: ${result.order_id} | Status: ${result.status} | Message: ${result.message}`,
+                `   Order: ${result.orderId} | Status: ${result.status} | Message: ${result.message}`,
               ),
             );
 

@@ -15,15 +15,19 @@ import type {
   MarginAccountSummary,
   OrderSide,
   ParentTpSlLegParams,
-  PositionMarginResponse,
   PositionSide,
-  ReducePositionMarginRequest,
+  SessionCredentials,
   SimulateOrderRiskRequest,
   SimulateOrderRiskResponse,
   TimeInForce,
 } from "@0xmonaco/types";
 import { StatusCodes } from "http-status-codes";
-import { createPublicClient, http, type WalletClient } from "viem";
+import {
+  createPublicClient,
+  http,
+  type PublicClient,
+  type WalletClient,
+} from "viem";
 import { sei, seiTestnet } from "viem/chains";
 import { ApplicationsAPIImpl } from "./api/applications/index";
 import { AuthAPIImpl } from "./api/auth/index";
@@ -48,7 +52,6 @@ import {
 } from "./errors/index";
 import { EMBEDDED_KEY_MATERIAL } from "./internal/embedded-key-material";
 import { resolveApiUrl, resolveWsUrl } from "./networks/index";
-import type { SessionCredentials } from "@0xmonaco/types";
 
 export type { Interval } from "@0xmonaco/types";
 
@@ -114,7 +117,7 @@ export interface IsolatedMarginPerpsAPI {
   ): Promise<ListPositionsResponse>;
   getPosition(positionId: string): Promise<GetPositionResponse>;
   listOrders(
-    params?: Omit<GetPaginatedOrdersParams, "trading_mode">,
+    params?: Omit<GetPaginatedOrdersParams, "tradingMode">,
   ): Promise<GetPaginatedOrdersResponse>;
   placeLimitOrder(
     request: IsolatedMarginPerpLimitOrderRequest,
@@ -127,10 +130,6 @@ export interface IsolatedMarginPerpsAPI {
     positionId: string,
     request: ClosePositionRequest,
   ): Promise<ClosePositionResponse>;
-  reducePositionMargin(
-    positionId: string,
-    request: ReducePositionMarginRequest,
-  ): Promise<PositionMarginResponse>;
 }
 
 class IsolatedMarginPerpsAPIImpl implements IsolatedMarginPerpsAPI {
@@ -179,11 +178,11 @@ class IsolatedMarginPerpsAPIImpl implements IsolatedMarginPerpsAPI {
   }
 
   listOrders(
-    params?: Omit<GetPaginatedOrdersParams, "trading_mode">,
+    params?: Omit<GetPaginatedOrdersParams, "tradingMode">,
   ): Promise<GetPaginatedOrdersResponse> {
     return this.trading.getPaginatedOrders({
       ...params,
-      trading_mode: "MARGIN",
+      tradingMode: "MARGIN",
     });
   }
 
@@ -239,13 +238,6 @@ class IsolatedMarginPerpsAPIImpl implements IsolatedMarginPerpsAPI {
   ): Promise<ClosePositionResponse> {
     return this.positions.closePosition(positionId, request);
   }
-
-  reducePositionMargin(
-    positionId: string,
-    request: ReducePositionMarginRequest,
-  ): Promise<PositionMarginResponse> {
-    return this.positions.reducePositionMargin(positionId, request);
-  }
 }
 
 export type Mach1SDK = {
@@ -264,7 +256,7 @@ export type Mach1SDK = {
   perps: IsolatedMarginPerpsAPI;
   ws: MonacoWebSocket;
   walletClient: SDKConfig["walletClient"];
-  publicClient: ReturnType<typeof createPublicClient>;
+  publicClient: PublicClient;
   login(options?: LoginOptions): Promise<AuthState>;
   logout(): Promise<void>;
   refreshAuth(): Promise<AuthState>;
@@ -298,7 +290,7 @@ export class Mach1SDKImpl implements Mach1SDK {
   readonly trades;
   readonly perps;
   readonly ws;
-  readonly publicClient;
+  readonly publicClient: PublicClient;
 
   walletClient: SDKConfig["walletClient"];
 
@@ -362,7 +354,7 @@ export class Mach1SDKImpl implements Mach1SDK {
     this.fees = new FeesAPIImpl(apiUrl);
     this.profile = new ProfileAPIImpl(apiUrl);
     this.vault = new VaultAPIImpl(
-      this.publicClient,
+      this.publicClient as ConstructorParameters<typeof VaultAPIImpl>[0],
       this.walletClient,
       this.chain,
       this.applications,

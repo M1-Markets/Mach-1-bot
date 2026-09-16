@@ -59,9 +59,14 @@ function normalizeTradingPairsResponse(
   }
 
   const body = response as {
+    tradingPairs?: unknown;
     trading_pairs?: unknown;
     data?: unknown;
   };
+
+  if (Array.isArray(body.tradingPairs)) {
+    return body.tradingPairs as MonacoTradingPair[];
+  }
 
   if (Array.isArray(body.trading_pairs)) {
     return body.trading_pairs as MonacoTradingPair[];
@@ -76,9 +81,14 @@ function normalizeTradingPairsResponse(
   }
 
   const nested = body.data as {
+    tradingPairs?: unknown;
     trading_pairs?: unknown;
     data?: unknown;
   };
+
+  if (Array.isArray(nested.tradingPairs)) {
+    return nested.tradingPairs as MonacoTradingPair[];
+  }
 
   if (Array.isArray(nested.trading_pairs)) {
     return nested.trading_pairs as MonacoTradingPair[];
@@ -110,12 +120,15 @@ function getTradingPairsTotalPages(response: unknown): number | undefined {
   };
 
   const body = response as {
+    totalPages?: unknown;
     total_pages?: unknown;
     total?: unknown;
     data?: unknown;
   };
 
-  const totalFromBody = parseNumber(body.total_pages ?? body.total);
+  const totalFromBody = parseNumber(
+    body.totalPages ?? body.total_pages ?? body.total,
+  );
   if (totalFromBody !== undefined) {
     return totalFromBody;
   }
@@ -125,11 +138,12 @@ function getTradingPairsTotalPages(response: unknown): number | undefined {
   }
 
   const nested = body.data as {
+    totalPages?: unknown;
     total_pages?: unknown;
     total?: unknown;
   };
 
-  return parseNumber(nested.total_pages ?? nested.total);
+  return parseNumber(nested.totalPages ?? nested.total_pages ?? nested.total);
 }
 
 function normalizeRequestedMarketType(
@@ -151,7 +165,7 @@ function filterTradingPairsByMarketType(
   marketType: "SPOT" | "MARGIN",
 ): MonacoTradingPair[] {
   return tradingPairs.filter(
-    (pair) => pair.market_type?.toUpperCase() === marketType,
+    (pair) => pair.marketType?.toUpperCase() === marketType,
   );
 }
 
@@ -405,8 +419,14 @@ export class MarketManager {
     return {
       normalizedSymbol,
       tradingPairId: resolvedPair.id,
-      baseDecimals: resolvedPair.base_decimals,
-      quoteDecimals: resolvedPair.quote_decimals,
+      baseDecimals:
+        "base_decimals" in resolvedPair
+          ? resolvedPair.base_decimals
+          : resolvedPair.baseDecimals,
+      quoteDecimals:
+        "quote_decimals" in resolvedPair
+          ? resolvedPair.quote_decimals
+          : resolvedPair.quoteDecimals,
     };
   }
 
@@ -656,23 +676,23 @@ export class MarketManager {
 
         return {
           price: this.parseLiveUnits(
-            metadata.last_price,
+            metadata.lastPrice,
             livePair.quoteDecimals,
             "ticker last price",
           ),
           volume24h: this.parseLiveUnits(
-            metadata.volume_24h ?? "0",
+            metadata.volume24h ?? "0",
             livePair.baseDecimals,
             "ticker 24h volume",
           ),
-          change24h: Number(metadata.price_change_percent_24h ?? "0") / 100,
+          change24h: Number(metadata.priceChangePercent24h ?? "0") / 100,
           high24h: this.parseLiveUnits(
-            metadata.high_24h,
+            metadata.high24h,
             livePair.quoteDecimals,
             "ticker 24h high",
           ),
           low24h: this.parseLiveUnits(
-            metadata.low_24h,
+            metadata.low24h,
             livePair.quoteDecimals,
             "ticker 24h low",
           ),
@@ -839,7 +859,7 @@ export class MarketManager {
               ? (
                   await sdk.trades.getTrades(livePair.tradingPairId, {
                     page: 1,
-                    page_size: limit,
+                    pageSize: limit,
                   })
                 ).map((trade) =>
                   this.normalizeLiveTradeEvent(
@@ -937,8 +957,8 @@ export class MarketManager {
       do {
         const response = await this.sdk.market.getPaginatedTradingPairs({
           page,
-          page_size: 100,
-          is_active: true,
+          pageSize: 100,
+          isActive: true,
         });
 
         const tradingPairs = normalizeTradingPairsResponse(response);
@@ -962,45 +982,53 @@ export class MarketManager {
       [
         {
           id: "BTC_USDC",
-          base_token: "BTC",
-          quote_token: "USDC",
-          base_asset_id: "btc-asset",
-          quote_asset_id: "usdc-asset",
-          base_icon_url: "",
-          quote_icon_url: "",
-          base_token_contract: "0x1234567890123456789012345678901234567890",
-          quote_token_contract: "0x0987654321098765432109876543210987654321",
+          baseToken: "BTC",
+          baseAssetName: "Bitcoin",
+          quoteToken: "USDC",
+          quoteAssetName: "USD Coin",
+          baseAssetId: "btc-asset",
+          quoteAssetId: "usdc-asset",
+          baseIconUrl: "",
+          quoteIconUrl: "",
+          baseTokenContract: "0x1234567890123456789012345678901234567890",
+          quoteTokenContract: "0x0987654321098765432109876543210987654321",
           symbol: "BTC/USDC",
-          base_decimals: 8,
-          quote_decimals: 6,
-          market_type: "SPOT",
-          is_active: true,
-          maker_fee_bps: 10,
-          taker_fee_bps: 20,
-          min_order_size: "0.0001",
-          max_order_size: "1000",
-          tick_size: "0.01",
+          baseDecimals: 8,
+          quoteDecimals: 6,
+          marketType: "SPOT",
+          category: "crypto",
+          isActive: true,
+          makerFeeBps: 10,
+          takerFeeBps: 20,
+          minOrderSize: "0.0001",
+          maxOrderSize: "1000",
+          quantityStepSize: "0.0001",
+          tickSize: "0.01",
         },
         {
           id: "ETH_USDC",
-          base_token: "ETH",
-          quote_token: "USDC",
-          base_asset_id: "eth-asset",
-          quote_asset_id: "usdc-asset",
-          base_icon_url: "",
-          quote_icon_url: "",
-          base_token_contract: "0x1111111111111111111111111111111111111111",
-          quote_token_contract: "0x0987654321098765432109876543210987654321",
+          baseToken: "ETH",
+          baseAssetName: "Ethereum",
+          quoteToken: "USDC",
+          quoteAssetName: "USD Coin",
+          baseAssetId: "eth-asset",
+          quoteAssetId: "usdc-asset",
+          baseIconUrl: "",
+          quoteIconUrl: "",
+          baseTokenContract: "0x1111111111111111111111111111111111111111",
+          quoteTokenContract: "0x0987654321098765432109876543210987654321",
           symbol: "ETH/USDC",
-          base_decimals: 18,
-          quote_decimals: 6,
-          market_type: "SPOT",
-          is_active: true,
-          maker_fee_bps: 10,
-          taker_fee_bps: 20,
-          min_order_size: "0.001",
-          max_order_size: "10000",
-          tick_size: "0.01",
+          baseDecimals: 18,
+          quoteDecimals: 6,
+          marketType: "SPOT",
+          category: "crypto",
+          isActive: true,
+          makerFeeBps: 10,
+          takerFeeBps: 20,
+          minOrderSize: "0.001",
+          maxOrderSize: "10000",
+          quantityStepSize: "0.001",
+          tickSize: "0.01",
         },
       ],
       requestedMarketType,

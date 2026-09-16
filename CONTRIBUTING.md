@@ -77,7 +77,6 @@ Thank you for your interest in contributing to the MACH1 SDK monorepo! This repo
   ```bash
   npm install
   ```
-  (The root `postinstall` runs `patch-package` automatically.)
 
 ## Code Quality
 

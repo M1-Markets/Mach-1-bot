@@ -7,7 +7,7 @@ import {
   type TradingPairResolver,
 } from "mach1_sdk";
 import pc from "picocolors";
-import { createPublicClient, http } from "viem";
+import { createPublicClient, http, type PublicClient } from "viem";
 import { sei, seiTestnet } from "viem/chains";
 import { convertToBotConfig, parseTomlConfig } from "@/cli/utils/bot-utils";
 import type { BotConfig } from "@/shared/types/bot";
@@ -74,7 +74,10 @@ export const loadBotConfigWithEnv = async (
   return { configFile, botConfig, tomlConfig, environment, network };
 };
 
-const createViemClient = (network: ChainNetwork, rpcUrl: string) =>
+const createViemClient = (
+  network: ChainNetwork,
+  rpcUrl: string,
+): PublicClient =>
   createPublicClient({
     chain: getViemChain(network),
     transport: http(rpcUrl),

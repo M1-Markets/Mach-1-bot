@@ -930,12 +930,12 @@ export class PaperTradingEngine extends BaseTradingMode {
               return this.tradingPairService.resolveSymbol(pair.symbol);
             } catch {
               if (
-                /^0x[a-fA-F0-9]{40}$/.test(pair.base_token_contract) &&
-                /^0x[a-fA-F0-9]{40}$/.test(pair.quote_token_contract)
+                /^0x[a-fA-F0-9]{40}$/.test(pair.baseTokenContract) &&
+                /^0x[a-fA-F0-9]{40}$/.test(pair.quoteTokenContract)
               ) {
                 return {
-                  base: pair.base_token_contract as Address,
-                  quote: pair.quote_token_contract as Address,
+                  base: pair.baseTokenContract as Address,
+                  quote: pair.quoteTokenContract as Address,
                   symbol: this.tradingPairService.normalizeSymbol(pair.symbol),
                 };
               }

@@ -447,24 +447,24 @@ export class PositionTracker {
     const tradingPairs = await this.marketManager.getAllTradingPairs();
     const metadataByToken = this.createMetadataByToken();
     for (const pair of tradingPairs) {
-      const baseToken = pair.base_token_contract as Address;
-      const quoteToken = pair.quote_token_contract as Address;
+      const baseToken = pair.baseTokenContract as Address;
+      const quoteToken = pair.quoteTokenContract as Address;
       metadataByToken.set(baseToken, {
-        symbol: pair.base_token,
-        decimals: pair.base_decimals,
+        symbol: pair.baseToken,
+        decimals: pair.baseDecimals,
         isCash: false,
       });
       metadataByToken.set(quoteToken, {
-        symbol: pair.quote_token,
-        decimals: pair.quote_decimals,
-        isCash: CASH_TOKEN_SYMBOLS.has(pair.quote_token.toUpperCase()),
+        symbol: pair.quoteToken,
+        decimals: pair.quoteDecimals,
+        isCash: CASH_TOKEN_SYMBOLS.has(pair.quoteToken.toUpperCase()),
       });
     }
 
     for (const monacoTradingPair of tradingPairs) {
       const pair: TradingPair = {
-        base: monacoTradingPair.base_token as Address,
-        quote: monacoTradingPair.quote_token as Address,
+        base: monacoTradingPair.baseTokenContract as Address,
+        quote: monacoTradingPair.quoteTokenContract as Address,
         symbol: monacoTradingPair.symbol,
       };
 
@@ -490,18 +490,18 @@ export class PositionTracker {
           const pair =
             tradingPairs.find(
               (currentPair) =>
-                (currentPair.base_token_contract as Address) === token,
+                (currentPair.baseTokenContract as Address) === token,
             ) ?? this.getBuiltInTradingPairForToken(token);
 
           if (pair) {
             value = await this.estimateBalanceValue(balance, {
               base:
-                "base_token_contract" in pair
-                  ? (pair.base_token_contract as Address)
+                "baseTokenContract" in pair
+                  ? (pair.baseTokenContract as Address)
                   : pair.base,
               quote:
-                "quote_token_contract" in pair
-                  ? (pair.quote_token_contract as Address)
+                "quoteTokenContract" in pair
+                  ? (pair.quoteTokenContract as Address)
                   : pair.quote,
               symbol: pair.symbol,
             });
@@ -817,21 +817,21 @@ export class PositionTracker {
           for (const currentPair of pairs) {
             metadata.set(
               this.getPairMetadataKey(
-                currentPair.base_token_contract as Address,
-                currentPair.quote_token_contract as Address,
+                currentPair.baseTokenContract as Address,
+                currentPair.quoteTokenContract as Address,
               ),
               {
                 pair: {
-                  base: currentPair.base_token_contract as Address,
-                  quote: currentPair.quote_token_contract as Address,
+                  base: currentPair.baseTokenContract as Address,
+                  quote: currentPair.quoteTokenContract as Address,
                   symbol: currentPair.symbol,
                 },
-                baseSymbol: currentPair.base_token,
-                quoteSymbol: currentPair.quote_token,
-                baseDecimals: currentPair.base_decimals,
-                quoteDecimals: currentPair.quote_decimals,
-                makerFeeBps: BigInt(currentPair.maker_fee_bps ?? 0),
-                takerFeeBps: BigInt(currentPair.taker_fee_bps ?? 0),
+                baseSymbol: currentPair.baseToken,
+                quoteSymbol: currentPair.quoteToken,
+                baseDecimals: currentPair.baseDecimals,
+                quoteDecimals: currentPair.quoteDecimals,
+                makerFeeBps: BigInt(currentPair.makerFeeBps ?? 0),
+                takerFeeBps: BigInt(currentPair.takerFeeBps ?? 0),
               },
             );
           }
@@ -936,19 +936,19 @@ export class PositionTracker {
     const pairs = await this.marketManager.getAllTradingPairs();
 
     for (const pair of pairs) {
-      if ((pair.quote_token_contract as Address) === token) {
+      if ((pair.quoteTokenContract as Address) === token) {
         return {
-          symbol: pair.quote_token,
-          decimals: pair.quote_decimals,
-          isCash: CASH_TOKEN_SYMBOLS.has(pair.quote_token.toUpperCase()),
+          symbol: pair.quoteToken,
+          decimals: pair.quoteDecimals,
+          isCash: CASH_TOKEN_SYMBOLS.has(pair.quoteToken.toUpperCase()),
         };
       }
 
-      if ((pair.base_token_contract as Address) === token) {
+      if ((pair.baseTokenContract as Address) === token) {
         return {
-          symbol: pair.base_token,
-          decimals: pair.base_decimals,
-          isCash: CASH_TOKEN_SYMBOLS.has(pair.base_token.toUpperCase()),
+          symbol: pair.baseToken,
+          decimals: pair.baseDecimals,
+          isCash: CASH_TOKEN_SYMBOLS.has(pair.baseToken.toUpperCase()),
         };
       }
     }

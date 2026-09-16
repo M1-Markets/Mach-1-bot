@@ -249,8 +249,8 @@ export class RealtimeManager {
 
     for (const monacoTradingPair of pairs) {
       const pair: TradingPair = {
-        base: monacoTradingPair.base_token_contract as Address,
-        quote: monacoTradingPair.quote_token_contract as Address,
+        base: monacoTradingPair.baseTokenContract as Address,
+        quote: monacoTradingPair.quoteTokenContract as Address,
         symbol: monacoTradingPair.symbol,
       };
 

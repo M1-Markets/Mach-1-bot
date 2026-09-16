@@ -62,20 +62,6 @@ type UserProfileSummary = {
   account_type?: string;
 };
 
-type AccountBalanceSnapshot = {
-  token: string;
-  symbol: string | null;
-  available_balance: string;
-  locked_balance: string;
-  margin_locked?: string;
-  total_balance: string;
-};
-
-type UserBalancesResponse = {
-  balances: AccountBalanceSnapshot[];
-  total?: number;
-};
-
 function requireValidUrl(value: string, label: string): string {
   try {
     return new URL(value).toString();
@@ -386,8 +372,7 @@ export class MonacoSDKAdapter {
 
     try {
       const profile: UserProfileSummary = await this.sdk.profile.getProfile();
-      const balances: UserBalancesResponse =
-        await this.sdk.profile.getUserBalances();
+      const balances = await this.sdk.profile.getUserBalances();
 
       logger.debug("User profile", {
         id: profile.id,
@@ -401,10 +386,9 @@ export class MonacoSDKAdapter {
         balances: balances.balances.map((balance) => ({
           token: balance.token,
           symbol: balance.symbol,
-          available: balance.available_balance,
-          locked: balance.locked_balance,
-          marginLocked: balance.margin_locked,
-          total: balance.total_balance,
+          available: balance.availableBalance,
+          locked: balance.lockedBalance,
+          total: balance.totalBalance,
         })),
       });
     } catch (error) {

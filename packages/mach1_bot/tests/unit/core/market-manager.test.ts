@@ -11,34 +11,34 @@ describe("MarketManager", () => {
   const livePairMetadata = {
     id: "pair-btc-usdc",
     symbol: "BTC/USDC",
-    base_token: "BTC",
-    quote_token: "USDC",
-    base_asset_id: "btc-asset",
-    quote_asset_id: "usdc-asset",
-    base_icon_url: "",
-    quote_icon_url: "",
-    base_token_contract: "0x3333333333333333333333333333333333333333",
-    quote_token_contract: "0x0987654321098765432109876543210987654321",
-    base_decimals: 8,
-    quote_decimals: 6,
-    market_type: "SPOT",
-    is_active: true,
-    maker_fee_bps: 10,
-    taker_fee_bps: 20,
-    min_order_size: "0.0001",
-    max_order_size: "1000",
-    tick_size: "0.01",
+    baseToken: "BTC",
+    quoteToken: "USDC",
+    baseAssetId: "btc-asset",
+    quoteAssetId: "usdc-asset",
+    baseIconUrl: "",
+    quoteIconUrl: "",
+    baseTokenContract: "0x3333333333333333333333333333333333333333",
+    quoteTokenContract: "0x0987654321098765432109876543210987654321",
+    baseDecimals: 8,
+    quoteDecimals: 6,
+    marketType: "SPOT",
+    isActive: true,
+    makerFeeBps: 10,
+    takerFeeBps: 20,
+    minOrderSize: "0.0001",
+    maxOrderSize: "1000",
+    tickSize: "0.01",
   };
 
   const liveMarginPairMetadata = {
     ...livePairMetadata,
     id: "pair-btc-usdc-margin",
-    market_type: "MARGIN",
+    marketType: "MARGIN",
   };
 
   const livePair: TradingPair = {
-    base: livePairMetadata.base_token_contract as Address,
-    quote: livePairMetadata.quote_token_contract as Address,
+    base: livePairMetadata.baseTokenContract as Address,
+    quote: livePairMetadata.quoteTokenContract as Address,
     symbol: livePairMetadata.symbol,
   };
 
@@ -82,15 +82,15 @@ describe("MarketManager", () => {
         ]),
         getMarketMetadata: vi.fn().mockResolvedValue({
           symbol: "BTC/USDC",
-          base_icon_url: "",
-          quote_icon_url: "",
-          last_price: "64500",
-          last_price_timestamp: 1710000000000,
-          high_24h: "65000",
-          low_24h: "63000",
-          volume_24h: "12.5",
+          baseIconUrl: "",
+          quoteIconUrl: "",
+          lastPrice: "64500",
+          lastPriceTimestamp: 1710000000000,
+          high24h: "65000",
+          low24h: "63000",
+          volume24h: "12.5",
           price_change_24h: "1200",
-          price_change_percent_24h: "1.86",
+          priceChangePercent24h: "1.86",
           market_initialization_timestamp: 1700000000000,
         }),
         getPaginatedTradingPairs: vi.fn().mockResolvedValue({
@@ -271,10 +271,10 @@ describe("MarketManager", () => {
 
       expect(Array.isArray(pairs)).toBe(true);
       pairs.forEach((pair) => {
-        expect(pair.base_token_contract).toMatch(/^0x[a-fA-F0-9]{40}$/);
-        expect(pair.quote_token_contract).toMatch(/^0x[a-fA-F0-9]{40}$/);
+        expect(pair.baseTokenContract).toMatch(/^0x[a-fA-F0-9]{40}$/);
+        expect(pair.quoteTokenContract).toMatch(/^0x[a-fA-F0-9]{40}$/);
         expect(typeof pair.symbol).toBe("string");
-        expect(typeof pair.is_active).toBe("boolean");
+        expect(typeof pair.isActive).toBe("boolean");
       });
     });
 

@@ -1,6 +1,6 @@
-import { keypairFromHex } from "../../../../node_modules/@0xmonaco/core/dist/crypto/session.js";
 import {
   composeSigningString,
+  keypairFromHex,
   sha256Hex,
   signMessage,
 } from "../../../../node_modules/@0xmonaco/core/dist/crypto/session.js";
