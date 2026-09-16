@@ -1102,8 +1102,10 @@ export async function setupStrategy(
                 }
               }
               if (signal.action === "buy") {
-                // Use a fixed USD amount for consistency in testing
-                const amountUsd = 100;
+                const amountUsd =
+                  signal.quantity && signal.price
+                    ? signal.quantity * signal.price
+                    : 100;
                 const balanceSummary = await getPairBalanceSummary(
                   bot,
                   signal.pair,
@@ -1145,7 +1147,10 @@ export async function setupStrategy(
                   reason: signal.reason,
                 });
               } else if (signal.action === "sell") {
-                const amountUsd = 100;
+                const amountUsd =
+                  signal.quantity && signal.price
+                    ? signal.quantity * signal.price
+                    : 100;
                 const balanceSummary = await getPairBalanceSummary(
                   bot,
                   signal.pair,
@@ -1382,7 +1387,10 @@ export async function setupStrategy(
             }
           }
           if (signal.action === "buy") {
-            const amountUsd = 100; // Fixed amount for consistent testing
+            const amountUsd =
+              signal.quantity && signal.price
+                ? signal.quantity * signal.price
+                : 100;
             console.log(
               pc.blue(`🔄 Attempting to buy ${signal.pair} ($${amountUsd})...`),
             );
@@ -1411,7 +1419,10 @@ export async function setupStrategy(
               reason: signal.reason,
             });
           } else if (signal.action === "sell") {
-            const amountUsd = 100; // Fixed amount for consistent testing
+            const amountUsd =
+              signal.quantity && signal.price
+                ? signal.quantity * signal.price
+                : 100;
             console.log(
               pc.blue(
                 `🔄 Attempting to sell ${signal.pair} ($${amountUsd})...`,

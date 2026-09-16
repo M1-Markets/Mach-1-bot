@@ -1384,7 +1384,10 @@ async function runBot(configFile: string, runOptions: RunOptions = {}) {
       process.env.MONACO_ENV,
       "staging",
     );
-    const walletAddress = getWalletAddressFromPrivateKey(botConfig.privateKey);
+    const walletAddress =
+      botConfig.mode === "live"
+        ? getWalletAddressFromPrivateKey(botConfig.privateKey)
+        : "not required";
     const viewport = {
       width: Math.max(40, process.stdout.columns ?? 80),
       height: Math.max(12, process.stdout.rows ?? 24),
@@ -1449,6 +1452,12 @@ async function runBot(configFile: string, runOptions: RunOptions = {}) {
 
     // Execute bot based on mode
     await executeBotMode(bot, botConfig, initialBalance);
+    if (botConfig.mode === "backtest") {
+      activeBot = null;
+      restoreConsole?.();
+      runUi?.unmount();
+      return;
+    }
     runUi?.setStatus("Running");
     const refreshSpotUsdcBalance = async () => {
       if (!runUi) return;

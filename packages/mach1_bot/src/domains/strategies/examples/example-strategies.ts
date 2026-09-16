@@ -104,14 +104,7 @@ export class RSIStrategy implements IStrategy {
     const errors: string[] = [];
 
     try {
-      // Process each supported pair
-      for (const pair of this.config.supportedPairs) {
-        const marketData = context.marketData.get(pair);
-        if (!marketData) {
-          errors.push(`No market data available for ${pair}`);
-          continue;
-        }
-
+      for (const [pair, marketData] of context.marketData.entries()) {
         // Update price history
         const prices = this.priceHistory.get(pair) || [];
 
@@ -136,16 +129,18 @@ export class RSIStrategy implements IStrategy {
           }
         }
 
-        if (currentPrice > 0) {
-          prices.push(currentPrice);
-
-          // Keep only last 100 prices
-          if (prices.length > 100) {
-            prices.shift();
-          }
-
-          this.priceHistory.set(pair, prices);
+        if (!(currentPrice > 0) || !Number.isFinite(currentPrice)) {
+          errors.push(`Invalid market price for ${pair}`);
+          continue;
         }
+
+        prices.push(currentPrice);
+
+        if (prices.length > 100) {
+          prices.shift();
+        }
+
+        this.priceHistory.set(pair, prices);
 
         // Calculate RSI if we have enough data
         const rsiPeriod = getNumberParam(context.parameters.rsiPeriod, 14);
@@ -234,8 +229,13 @@ export class RSIStrategy implements IStrategy {
     context: StrategyContext,
   ): StrategySignal | null {
     const portfolioValue = context.portfolio.totalValue;
-    const positionSize =
+    const requestedPositionSize =
       portfolioValue * getNumberParam(context.parameters.positionSize, 0.1);
+    const availableCapital = context.utils.trading.getAvailableCapital();
+    const positionSize =
+      availableCapital > 0
+        ? Math.min(availableCapital, requestedPositionSize)
+        : requestedPositionSize;
     const oversoldThreshold = getNumberParam(
       context.parameters.oversoldThreshold,
       30,
@@ -247,6 +247,21 @@ export class RSIStrategy implements IStrategy {
 
     // Buy signal: RSI oversold
     if (rsi < oversoldThreshold) {
+      const existingQuantity = Math.max(
+        context.utils.trading.getPositionQuantity(pair),
+        this.openQuantities.get(pair) ?? 0,
+      );
+      const pendingBuyQuantity = context.utils.trading.getPendingQuantity(
+        pair,
+        "buy",
+      );
+      if (
+        existingQuantity > 0 ||
+        pendingBuyQuantity > 0 ||
+        !(positionSize > 0)
+      ) {
+        return null;
+      }
       const quantity = positionSize / currentPrice;
       this.openQuantities.set(pair, quantity);
       return {
@@ -263,7 +278,12 @@ export class RSIStrategy implements IStrategy {
 
     // Sell signal: RSI overbought
     if (rsi > overboughtThreshold) {
-      const quantity = this.openQuantities.get(pair);
+      if (context.utils.trading.getPendingQuantity(pair, "sell") > 0) {
+        return null;
+      }
+      const quantity =
+        context.utils.trading.fullCloseQuantity(pair) ||
+        this.openQuantities.get(pair);
       if (!(quantity && quantity > 0)) {
         return null;
       }
@@ -272,6 +292,7 @@ export class RSIStrategy implements IStrategy {
         action: "sell",
         pair,
         quantity,
+        price: currentPrice,
         orderType: "market",
         confidence: Math.max(
           0,
