@@ -2690,155 +2690,41 @@ async function isOpenOrderPriceVisibleNow(
 async function clickConnectWalletButton(
   page: Page,
 ): Promise<ConnectWalletClickResult> {
-  await page
-    .waitForFunction(
-      () => {
-        const nodes = Array.from(
-          document.querySelectorAll("button, [role='button'], a, div"),
-        );
-        return nodes.some((node) => {
-          const text =
-            node.textContent?.replace(/\s+/g, " ").trim().toLowerCase() ?? "";
-          const ariaLabel =
-            node.getAttribute("aria-label")?.toLowerCase() ?? "";
-          return (
-            text.includes("connect wallet") ||
-            text === "connect" ||
-            ariaLabel.includes("connect wallet")
-          );
-        });
-      },
-      { timeout: 15_000 },
-    )
-    .catch(() => undefined);
-
-  return page.evaluate(() => {
-    type MaybeElement = {
-      textContent?: string;
-      click?: () => void;
-      getAttribute?: (name: string) => string | null;
-      querySelectorAll?: (selector: string) => Iterable<unknown>;
-      shadowRoot?: MaybeElement;
-      getBoundingClientRect?: () => {
-        width?: number;
-        height?: number;
-      };
-      ownerDocument?: {
-        defaultView?: {
-          getComputedStyle?: (el: unknown) => {
-            display?: string;
-            visibility?: string;
-          };
-        };
-      };
-    };
-
-    const nodes: MaybeElement[] = [];
-    const rootsToVisit: MaybeElement[] = [document as unknown as MaybeElement];
-
-    while (rootsToVisit.length > 0) {
-      const root = rootsToVisit.pop();
-      if (!root) {
-        continue;
-      }
-
-      nodes.push(
-        ...(Array.from(
-          root.querySelectorAll?.("button, [role='button'], a, div") ?? [],
-        ) as MaybeElement[]),
-      );
-
-      const allElements = Array.from(root.querySelectorAll?.("*") ?? []) as
-        | MaybeElement[]
-        | [];
-      for (const el of allElements) {
-        if (el.shadowRoot) {
-          rootsToVisit.push(el.shadowRoot);
-        }
-      }
-    }
-    const candidates = nodes
-      .map((node) => {
-        const text = node.textContent?.replace(/\s+/g, " ").trim() ?? "";
-        const ariaLabel = node.getAttribute?.("aria-label") ?? "";
-        return `${text} | aria=${ariaLabel}`.trim();
-      })
-      .filter((value) =>
-        /connect|wallet|metamask|browser wallet|injected/i.test(value),
-      )
-      .slice(0, 20);
-
-    const connectNode = nodes.find((node) => {
-      const text =
-        node.textContent?.replace(/\s+/g, " ").trim().toLowerCase() ?? "";
-      const ariaLabel = node.getAttribute?.("aria-label")?.toLowerCase() ?? "";
-      const rect = node.getBoundingClientRect?.();
-      const style = node.ownerDocument?.defaultView?.getComputedStyle?.(node);
-      const visible =
-        (rect?.width ?? 0) > 0 &&
-        (rect?.height ?? 0) > 0 &&
-        style?.display !== "none" &&
-        style?.visibility !== "hidden";
-      return (
-        visible &&
-        (text.includes("connect wallet") ||
-          text === "connect" ||
-          ariaLabel.includes("connect wallet"))
-      );
-    });
-
-    if (!connectNode) {
-      return {
-        clicked: false,
-        strategy: "no-connect-candidate",
-        candidates,
-      } satisfies ConnectWalletClickResult;
-    }
-
-    connectNode.click?.();
+  try {
+    await Locator.race([
+      page.locator("::-p-aria(Connect)"),
+      page.locator("button::-p-text(Connect)"),
+    ])
+      .setTimeout(15_000)
+      .click();
     return {
       clicked: true,
-      strategy: "text-or-aria-match",
-      candidates,
-    } satisfies ConnectWalletClickResult;
-  });
+      strategy: "trusted-pointer-exact-label",
+      candidates: ["Connect"],
+    };
+  } catch {
+    return {
+      clicked: false,
+      strategy: "no-connect-candidate",
+      candidates: [],
+    };
+  }
 }
 
 async function clickMetaMaskOptionIfVisible(page: Page): Promise<boolean> {
-  return page.evaluate(() => {
-    type MaybeNode = {
-      textContent?: string;
-      click?: () => void;
-      offsetParent?: unknown | null;
-    };
-
-    const pageGlobal = globalThis as {
-      document?: {
-        querySelectorAll?: (selector: string) => Iterable<unknown>;
-      };
-    };
-
-    const candidates = Array.from(
-      pageGlobal.document?.querySelectorAll?.(
-        "button, [role='button'], li, div",
-      ) ?? [],
-    ) as MaybeNode[];
-
-    const option = candidates.find((node) => {
-      const text =
-        node.textContent?.replace(/\s+/g, " ").trim().toLowerCase() ?? "";
-      const visible = node.offsetParent !== null;
-      return (
-        visible &&
-        (text.includes("metamask") ||
-          text.includes("browser wallet") ||
-          text.includes("injected"))
-      );
-    });
-
-    option?.click?.();
-    return Boolean(option);
-  });
+  try {
+    await Locator.race([
+      page.locator("::-p-aria(Browser Wallet)"),
+      page.locator("::-p-aria(MetaMask)"),
+      page.locator("[role=menuitem]::-p-text(Browser Wallet)"),
+      page.locator("[role=menuitem]::-p-text(MetaMask)"),
+    ])
+      .setTimeout(10_000)
+      .click();
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 type ScreenerLiveDataSummary = {
@@ -2878,7 +2764,9 @@ async function runReplayClickScreenerTab(
       page.locator(
         '::-p-xpath(//*[@id=\\"main-content\\"]/div[2]/div[1]/div/button[1])',
       ),
-      page.locator(":scope >>> div.border-border\\/80 > div > button:nth-of-type(1)"),
+      page.locator(
+        ":scope >>> div.border-border\\/80 > div > button:nth-of-type(1)",
+      ),
       page.locator("::-p-text(Cooking)"),
     ])
       .setTimeout(timeout)
@@ -2941,9 +2829,7 @@ async function getScreenerLiveDataSummary(
       new Set(text.match(/\b[A-Z0-9]{2,12}\/[A-Z0-9]{2,12}\b/g) ?? []),
     );
     const percentCount = (text.match(/[+\-−]?\d+(?:\.\d+)?%/g) ?? []).length;
-    const priceLikeCount = (
-      text.match(/\$?\d[\d,]*(?:\.\d+)?/g) ?? []
-    ).length;
+    const priceLikeCount = (text.match(/\$?\d[\d,]*(?:\.\d+)?/g) ?? []).length;
 
     return {
       uniquePairCount: uniquePairs.length,
@@ -2968,7 +2854,8 @@ async function waitForScreenerLiveData(
         new Set(text.match(/\b[A-Z0-9]{2,12}\/[A-Z0-9]{2,12}\b/g) ?? []),
       );
       const percentCount = (text.match(/[+\-−]?\d+(?:\.\d+)?%/g) ?? []).length;
-      const priceLikeCount = (text.match(/\$?\d[\d,]*(?:\.\d+)?/g) ?? []).length;
+      const priceLikeCount = (text.match(/\$?\d[\d,]*(?:\.\d+)?/g) ?? [])
+        .length;
       const loading = /loading\.\.\./i.test(text);
 
       return (
@@ -3062,7 +2949,9 @@ async function runReplaySubmitSwap(page: Page): Promise<void> {
   await Locator.race([
     page.locator('::-p-aria(Swap[role=\\"button\\"])'),
     page.locator("div.grid > div:nth-of-type(1) > div > button"),
-    page.locator('::-p-xpath(//*[@id=\\"main-content\\"]/div/div[2]/div[1]/div/button)'),
+    page.locator(
+      '::-p-xpath(//*[@id=\\"main-content\\"]/div/div[2]/div[1]/div/button)',
+    ),
     page.locator(":scope >>> div.grid > div:nth-of-type(1) > div > button"),
   ])
     .setTimeout(timeout)
@@ -3279,11 +3168,8 @@ describe("puppeteer | app.m1.markets | injected wallet auth", function () {
     const requestedMethods = finalWalletState?.requestedMethods ?? [];
 
     const accountsRequested = requestedMethods.includes("eth_requestAccounts");
-    const chainRequested = requestedMethods.includes("eth_chainId");
-    const accountsRead = requestedMethods.includes("eth_accounts");
-
     assert.isTrue(
-      accountsRequested || chainRequested || accountsRead,
+      accountsRequested,
       `expected app wallet auth flow to query injected wallet methods, got: ${requestedMethods.join(", ")}`,
     );
   });
@@ -3684,9 +3570,12 @@ describe("puppeteer | app.m1.markets | injected wallet auth", function () {
     );
 
     await runReplayOpenSwap(activePage);
-    await activePage.waitForFunction('window.location.pathname.includes("/swap")', {
-      timeout: 20_000,
-    });
+    await activePage.waitForFunction(
+      'window.location.pathname.includes("/swap")',
+      {
+        timeout: 20_000,
+      },
+    );
     await waitForRenderableUi(activePage);
 
     await runReplayPrepareSwapUsdcBtc(activePage, "10");
