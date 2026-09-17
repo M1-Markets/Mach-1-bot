@@ -109,6 +109,7 @@ export const withMonacoSession = async (
   const monacoSDK = new MonacoCoreSDK({
     network: toMonacoNetwork(network),
     privateKey: botConfig.privateKey,
+    clientId: botConfig.clientId,
     mode: "live",
     environment,
     rpcUrl: botConfig.rpcUrl,

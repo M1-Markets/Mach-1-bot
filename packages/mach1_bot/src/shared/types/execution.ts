@@ -183,6 +183,7 @@ export interface PaperTradingConfig {
 
 export interface LiveTradingConfig {
   privateKey: string;
+  clientId?: string;
   network: ChainNetwork;
   environment?: MonacoEnvironment;
   rpcUrl?: string;

@@ -651,6 +651,7 @@ async function validateStrategyBalances(
   const monaco = new MonacoCoreSDK({
     network: network === "sei-mainnet" ? "mainnet" : "testnet",
     privateKey: botConfig.privateKey,
+    clientId: botConfig.clientId,
     mode: "live",
     rpcUrl: botConfig.rpcUrl,
     environment,
@@ -840,6 +841,7 @@ export function convertToBotConfig(tomlConfig: TomlConfig): BotConfig {
     marketMode: normalizedLiveMarketConfig.marketMode,
     perps: normalizedLiveMarketConfig.perps,
     environment: resolveEnvironmentOption(process.env.MONACO_ENV, "staging"),
+    clientId: process.env.MONACO_CLIENT_ID,
     maxPositionSize: tomlConfig.trading?.max_position_size || 1000,
     maxDailyLoss: tomlConfig.trading?.max_daily_loss || 500,
     chainId: tomlConfig.network?.chain_id || 713715,

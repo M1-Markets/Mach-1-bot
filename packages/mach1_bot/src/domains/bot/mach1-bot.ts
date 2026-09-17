@@ -491,6 +491,7 @@ export class Mach1Bot {
           : (env.MACH1_MODE as BotConfig["mode"]) ||
             ("simulation" as BotConfig["mode"]),
       chainId: env.MACH1_CHAIN_ID ? parseInt(env.MACH1_CHAIN_ID) : undefined,
+      clientId: env.MONACO_CLIENT_ID,
       logLevel: env.MACH1_LOG_LEVEL || "info",
     };
 
@@ -1349,6 +1350,7 @@ export class Mach1Bot {
       perps: this.config.perps,
       rpcUrl: this.config.rpcUrl,
       privateKey: this.config.privateKey,
+      clientId: this.config.clientId,
       maxSlippage: 0.01,
       confirmations: options?.confirmations || 1,
       tradingPairs: tradingPairs.length > 0 ? tradingPairs : undefined,

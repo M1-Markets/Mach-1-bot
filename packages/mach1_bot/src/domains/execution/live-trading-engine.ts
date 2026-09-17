@@ -259,6 +259,7 @@ export class LiveTradingEngine extends BaseTradingMode {
     const sdkConfig: MonacoCoreSDKConfig = {
       network: config.network === "sei-mainnet" ? "mainnet" : "testnet",
       privateKey: config.privateKey,
+      clientId: config.clientId,
       mode: "live",
       environment: config.environment,
       rpcUrl: config.rpcUrl,

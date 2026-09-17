@@ -1,10 +1,17 @@
-import { type Chain, createWalletClient, formatUnits, http, parseUnits } from "viem";
+import {
+  type Chain,
+  createWalletClient,
+  formatUnits,
+  http,
+  parseUnits,
+} from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { sei, seiTestnet } from "viem/chains";
 import { createMach1SDK, type Mach1SDK } from "../sdk";
 import {
   DEFAULT_ENVIRONMENT,
   DEFAULT_RATE_LIMIT,
+  getClientId,
   type MonacoEnvironment,
   NETWORK_RPC_URLS,
   resolveMonacoApiUrl,
@@ -33,6 +40,7 @@ export interface MonacoSDKAdapterConfig {
   network: MonacoChainNetwork;
   privateKey: string;
   environment?: MonacoEnvironment;
+  clientId?: string;
   skipAuth?: boolean;
   rpcUrl?: string;
   rateLimiter?: TokenBucketRateLimiter;
@@ -167,6 +175,7 @@ export class MonacoSDKAdapter {
       network: network === "mainnet" ? "sei-mainnet" : "sei-testnet",
       seiRpcUrl: selectedRpcUrl,
       wsUrl,
+      clientId: this.config.clientId?.trim() || getClientId(environment),
     });
 
     if (skipAuth || !this.sdk) {
@@ -530,9 +539,12 @@ export class MonacoSDKAdapter {
         String(matchResult?.status ?? dataRecord.status ?? ""),
       );
       const filledQuantity = parseUnits(
-        String(matchResult?.totalFilled ??
-          matchResult?.total_filled ??
-          dataRecord.filledQuantity ?? "0"),
+        String(
+          matchResult?.totalFilled ??
+            matchResult?.total_filled ??
+            dataRecord.filledQuantity ??
+            "0",
+        ),
         pairByContracts.base_decimals,
       );
       const quantity = BigInt(String(request.quantity));

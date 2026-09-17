@@ -47,6 +47,7 @@ export interface MonacoCoreSDKConfig {
   privateKey: string;
   mode?: "backtest" | "simulation" | "live";
   environment?: MonacoEnvironment;
+  clientId?: string;
   rpcUrl?: string;
   logLevel?: "DEBUG" | "INFO" | "WARN" | "ERROR";
   onStatus?: (status: string) => void;
@@ -66,6 +67,7 @@ export class MonacoCoreSDK {
       network: config.network,
       privateKey: config.privateKey,
       environment: config.environment,
+      clientId: config.clientId,
       skipAuth: config.mode === "simulation",
       rpcUrl: config.rpcUrl,
       onStatus: config.onStatus,

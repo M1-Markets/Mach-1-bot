@@ -15,14 +15,7 @@ function walk(dir) {
       continue;
     }
     const src = readFileSync(full, "utf8");
-    const out = src
-      .replace(/\/\*[\s\S]*?\*\//g, "")
-      .replace(/\bsdk\.login\(clientId\)/g, "sdk.login()")
-      .replace(/\bsdk\.login\(marker\)/g, "sdk.login()")
-      .replace(/\bclientId\b/g, "marker")
-      .replace(/\bclient_id\b/g, "marker_value")
-      .replace(/\bClient ID\b/g, "embedded value")
-      .replace(/\bclient-id\b/g, "embedded-value");
+    const out = src.replace(/\/\*[\s\S]*?\*\//g, "");
     if (out !== src) {
       writeFileSync(full, out);
     }

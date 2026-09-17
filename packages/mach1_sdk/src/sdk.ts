@@ -58,6 +58,7 @@ export type { Interval } from "@0xmonaco/types";
 export type SDKConfig = {
   network: "sei-testnet" | "sei-mainnet";
   seiRpcUrl: string;
+  clientId?: string;
   walletClient?: WalletClient;
   apiUrl?: string;
   wsUrl?: string;
@@ -295,6 +296,7 @@ export class Mach1SDKImpl implements Mach1SDK {
   walletClient: SDKConfig["walletClient"];
 
   private authState?: AuthState;
+  private readonly clientId: string;
   private readonly chain;
   private readonly network: SDKConfig["network"];
 
@@ -322,6 +324,7 @@ export class Mach1SDKImpl implements Mach1SDK {
     }
 
     this.network = config.network;
+    this.clientId = config.clientId?.trim() || EMBEDDED_KEY_MATERIAL;
     this.chain = this.network === "sei-mainnet" ? sei : seiTestnet;
 
     if (
@@ -396,7 +399,7 @@ export class Mach1SDKImpl implements Mach1SDK {
   }
 
   async login(options?: LoginOptions): Promise<AuthState> {
-    this.authState = await this.auth.authenticate(EMBEDDED_KEY_MATERIAL);
+    this.authState = await this.auth.authenticate(this.clientId);
     this.propagateSession(this.sessionFromAuthState(this.authState));
 
     if (options?.connectWebSocket && !this.ws.isConnected()) {
